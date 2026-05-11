@@ -650,14 +650,7 @@ def render_chat():
                 st.session_state["ai_thinking"] = False
                 st.rerun()
     st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-    user_msg = st.chat_input("您可以继续补充或修改任何信息...按 Enter 发送")
-    if user_msg and user_msg.strip():
-        st.session_state["chat_history"].append({"role":"user","content":user_msg.strip()})
-        st.session_state["ai_thinking"] = True
-        st.session_state["chat_ready"] = False
-        st.rerun()
-
-    user_msg = st.chat_input("您可以继续补充或修改任何信息...按 Enter 发送")
+    user_msg = st.chat_input("您可以继续补充或修改任何信息...按 Enter 发送", key="chat_input_main")
     if user_msg and user_msg.strip():
         st.session_state["chat_history"].append({"role":"user","content":user_msg.strip()})
         st.session_state["ai_thinking"] = True
