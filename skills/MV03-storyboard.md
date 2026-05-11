@@ -45,10 +45,47 @@
 
 ## 输出规范（仅输出合法 JSON）
 
+输出 JSON 必须包含以下顶层字段：`target_duration_sec`、`aspect_ratio`、`style_profile`、**`character_bible`**、**`scene_library`**、`total_scenes`、`scenes`。
+
+`character_bible` 是视觉一致性的核心锚点，用于 MV04/MV05 阶段 `build_scene_prompts()` 函数将角色 DNA 注入每一帧的 image_prompt 与 video_prompt，**必须填写**。
+
+`scene_library` 为本片出现的主要场景建立视觉词汇库，每个场景用英文 `visual_descriptor` 精确描述环境光线、陈设、年代感，同样用于 MV05 阶段 Prompt 锚定，**每个 ai_generated 场景须有对应条目**。
+
 ```json
 {
   "target_duration_sec": 300,
   "aspect_ratio": "16:9",
+  "character_bible": {
+    "display_name": "张建国",
+    "character_dna": {
+      "facial_features": "75-year-old Chinese man, deeply wrinkled face, kind gentle eyes behind silver rectangular glasses, silver-white hair combed back neatly",
+      "body_features": "medium build, slightly hunched posture from years of labor, broad weathered hands with calloused fingers",
+      "clothing_style": "dark grey Zhongshan suit (中山装), plain white inner shirt, black cloth shoes",
+      "mannerisms": "moves slowly and deliberately, tends to look down at his hands when thinking, quiet dignified presence"
+    }
+  },
+  "scene_library": [
+    {
+      "scene_id": "kitchen_morning",
+      "scene_name": "清晨厨房",
+      "visual_descriptor": "humble Chinese rural kitchen, clay stove, simple wooden cabinets, warm amber morning light filtering through a small window, steam rising from a clay pot, 1990s-2000s China aesthetic"
+    },
+    {
+      "scene_id": "carpenter_workshop",
+      "scene_name": "木工作坊",
+      "visual_descriptor": "traditional Chinese carpenter's workshop, wooden tools and planes hanging on the wall, sawdust on the floor, workbench with half-finished furniture, golden dust particles in slanted morning sunlight through small window"
+    },
+    {
+      "scene_id": "courtyard",
+      "scene_name": "老宅院子",
+      "visual_descriptor": "rural Chinese courtyard, old grey brick walls, large old locust tree providing shade, vegetable garden in the corner, earth-packed ground, warm afternoon sunlight, 1980s-2000s rural China atmosphere"
+    },
+    {
+      "scene_id": "riverside_fishing",
+      "scene_name": "河边钓鱼",
+      "visual_descriptor": "peaceful Chinese rural riverbank, clear shallow water, reeds along the bank, weeping willows, soft morning mist, simple bamboo fishing rod, tranquil and timeless atmosphere"
+    }
+  ],
   "style_profile": {
     "style_id": "warm_nostalgia",
     "emotional_intensity": "moderate",
@@ -61,25 +98,27 @@
   "scenes": {
     "scene_01": {
       "scene_id": "scene_01",
+      "scene_ref": "kitchen_morning",
       "time": "00:00-00:15",
       "shot_type": "Extreme close-up shot",
-      "description": "小米粥在砂锅里慢慢沸腾",
+      "description": "小米粥在砂锅里慢慢沸腾，蒸汽袅袅",
       "voice_script": "退休后，他成了家里的依靠。每天早上五点起床煮粥，这一煮，就是四十年。",
       "asset_type": "ai_generated_video",
-      "mj_prompt": "Extreme close-up shot of millet porridge boiling slowly in a clay pot, steam rising, warm golden sunlight",
+      "mj_prompt": "Extreme close-up shot of millet porridge boiling slowly in a clay pot, steam rising gently, warm amber morning light, humble Chinese rural kitchen background, soft focus, photorealistic",
       "negative_prompt": "ugly, deformed, blurry, extra limbs, disfigured, cartoon, anime, illustration",
       "motion": "slow_pan_right",
       "fallback_asset": "default_porridge.jpg"
     },
     "scene_02": {
       "scene_id": "scene_02",
+      "scene_ref": "kitchen_morning",
       "time": "00:15-00:30",
       "shot_type": "Medium shot",
-      "description": "他在厨房忙碌的身影",
+      "description": "他在厨房忙碌的背影，晨光斜射进来",
       "voice_script": "他话不多，却把爱都煮进了粥里。",
       "asset_type": "ai_generated_video",
-      "mj_prompt": "Medium shot of 75-year-old Chinese man, silver hair, dark grey Zhongshan suit, kitchen, warm sunlight",
-      "negative_prompt": "ugly, deformed, blurry, extra limbs, disfigured, cartoon, anime, illustration",
+      "mj_prompt": "Medium shot of elderly Chinese man's back silhouette in humble kitchen, dark grey Zhongshan suit, silver hair, warm amber morning light through small window, clay stove, steam, 2000s China rural aesthetic, photorealistic",
+      "negative_prompt": "ugly, deformed, blurry, extra limbs, disfigured, cartoon, anime, illustration, young man, western style",
       "motion": "slow_zoom_in",
       "fallback_asset": "photo_01"
     },
@@ -99,5 +138,10 @@
   }
 }
 ```
+
+**场景字段说明**：
+- `scene_ref`：对应 `scene_library` 中的 `scene_id`，MV05 阶段 `build_scene_prompts()` 会自动匹配并将 `visual_descriptor` 注入 image_prompt/video_prompt。**凡 `ai_generated` 场景必须填写。**
+- `character_bible` 由 AI 根据 MV01 肖像描述与 MV02 定稿信息自动生成，字段 `facial_features`/`body_features`/`clothing_style`/`mannerisms` 须用**英文**填写，以便直接嵌入 image_prompt。
+- `scene_library` 的 `visual_descriptor` 同样用英文写，描述粒度到：光线方向、陈设年代感、地面/墙面材质、空气质感。
 
 **说明**：纯资料镜可无口播，`voice_script` 为空串；与成片时长、朗读气口的对齐在 **MV05 / MV06** 的脚本结构中体现，具体 TTS/合成由工程执行。

@@ -1,5 +1,6 @@
-streamlit>=1.32.0
+# 念念 AI · 追思影像平台 依赖清单
+streamlit>=1.35.0
 streamlit-cropper>=0.3.1
-openai>=1.0.0
+openai>=1.30.0
 python-dotenv>=1.0.0
 requests>=2.31.0
