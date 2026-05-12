@@ -541,22 +541,26 @@ def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]
     _log = _logging.getLogger("llm_client.upload")
 
     # ── 方案0: ImgBB（有效 API key，最稳定）──────────────────────────────────────
+    # 官方文档：key 必须作为 URL query 参数传递，image 作为 POST form data
+    # curl: POST "https://api.imgbb.com/1/upload?key=YOUR_KEY" --form "image=<base64>"
     if IMGBB_API_KEY:
         try:
             b64str = base64.b64encode(img_bytes).decode()
             r = _requests.post(
                 "https://api.imgbb.com/1/upload",
-                data={"key": IMGBB_API_KEY, "image": b64str},
+                params={"key": IMGBB_API_KEY},   # ← key 放 URL query 参数
+                data={"image": b64str},            # ← image 放 POST body
                 timeout=30,
             )
-            if r.status_code == 200:
-                url = r.json().get("data", {}).get("url", "")
+            resp_json = r.json()
+            if r.status_code == 200 and resp_json.get("success"):
+                url = resp_json.get("data", {}).get("url", "")
                 if url:
                     _log.info(f"[upload] ImgBB 成功: {url}")
                     return url
-                _log.warning(f"[upload] ImgBB 返回无 URL: {r.text[:200]}")
+                _log.warning(f"[upload] ImgBB 返回无 URL: {resp_json}")
             else:
-                _log.warning(f"[upload] ImgBB 状态码 {r.status_code}: {r.text[:200]}")
+                _log.warning(f"[upload] ImgBB 失败 status={r.status_code}: {r.text[:300]}")
         except Exception as e:
             _log.warning(f"[upload] ImgBB 异常: {e}")
 
