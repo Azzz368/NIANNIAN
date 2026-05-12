@@ -164,6 +164,34 @@ else:
         unsafe_allow_html=True,
     )
 
+# ─── ImgBB 上传连通性测试（开发调试用）──────────────────────────────────────────
+import os as _os
+_imgbb_key = _os.getenv("IMGBB_API_KEY", "")
+with st.expander("🔧 调试：测试 ImgBB 图床连通性", expanded=False):
+    st.caption(f"当前 IMGBB_API_KEY：{'✅ 已读取（' + _imgbb_key[:6] + '...）' if _imgbb_key else '❌ 未读取到（请检查 Secrets 配置）'}")
+    if st.button("立即测试 ImgBB 上传", key="test_imgbb"):
+        import requests as _rq, base64 as _b64
+        # 用一个 1x1 透明 PNG 测试
+        _test_bytes = _b64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+        _test_b64 = _b64.b64encode(_test_bytes).decode()
+        try:
+            _r = _rq.post(
+                "https://api.imgbb.com/1/upload",
+                params={"key": _imgbb_key},
+                data={"image": _test_b64},
+                timeout=15,
+            )
+            _resp = _r.json()
+            if _r.status_code == 200 and _resp.get("success"):
+                _url = _resp.get("data", {}).get("url", "")
+                st.success(f"✅ ImgBB 上传成功！返回 URL：{_url}")
+            else:
+                st.error(f"❌ ImgBB 上传失败：status={_r.status_code}，响应：{_r.text[:400]}")
+        except Exception as _e:
+            st.error(f"❌ 请求异常：{_e}")
+
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 st.markdown(
     "<div class='step-row'><span class='step-dot'>4</span>"
