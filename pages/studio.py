@@ -231,12 +231,28 @@ if phase == "done":
         with c_all:
             if st.button("一键生成全部预览图", use_container_width=True, key="genall"):
                 bar = st.progress(0, text="批量生成中...")
+                _batch_anc_b64   = st.session_state.get("ancestor_photo_b64")
+                _batch_dec_name  = str(st.session_state.get("form_data", {}).get("deceased_name", "")).lower()
+                _ref_kws_batch   = ["逝者","爷爷","奶奶","父亲","母亲","grandfather",
+                                    "elderly man","elderly woman","deceased","他","她"]
+                if _batch_dec_name:
+                    _ref_kws_batch.append(_batch_dec_name)
                 for idx, sc in enumerate(scenes):
                     _sid = sc.get("scene_id") or f"scene_{idx+1:02d}"
                     _pr  = sc.get("mj_prompt") or sc.get("prompt_global") or sc.get("description") or ""
                     try:
                         _pm  = build_scene_prompts(sc, character_bible, scene_library)
-                        _b64, _ = generate_image_302(_pm.get("image_prompt") or _pr)
+                        _img_prompt = _pm.get("image_prompt") or _pr
+                        # 判断该分镜是否涉及逝者，若是则传入参考照片
+                        _use_ref_batch = False
+                        if _batch_anc_b64:
+                            _subj_lc = str(sc.get("subject", "")).lower()
+                            _desc_lc = str(sc.get("description", "")).lower()
+                            _use_ref_batch = any(kw in _subj_lc or kw in _desc_lc for kw in _ref_kws_batch)
+                        _b64, _ = generate_image_302(
+                            _img_prompt,
+                            reference_b64=_batch_anc_b64 if _use_ref_batch else None,
+                        )
                         if _b64:
                             _cur = st.session_state["studio_scene_images"].get(_sid, [])
                             st.session_state["studio_scene_images"][_sid] = _cur + [_b64]
@@ -342,13 +358,37 @@ if phase == "done":
                         elif vid_prompt:
                             if st.button("生成视频", key=f"genvid_{vid_key}", use_container_width=True):
                                 with st.spinner("正在上传首帧图并提交视频任务..."):
+                                    # 若有逝者参考照片且该分镜涉及逝者，在 prompt 前注入外貌一致性指令
+                                    _vid_anc = st.session_state.get("ancestor_photo_b64")
+                                    _vid_final_prompt = vid_prompt
+                                    if _vid_anc:
+                                        _vid_subj = str(scene.get("subject", "")).lower()
+                                        _vid_desc = str(desc).lower()
+                                        _vid_dec_name = str(st.session_state.get("form_data", {}).get("deceased_name", "")).lower()
+                                        _vid_ref_kws = ["逝者","爷爷","奶奶","父亲","母亲","grandfather",
+                                                        "elderly man","elderly woman","deceased","他","她"]
+                                        if _vid_dec_name:
+                                            _vid_ref_kws.append(_vid_dec_name)
+                                        _vid_use_ref = any(kw in _vid_subj or kw in _vid_desc for kw in _vid_ref_kws)
+                                        if _vid_use_ref:
+                                            _vid_final_prompt = (
+                                                "Keep the main character's face and appearance IDENTICAL to the first frame image. "
+                                                "Do NOT alter the person's face, age, or features. "
+                                                + vid_prompt
+                                            )
                                     vr2 = generate_video_302(
-                                        vid_prompt,
+                                        _vid_final_prompt,
                                         image_url="data:image/png;base64," + imgs[j],
                                         duration=5, poll=False,
                                     )
                                 if vr2.get("error"):
-                                    st.error(f"提交失败：{vr2['error']}")
+                                    # 区分「图床上传失败」和「可灵 API 失败」，给出明确提示
+                                    _err_msg = vr2["error"]
+                                    if "图片上传" in _err_msg or "公共图床" in _err_msg:
+                                        st.error(f"❌ 首帧图上传失败（图床故障）：{_err_msg}\n\n"
+                                                 "请检查 IMGBB_API_KEY 是否已在 Secrets 中配置。")
+                                    else:
+                                        st.error(f"❌ 视频提交失败：{_err_msg}")
                                 else:
                                     st.session_state["studio_scene_videos"][vid_key] = vr2
                                     st.rerun()

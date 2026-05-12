@@ -51,6 +51,9 @@ IMAGE_GEN_FALLBACK  = os.getenv("AI302_IMAGE_GEN_FALLBACK", "gpt-4o-image-genera
 VIDEO_GEN_MODEL     = os.getenv("AI302_VIDEO_GEN_MODEL",    "kling-v1-5-pro")
 AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 
+# ── 图床（首帧图上传，用于 Kling 图生视频）──────────────────────────────────────
+IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "")
+
 # ── 本地 LLM 备用（可选） ──────────────────────────────────────────────────────
 _LOCAL_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "")
 _LOCAL_API_KEY  = os.getenv("LOCAL_LLM_API_KEY",  "lm-studio")
@@ -530,10 +533,33 @@ _KLING_BASE = "https://api.302.ai/klingai"
 
 def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     """
-    将图片字节上传到免费图床，返回公开 HTTPS URL。
-    链路：freeimage.host → litterbox.catbox.moe → None
+    将图片字节上传到图床，返回公开 HTTPS URL。
+    链路：ImgBB（有 key）→ freeimage.host → litterbox.catbox.moe → None
     注：Kling omni3 的 image 字段只接受 HTTPS URL，不接受 base64。
     """
+    import logging as _logging
+    _log = _logging.getLogger("llm_client.upload")
+
+    # ── 方案0: ImgBB（有效 API key，最稳定）──────────────────────────────────────
+    if IMGBB_API_KEY:
+        try:
+            b64str = base64.b64encode(img_bytes).decode()
+            r = _requests.post(
+                "https://api.imgbb.com/1/upload",
+                data={"key": IMGBB_API_KEY, "image": b64str},
+                timeout=30,
+            )
+            if r.status_code == 200:
+                url = r.json().get("data", {}).get("url", "")
+                if url:
+                    _log.info(f"[upload] ImgBB 成功: {url}")
+                    return url
+                _log.warning(f"[upload] ImgBB 返回无 URL: {r.text[:200]}")
+            else:
+                _log.warning(f"[upload] ImgBB 状态码 {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            _log.warning(f"[upload] ImgBB 异常: {e}")
+
     # ── 方案1: freeimage.host（免费，无需注册）──────────────────────────────────
     try:
         b64str = base64.b64encode(img_bytes).decode()
@@ -545,9 +571,10 @@ def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]
         if r.status_code == 200:
             url = r.json().get("image", {}).get("url", "")
             if url:
+                _log.info(f"[upload] freeimage.host 成功: {url}")
                 return url
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning(f"[upload] freeimage.host 异常: {e}")
 
     # ── 方案2: litterbox.catbox.moe（临时1小时，免费）────────────────────────────
     try:
@@ -558,10 +585,12 @@ def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]
             timeout=30,
         )
         if r.status_code == 200 and r.text.strip().startswith("https://"):
+            _log.info(f"[upload] litterbox 成功: {r.text.strip()}")
             return r.text.strip()
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning(f"[upload] litterbox 异常: {e}")
 
+    _log.error("[upload] 所有图床均失败，无法获取公开 URL")
     return None
 
 
