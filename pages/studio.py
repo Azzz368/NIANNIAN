@@ -557,10 +557,13 @@ if phase == "done":
                                 st.session_state["studio_scene_vidprompts"][sid] = \
                                     pm.get("video_prompt") or desc
                                 if _use_ref:
-                                    st.caption("已使用逝者参考照片生成，形象已锁定")
+                                    st.success("✅ 已使用逝者参考照片生成，形象已锁定")
                                 st.rerun()
                             else:
-                                st.error(f"图片生成失败：{err}")
+                                if _use_ref and err:
+                                    st.error(f"❌ 参考图生成失败（images.edit 错误）：{err}\n\n已降级为无参考图生成，请重试。")
+                                else:
+                                    st.error(f"图片生成失败：{err}")
                         except Exception as ex:
                             st.error(str(ex))
 

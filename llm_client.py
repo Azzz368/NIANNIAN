@@ -467,22 +467,31 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
     返回 (b64_string, None) 成功；(None, error_message) 失败。
     """
     # ── 有参考照片时：走 gpt-4o images.edit（角色形象锚定）────────────────────
+    _ref_edit_error: Optional[str] = None
     if reference_b64:
         try:
             import io as _io
             import base64 as _b64
-            img_data = _b64.b64decode(reference_b64)
-            img_file = _io.BytesIO(img_data)
-            img_file.name = "reference.png"
+            from PIL import Image as _PILImg
+
+            # OpenAI images.edit 严格要求 RGBA PNG，先转换
+            raw = _b64.b64decode(reference_b64)
+            pil = _PILImg.open(_io.BytesIO(raw)).convert("RGBA")
+            # 缩放到 1024×1024 以内（API 上限 4 MB）
+            pil.thumbnail((1024, 1024), _PILImg.LANCZOS)
+            buf = _io.BytesIO()
+            pil.save(buf, format="PNG")
+            buf.seek(0)
+            buf.name = "reference.png"
 
             edit_prompt = (
                 f"Use the person in the reference image as the main character. "
-                f"Keep the character's face, age, and appearance IDENTICAL to the reference photo. "
-                f"Generate a new cinematic scene: {prompt}"
+                f"Keep the character's face, age, skin tone, and appearance IDENTICAL to the reference photo. "
+                f"Generate a new cinematic memorial scene: {prompt}"
             )
             resp = PRIMARY_CLIENT.images.edit(
                 model=IMAGE_GEN_FALLBACK,   # gpt-4o-image-generation
-                image=img_file,
+                image=buf,
                 prompt=edit_prompt,
                 size="1024x1024",
                 response_format="b64_json",
@@ -491,9 +500,12 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
             b64 = resp.data[0].b64_json if resp.data else None
             if b64:
                 return b64, None
+            _ref_edit_error = "images.edit 返回空数据"
         except Exception as exc:
-            # 参考图生成失败 → 降级为无参考图生成（仍在 prompt 中保留 DNA 描述）
-            pass  # fall through to normal generation
+            # 参考图生成失败 → 降级为无参考图生成，但把错误暴露出来方便调试
+            _ref_edit_error = str(exc)
+            import logging as _log
+            _log.warning(f"[generate_image_302] images.edit 失败，降级为普通生成：{exc}")
 
     # ── 无参考图（或参考图生成失败）：主力 nano-banana ──────────────────────────
     if "/" in IMAGE_GEN_MODEL:
