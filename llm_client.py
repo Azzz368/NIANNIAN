@@ -534,29 +534,14 @@ _KLING_BASE = "https://api.302.ai/klingai"
 def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     """
     将图片字节上传到图床，返回公开 HTTPS URL。
-    链路：0x0.st → tmpfiles.org → litterbox.catbox.moe → None
-    注：ImgBB 封锁了 Streamlit Cloud 等云服务商 IP，已移除。
+    链路：tmpfiles.org（48h）→ litterbox.catbox.moe（1h）→ None
+    注：ImgBB/0x0.st 均封锁云服务器 IP，已移除。
     注：Kling omni3 的 image 字段只接受 HTTPS URL，不接受 base64。
     """
     import logging as _logging
     _log = _logging.getLogger("llm_client.upload")
 
-    # ── 方案1: 0x0.st（无注册，无 IP 封锁，永久存储）──────────────────────────
-    try:
-        r = _requests.post(
-            "https://0x0.st",
-            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
-            timeout=30,
-        )
-        if r.status_code == 200 and r.text.strip().startswith("https://"):
-            url = r.text.strip()
-            _log.info(f"[upload] 0x0.st 成功: {url}")
-            return url
-        _log.warning(f"[upload] 0x0.st 失败 status={r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        _log.warning(f"[upload] 0x0.st 异常: {e}")
-
-    # ── 方案2: tmpfiles.org（无注册，48h 有效）──────────────────────────────────
+    # ── 方案1: tmpfiles.org（48h有效，云服务器可用）──────────────────────────────
     try:
         r = _requests.post(
             "https://tmpfiles.org/api/v1/upload",
@@ -564,17 +549,17 @@ def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]
             timeout=30,
         )
         if r.status_code == 200:
-            # 返回: {"status":"success","data":{"url":"https://tmpfiles.org/..."}}
-            # 需转为直链: tmpfiles.org/xxx → tmpfiles.org/dl/xxx
             page_url = r.json().get("data", {}).get("url", "")
             if page_url:
+                # 页面 URL 转直链：tmpfiles.org/xxx → tmpfiles.org/dl/xxx
                 direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
                 _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
                 return direct_url
+        _log.warning(f"[upload] tmpfiles.org 失败 status={r.status_code}: {r.text[:200]}")
     except Exception as e:
         _log.warning(f"[upload] tmpfiles.org 异常: {e}")
 
-    # ── 方案3: litterbox.catbox.moe（1小时有效）────────────────────────────────
+    # ── 方案2: litterbox.catbox.moe（1小时有效）────────────────────────────────
     try:
         r = _requests.post(
             "https://litterbox.catbox.moe/resources/internals/api.php",
