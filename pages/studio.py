@@ -223,6 +223,10 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
             st.markdown("---")
             # ── Step 1: 生成 JWT ──────────────────────────────────────────────
             st.markdown("**Step 1 · 生成可灵官方 JWT Token**")
+            import os as _os
+            _kid = _os.getenv("KLING_ACCESS_KEY_ID", "")
+            _ksec = _os.getenv("KLING_ACCESS_KEY_SECRET", "")
+            st.caption(f"读到的 KEY_ID：`{_kid[:6]}...{_kid[-4:]}` （共{len(_kid)}字符）| SECRET：`{'已配置' if _ksec else '❌ 未配置'}`（共{len(_ksec)}字符）")
             try:
                 _tok = _kjwt()
                 st.success(f"✅ JWT 生成成功（前30字符）：`{_tok[:30]}...`")
