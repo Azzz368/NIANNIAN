@@ -619,11 +619,8 @@ def generate_video_302(
     submit_url    = f"{_KLING_BASE}/{endpoint_path}"
     auth_headers  = {"Authorization": f"Bearer {_302_API_KEY}", "Content-Type": "application/json"}
 
-    # 处理 image_url：
-    #   - base64 data URL（data:image/...;base64,...）→ 302.ai Kling 原生支持，直接传入
-    #   - https URL → 直接传入
-    # Kling omni3 正确用法：image = 单个 HTTPS URL 字符串（非数组、非 base64）
-    # images:[] / image_url / o1_type 均被 API 静默忽略
+    # 处理 image_url：base64 data URL → 上传公共图床获取 HTTPS URL；https URL → 直接用
+    # Kling omni3 正确提交格式：images:[url]  +  o1_type:"firstTail"（首帧锁定）
     public_img_url: Optional[str] = None
     if image_url:
         if image_url.startswith("data:"):
@@ -651,7 +648,9 @@ def generate_video_302(
             "mode": "pro",
         }
         if public_img_url:
-            body["image"] = public_img_url  # 单个字符串，非数组
+            # Kling omni3 正确格式：images 数组 + o1_type "firstTail"
+            body["images"]   = [public_img_url]
+            body["o1_type"]  = o1_type or "firstTail"
 
         r = _requests.post(submit_url, headers=auth_headers, json=body, timeout=60)
         r.raise_for_status()
