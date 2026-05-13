@@ -253,9 +253,18 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                     headers={"Authorization": f"Bearer {_tok2}", "Content-Type": "application/json"},
                     json=_body, timeout=60,
                 )
-                _kdata = _kr.json()
-                _task_id = _kdata.get("data", {}).get("task_id", "")
-                if _kdata.get("code") == 0 and _task_id:
+                # 先显示原始 HTTP 状态，方便排查
+                st.caption(f"HTTP status: {_kr.status_code}  |  Content-Type: {_kr.headers.get('content-type','?')}")
+                _raw_text = _kr.text
+                try:
+                    _kdata = _kr.json()
+                except Exception:
+                    _kdata = None
+                if _kdata is None:
+                    _s2.error(f"❌ 响应不是 JSON（status={_kr.status_code}）")
+                    st.code(_raw_text[:500], language="text")
+                elif _kdata.get("code") == 0:
+                    _task_id = _kdata.get("data", {}).get("task_id", "")
                     _s2.success(f"✅ 提交成功！task_id：`{_task_id}`")
                     st.markdown("**Step 3 · 完整 API 响应**")
                     st.json(_kdata)
@@ -264,6 +273,8 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                     st.json(_kdata)
             except Exception as _ke:
                 _s2.error(f"❌ 可灵请求异常：{_ke}")
+                import traceback as _tb
+                st.code(_tb.format_exc(), language="text")
 
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 st.markdown(

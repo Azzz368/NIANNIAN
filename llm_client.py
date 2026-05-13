@@ -619,7 +619,10 @@ def generate_video_kling(
     submit_url = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video"
     try:
         r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
-        resp_data = r.json()
+        try:
+            resp_data = r.json()
+        except Exception:
+            return {"error": f"响应非 JSON (status={r.status_code})：{r.text[:300]}", "debug_body": body}
     except Exception as e:
         return {"error": f"提交请求异常：{e}"}
 
