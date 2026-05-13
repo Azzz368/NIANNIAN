@@ -542,9 +542,55 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
 # 状态：submitted / processing / succeed / failed
 # 首帧：body.image = base64 或 HTTPS URL
 
-_KLING_OFFICIAL_BASE   = "https://api.klingai.com"
+_KLING_OFFICIAL_BASE   = "https://api-beijing.klingai.com"
 _KLING_ACCESS_KEY_ID     = os.getenv("KLING_ACCESS_KEY_ID", "")
 _KLING_ACCESS_KEY_SECRET = os.getenv("KLING_ACCESS_KEY_SECRET", "")
+
+
+def _upload_image_to_public(img_bytes: bytes, ext: str = "png") -> Optional[str]:
+    """
+    将图片字节上传到图床，返回公开 HTTPS URL。
+    链路：tmpfiles.org（48h）→ litterbox.catbox.moe（1h）→ None
+    可灵官方 API image 字段只接受 HTTPS URL，不接受 base64。
+    """
+    import logging as _logging
+    _log = _logging.getLogger("llm_client.upload")
+
+    # ── 方案1: tmpfiles.org ──────────────────────────────────────────────────
+    try:
+        r = _requests.post(
+            "https://tmpfiles.org/api/v1/upload",
+            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            page_url = r.json().get("data", {}).get("url", "")
+            if page_url:
+                direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
+                return direct_url
+        _log.warning(f"[upload] tmpfiles.org 失败 status={r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        _log.warning(f"[upload] tmpfiles.org 异常: {e}")
+
+    # ── 方案2: litterbox.catbox.moe（1小时有效）─────────────────────────────
+    try:
+        r = _requests.post(
+            "https://litterbox.catbox.moe/resources/internals/api.php",
+            data={"reqtype": "fileupload", "time": "1h"},
+            files={"fileToUpload": (f"frame.{ext}", img_bytes, f"image/{ext}")},
+            timeout=30,
+        )
+        if r.status_code == 200 and r.text.strip().startswith("https://"):
+            url = r.text.strip()
+            _log.info(f"[upload] litterbox 成功: {url}")
+            return url
+        _log.warning(f"[upload] litterbox 失败 status={r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        _log.warning(f"[upload] litterbox 异常: {e}")
+
+    _log.error("[upload] 所有图床均失败")
+    return None
 
 
 def _kling_jwt() -> str:
@@ -604,15 +650,20 @@ def generate_video_kling(
         "cfg_scale": 0.5,
     }
 
-    # 处理首帧图片
+    # 处理首帧图片：官方 API image 字段只接受 HTTPS URL，base64 需先上传图床
     if image_url:
         if image_url.startswith("data:"):
-            # base64 data URL → 提取纯 base64 部分直接传入（官方支持 base64）
             try:
-                b64_part = image_url.split(",", 1)[1]
-                body["image"] = b64_part   # 官方 image 字段接受纯 base64 字符串
+                header_part, b64_part = image_url.split(",", 1)
+                mime = header_part.split(":")[1].split(";")[0]
+                ext  = mime.split("/")[-1] if "/" in mime else "png"
+                img_bytes = base64.b64decode(b64_part)
+                public_url = _upload_image_to_public(img_bytes, ext)
             except Exception as e:
                 return {"error": f"base64 解析失败：{e}"}
+            if not public_url:
+                return {"error": "首帧图片上传图床失败，请稍后重试"}
+            body["image"] = public_url
         else:
             body["image"] = image_url    # 已是 HTTPS URL，直接传入
 

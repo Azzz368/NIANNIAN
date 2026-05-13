@@ -215,10 +215,10 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                                     key="dbg_vid_prompt")
         if st.button("🚀 开始全流程追踪", key="dbg_run_trace", type="primary"):
             import requests as _rq2, base64 as _b64_2
-            from llm_client import _kling_jwt as _kjwt, _KLING_OFFICIAL_BASE as _KBASE
+            from llm_client import _kling_jwt as _kjwt, _KLING_OFFICIAL_BASE as _KBASE, _upload_image_to_public as _upl
 
             _dbg_b64 = _dbg_imgs[_dbg_sel]
-            _dbg_b64_pure = _dbg_b64  # 纯 base64，官方 API 直接支持，无需上传图床
+            _dbg_img_bytes = _b64_2.b64decode(_dbg_b64)
 
             st.markdown("---")
             # ── Step 1: 生成 JWT ──────────────────────────────────────────────
@@ -228,6 +228,17 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 st.success(f"✅ JWT 生成成功（前30字符）：`{_tok[:30]}...`")
             except Exception as _je:
                 st.error(f"❌ JWT 生成失败：{_je}\n\n请检查 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET 是否已在 Secrets 中配置")
+                st.stop()
+
+            # ── Step 1.5: 上传首帧图到图床 ────────────────────────────────────
+            st.markdown("**Step 1.5 · 上传首帧图到图床（获取 HTTPS URL）**")
+            _s15 = st.empty()
+            _s15.info("⏳ 上传中...")
+            _pub_url = _upl(_dbg_img_bytes, "png")
+            if _pub_url:
+                _s15.success(f"✅ 上传成功：`{_pub_url}`")
+            else:
+                _s15.error("❌ 图床上传失败，无法继续")
                 st.stop()
 
             # ── Step 2: 提交可灵官方 API ──────────────────────────────────────
@@ -241,11 +252,9 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 "duration": "5",
                 "mode": "pro",
                 "aspect_ratio": "16:9",
-                "cfg_scale": 0.5,
-                "image": _dbg_b64_pure,
+                "image": _pub_url,
             }
-            _body_display = {**_body, "image": f"<base64, {len(_dbg_b64_pure)} chars>"}
-            st.code(__import__("json").dumps(_body_display, ensure_ascii=False, indent=2), language="json")
+            st.code(__import__("json").dumps(_body, ensure_ascii=False, indent=2), language="json")
             try:
                 _tok2 = _kjwt()
                 _kr = _rq2.post(
