@@ -215,91 +215,52 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                                     key="dbg_vid_prompt")
         if st.button("🚀 开始全流程追踪", key="dbg_run_trace", type="primary"):
             import requests as _rq2, base64 as _b64_2
-            from llm_client import _302_API_KEY as _AK2, VIDEO_GEN_MODEL as _VGM
+            from llm_client import _kling_jwt as _kjwt, _KLING_OFFICIAL_BASE as _KBASE
 
             _dbg_b64 = _dbg_imgs[_dbg_sel]
-            _dbg_img_bytes = _b64_2.b64decode(_dbg_b64)
+            _dbg_b64_pure = _dbg_b64  # 纯 base64，官方 API 直接支持，无需上传图床
 
             st.markdown("---")
-            # ── Step 1: 上传图床 ──────────────────────────────────────────────
-            st.markdown("**Step 1 · 上传首帧图到图床**")
-            _s1 = st.empty()
-            _s1.info("⏳ 正在上传到 tmpfiles.org...")
-            _pub_url = None
+            # ── Step 1: 生成 JWT ──────────────────────────────────────────────
+            st.markdown("**Step 1 · 生成可灵官方 JWT Token**")
             try:
-                _ur = _rq2.post("https://tmpfiles.org/api/v1/upload",
-                                files={"file": ("frame.png", _dbg_img_bytes, "image/png")},
-                                timeout=30)
-                if _ur.status_code == 200:
-                    _page = _ur.json().get("data", {}).get("url", "")
-                    _pub_url = _page.replace("tmpfiles.org/", "tmpfiles.org/dl/") if _page else None
-                    if _pub_url:
-                        _s1.success(f"✅ tmpfiles.org 上传成功\n\n直链：`{_pub_url}`")
-                    else:
-                        _s1.error(f"❌ tmpfiles.org 返回无 URL：{_ur.text[:200]}")
-                else:
-                    _s1.warning(f"⚠️ tmpfiles.org 失败 status={_ur.status_code}，切换 litterbox...")
-                    _lr = _rq2.post("https://litterbox.catbox.moe/resources/internals/api.php",
-                                    data={"reqtype": "fileupload", "time": "1h"},
-                                    files={"fileToUpload": ("frame.png", _dbg_img_bytes, "image/png")},
-                                    timeout=30)
-                    if _lr.status_code == 200 and _lr.text.strip().startswith("https://"):
-                        _pub_url = _lr.text.strip()
-                        _s1.success(f"✅ litterbox 上传成功\n\n直链：`{_pub_url}`")
-                    else:
-                        _s1.error(f"❌ litterbox 也失败：{_lr.text[:200]}")
-            except Exception as _ue:
-                _s1.error(f"❌ 上传异常：{_ue}")
-
-            if not _pub_url:
-                st.error("🛑 图床全部失败，无法继续提交可灵。")
+                _tok = _kjwt()
+                st.success(f"✅ JWT 生成成功（前30字符）：`{_tok[:30]}...`")
+            except Exception as _je:
+                st.error(f"❌ JWT 生成失败：{_je}\n\n请检查 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET 是否已在 Secrets 中配置")
                 st.stop()
 
-            # ── Step 1.5: 验证图片 URL 是否真的可访问 ────────────────────────
-            st.markdown("**Step 1.5 · 验证图片 URL 可访问性**")
-            try:
-                _hd = _rq2.head(_pub_url, timeout=10, allow_redirects=True)
-                if _hd.status_code == 200:
-                    st.success(f"✅ URL 可访问，Content-Type: `{_hd.headers.get('content-type','?')}`，"
-                               f"大小: `{_hd.headers.get('content-length','?')}` bytes")
-                else:
-                    st.error(f"❌ URL 返回 {_hd.status_code}，可灵可能无法下载此图片！")
-            except Exception as _he:
-                st.warning(f"⚠️ HEAD 请求失败（不影响提交）：{_he}")
-            st.markdown("**Step 2 · 提交可灵 API**")
+            # ── Step 2: 提交可灵官方 API ──────────────────────────────────────
+            st.markdown("**Step 2 · 提交可灵官方 API（kling-v3 首帧模式）**")
             _s2 = st.empty()
-            _s2.info("⏳ 正在提交到可灵...")
-            _model_path = _VGM.lstrip("/")
-            _ep = _model_path.split("/")[-1] if "/" in _model_path else _model_path
-            _submit_url = f"https://api.302.ai/klingai/{_ep}"
+            _s2.info("⏳ 正在提交...")
+            _submit_url = f"{_KBASE}/v1/videos/image2video"
             _body = {
+                "model_name": "kling-v3",
                 "prompt": _dbg_prompt,
-                "duration": 5,
-                "aspect_ratio": "1:1",
+                "duration": "5",
                 "mode": "pro",
-                "enable_audio": True,
-                "images": [_pub_url],
-                "o1_type": "referImage",
+                "aspect_ratio": "16:9",
+                "cfg_scale": 0.5,
+                "image": _dbg_b64_pure,
             }
-            st.code(f"POST {_submit_url}\n\n请求体：{__import__('json').dumps(_body, ensure_ascii=False, indent=2)}", language="json")
+            _body_display = {**_body, "image": f"<base64, {len(_dbg_b64_pure)} chars>"}
+            st.code(__import__("json").dumps(_body_display, ensure_ascii=False, indent=2), language="json")
             try:
+                _tok2 = _kjwt()
                 _kr = _rq2.post(
                     _submit_url,
-                    headers={"Authorization": f"Bearer {_AK2}", "Content-Type": "application/json"},
+                    headers={"Authorization": f"Bearer {_tok2}", "Content-Type": "application/json"},
                     json=_body, timeout=60,
                 )
                 _kdata = _kr.json()
-                _task_id = (
-                    _kdata.get("data", {}).get("task", {}).get("id")
-                    or _kdata.get("data", {}).get("taskId")
-                    or _kdata.get("task_id") or ""
-                )
-                if _task_id:
-                    _s2.success(f"✅ 可灵提交成功！\n\ntask_id：`{_task_id}`")
+                _task_id = _kdata.get("data", {}).get("task_id", "")
+                if _kdata.get("code") == 0 and _task_id:
+                    _s2.success(f"✅ 提交成功！task_id：`{_task_id}`")
                     st.markdown("**Step 3 · 完整 API 响应**")
                     st.json(_kdata)
                 else:
-                    _s2.error(f"❌ 提交失败，未获得 task_id")
+                    _s2.error(f"❌ 提交失败 code={_kdata.get('code')}：{_kdata.get('message','')}")
                     st.json(_kdata)
             except Exception as _ke:
                 _s2.error(f"❌ 可灵请求异常：{_ke}")
@@ -470,28 +431,32 @@ if phase == "done":
                             )
                             if st.button("刷新视频状态", key=f"qvid_{vid_key}", use_container_width=True):
                                 import requests as _rq
-                                from llm_client import _302_API_KEY as _AK
+                                from llm_client import _kling_jwt as _kjwt2, _KLING_OFFICIAL_BASE as _KB2
                                 try:
+                                    _poll_url = f"{_KB2}/v1/videos/image2video/{vr['task_id']}"
                                     _r2 = _rq.get(
-                                        f"https://api.302.ai/klingai/task/{vr['task_id']}/fetch",
-                                        headers={"Authorization": f"Bearer {_AK}"}, timeout=20,
+                                        _poll_url,
+                                        headers={"Authorization": f"Bearer {_kjwt2()}"},
+                                        timeout=20,
                                     )
-                                    _pd = _r2.json().get("data", {})
-                                    _new_status = _pd.get("status", cur_status)
-                                    if _new_status == 99:
-                                        # taskWorks[0].resource.resource  OR  works[0].resource.url
-                                        _vurl = ""
-                                        _tw = _pd.get("taskWorks") or []
-                                        _wk = _pd.get("works") or []
-                                        if _tw:
-                                            _vurl = (_tw[0].get("resource") or {}).get("resource") or ""
-                                        if not _vurl and _wk:
-                                            _vurl = (_wk[0].get("resource") or {}).get("url") or ""
+                                    _pd = _r2.json()
+                                    _task_data = _pd.get("data", {})
+                                    _new_status = _task_data.get("task_status", "processing")
+                                    if _new_status == "succeed":
+                                        _videos = _task_data.get("task_result", {}).get("videos", [])
+                                        _vurl = _videos[0].get("url", "") if _videos else ""
                                         st.session_state["studio_scene_videos"][vid_key] = {
                                             "url": _vurl, "task_id": vr["task_id"], "status": 99
                                         }
+                                    elif _new_status == "failed":
+                                        st.session_state["studio_scene_videos"][vid_key] = {
+                                            **vr, "status": "failed",
+                                            "error": _task_data.get("task_status_msg", "失败")
+                                        }
                                     else:
-                                        st.session_state["studio_scene_videos"][vid_key] = {**vr, "status": _new_status}
+                                        st.session_state["studio_scene_videos"][vid_key] = {
+                                            **vr, "status": "processing"
+                                        }
                                     st.rerun()
                                 except Exception as _e:
                                     st.warning(f"查询失败：{_e}")
@@ -522,11 +487,9 @@ if phase == "done":
                                         duration=5, poll=False,
                                     )
                                 if vr2.get("error"):
-                                    # 区分「图床上传失败」和「可灵 API 失败」，给出明确提示
                                     _err_msg = vr2["error"]
-                                    if "图片上传" in _err_msg or "公共图床" in _err_msg:
-                                        st.error(f"❌ 首帧图上传失败（图床故障）：{_err_msg}\n\n"
-                                                 "请检查 IMGBB_API_KEY 是否已在 Secrets 中配置。")
+                                    if "KLING_ACCESS_KEY" in _err_msg or "JWT" in _err_msg:
+                                        st.error(f"❌ 可灵官方 API 鉴权失败：{_err_msg}\n\n请在 Streamlit Secrets 中填写 KLING_ACCESS_KEY_ID 和 KLING_ACCESS_KEY_SECRET")
                                     else:
                                         st.error(f"❌ 视频提交失败：{_err_msg}")
                                 else:

@@ -1,20 +1,21 @@
 """
-念念 LLM 客户端 — 接入 302.ai 统一网关
+念念 LLM 客户端 — 接入 302.ai 统一网关 + 可灵官方 API
 任务与模型映射：
   文本结构化分析（家属访谈 / MV01-06）: claude-sonnet-4-6  →（失败自动回退）→ gpt-5.4
   图像内容理解（describe_image）       : gemini-2.0-pro-image-preview
   图像生成（generate_image_302）        : gemini-2.0-pro-image-preview
-  视频生成（generate_video_302）        : kling-v1-5-pro (Kling O3)
+  视频生成（generate_video_kling）      : kling-v3（可灵官方直连，首帧模式）
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
   AI302_API_KEY          = sk-xxxxxxxxxxxx
-  AI302_TEXT_MODEL       = claude-sonnet-4-6   （主力文本模型）
-  AI302_TEXT_FALLBACK    = gpt-5.4             （文本模型回退）
+  AI302_TEXT_MODEL       = claude-sonnet-4-6
+  AI302_TEXT_FALLBACK    = gpt-5.4
   AI302_VISION_MODEL     = gemini-2.0-pro-image-preview
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
-  AI302_VIDEO_GEN_MODEL  = kling-v1-5-pro
   AI302_AUDIO_MODEL      = whisper-1
-  LOCAL_LLM_BASE_URL     =                     （本地备用，可留空）
+  KLING_ACCESS_KEY_ID    = （可灵官方 AccessKey ID）
+  KLING_ACCESS_KEY_SECRET= （可灵官方 AccessKey Secret）
+  LOCAL_LLM_BASE_URL     =  （本地备用，可留空）
   LOCAL_LLM_MODEL        =
 """
 import base64
@@ -533,171 +534,152 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
         return None, fallback_err_prefix + str(exc)
 
 
-# ── 视频生成（302.ai Kling m2v_omni_3） ──────────────────────────────────────
-# 接口文档实测：
-#   提交：POST https://api.302.ai/klingai/m2v_omni_3_video
-#   轮询：GET  https://api.302.ai/klingai/task/{task_id}/fetch
-#   status: 5=排队中, 10=生成中, 99=已完成
-#   视频 URL 在 data.works[0].resource.resource（omni3 格式）
+# ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────────
+# 文档：https://www.klingai.com/document-api/apiReference/model/imageToVideo
+# 鉴权：JWT（HS256），iss=AccessKeyId，exp=当前+30min
+# 提交：POST https://api.klingai.com/v1/videos/image2video
+# 查询：GET  https://api.klingai.com/v1/videos/image2video/{task_id}
+# 状态：submitted / processing / succeed / failed
+# 首帧：body.image = base64 或 HTTPS URL
 
-_KLING_BASE = "https://api.302.ai/klingai"
+_KLING_OFFICIAL_BASE   = "https://api.klingai.com"
+_KLING_ACCESS_KEY_ID     = os.getenv("KLING_ACCESS_KEY_ID", "")
+_KLING_ACCESS_KEY_SECRET = os.getenv("KLING_ACCESS_KEY_SECRET", "")
 
 
-def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]:
-    """
-    将图片字节上传到图床，返回公开 HTTPS URL。
-    链路：tmpfiles.org（48h）→ litterbox.catbox.moe（1h）→ None
-    注：ImgBB/0x0.st 均封锁云服务器 IP，已移除。
-    注：Kling omni3 的 image 字段只接受 HTTPS URL，不接受 base64。
-    """
-    import logging as _logging
-    _log = _logging.getLogger("llm_client.upload")
-
-    # ── 方案1: tmpfiles.org（48h有效，云服务器可用）──────────────────────────────
+def _kling_jwt() -> str:
+    """生成可灵官方 API 的 JWT Bearer Token（有效期 30 分钟）"""
     try:
-        r = _requests.post(
-            "https://tmpfiles.org/api/v1/upload",
-            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
-            timeout=30,
-        )
-        if r.status_code == 200:
-            page_url = r.json().get("data", {}).get("url", "")
-            if page_url:
-                # 页面 URL 转直链：tmpfiles.org/xxx → tmpfiles.org/dl/xxx
-                direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-                _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
-                return direct_url
-        _log.warning(f"[upload] tmpfiles.org 失败 status={r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        _log.warning(f"[upload] tmpfiles.org 异常: {e}")
-
-    # ── 方案2: litterbox.catbox.moe（1小时有效）────────────────────────────────
-    try:
-        r = _requests.post(
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-            data={"reqtype": "fileupload", "time": "1h"},
-            files={"fileToUpload": (f"frame.{ext}", img_bytes, f"image/{ext}")},
-            timeout=30,
-        )
-        if r.status_code == 200 and r.text.strip().startswith("https://"):
-            url = r.text.strip()
-            _log.info(f"[upload] litterbox 成功: {url}")
-            return url
-        _log.warning(f"[upload] litterbox 失败 status={r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        _log.warning(f"[upload] litterbox 异常: {e}")
-
-    _log.error("[upload] 所有图床均失败，无法获取公开 URL")
-    return None
+        import jwt as _jwt
+    except ImportError:
+        raise RuntimeError("需要安装 PyJWT：pip install PyJWT")
+    now = int(time.time())
+    payload = {
+        "iss": _KLING_ACCESS_KEY_ID,
+        "exp": now + 1800,   # 30 分钟有效期
+        "nbf": now - 5,      # 允许 5 秒时钟误差
+    }
+    return _jwt.encode(payload, _KLING_ACCESS_KEY_SECRET, algorithm="HS256")
 
 
-def generate_video_302(
+def generate_video_kling(
     prompt: str,
-    image_url: Optional[str] = None,
+    image_url: Optional[str] = None,   # base64 data URL 或 HTTPS URL（用作首帧）
     duration: int = 5,
+    mode: str = "pro",
+    aspect_ratio: str = "16:9",
     poll: bool = True,
-    max_wait: int = 300,
-    o1_type: Optional[str] = None,
+    max_wait: int = 600,
 ) -> Dict[str, Any]:
     """
-    通过 302.ai 调用 Kling m2v_omni_3_video 生成视频。
-    image_url : base64 data URL（data:image/png;base64,...）或 https URL 均可。
-                - base64 data URL → 上传到免费图床获取 HTTPS URL → 以 images:[url] JSON 提交
-                - https URL      → 直接以 images:[url] JSON 提交
-    o1_type   : Kling omni3 功能类型。
-                - 有图片时默认 "referImage"（图片参考，omni3 不支持首帧，最多 1-7 张）
-                - None + 无图片：纯文生视频
+    调用可灵官方 API（kling-v3）生成视频。
+    image_url : base64 data URL 或 HTTPS URL，作为视频首帧（图生视频）。
+                留空则为纯文生视频。
     poll      : True 时轮询等待完成并返回视频 URL；False 立即返回 task_id。
     返回:
       成功 → {"url": "https://...", "task_id": "..."}
-      排队 → {"task_id": "...", "status": 5}
+      排队 → {"task_id": "...", "status": "processing"}
       失败 → {"error": "..."}
     """
-    model_path    = VIDEO_GEN_MODEL.lstrip("/")
-    endpoint_path = model_path.split("/")[-1] if "/" in model_path else model_path
-    submit_url    = f"{_KLING_BASE}/{endpoint_path}"
-    auth_headers  = {"Authorization": f"Bearer {_302_API_KEY}", "Content-Type": "application/json"}
-
-    # 处理 image_url：base64 data URL → 上传公共图床获取 HTTPS URL；https URL → 直接用
-    # Kling omni3 提交格式：images:[url]  +  o1_type:"referImage"（图片参考模式）
-    public_img_url: Optional[str] = None
-    if image_url:
-        if image_url.startswith("data:"):
-            # base64 data URL → 先上传到公共图床，获取 HTTPS URL
-            try:
-                header_part, b64_part = image_url.split(",", 1)
-                mime = header_part.split(":")[1].split(";")[0]
-                ext  = mime.split("/")[-1] if "/" in mime else "jpg"
-                img_bytes = base64.b64decode(b64_part)
-                public_img_url = _upload_image_to_public(img_bytes, ext)
-            except Exception as e:
-                return {"error": f"base64 解码失败：{e}"}
-            if not public_img_url:
-                return {"error": "图片上传到公共图床失败，请稍后重试"}
-        else:
-            public_img_url = image_url  # 已是 HTTPS URL，直接使用
-
-    effective_aspect = "auto" if public_img_url else "16:9"
+    if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
+        return {"error": "未配置 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET，请在 Secrets 中填写"}
 
     try:
-        body: Dict[str, Any] = {
-            "prompt": prompt,
-            "duration": duration,
-            "aspect_ratio": effective_aspect,
-            "mode": "pro",
-        }
-        if public_img_url:
-            # Kling omni3：images 数组 + o1_type "referImage"（图片参考，omni3 不支持首帧）
-            body["images"]   = [public_img_url]
-            body["o1_type"]  = o1_type or "referImage"
+        token = _kling_jwt()
+    except Exception as e:
+        return {"error": f"JWT 生成失败：{e}"}
 
-        r = _requests.post(submit_url, headers=auth_headers, json=body, timeout=60)
-        r.raise_for_status()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    # 构建请求体
+    body: Dict[str, Any] = {
+        "model_name": "kling-v3",
+        "prompt": prompt,
+        "duration": str(duration),      # 官方接受字符串 "5" 或 "10"
+        "mode": mode,                   # "std" 或 "pro"
+        "aspect_ratio": aspect_ratio,
+        "cfg_scale": 0.5,
+    }
+
+    # 处理首帧图片
+    if image_url:
+        if image_url.startswith("data:"):
+            # base64 data URL → 提取纯 base64 部分直接传入（官方支持 base64）
+            try:
+                b64_part = image_url.split(",", 1)[1]
+                body["image"] = b64_part   # 官方 image 字段接受纯 base64 字符串
+            except Exception as e:
+                return {"error": f"base64 解析失败：{e}"}
+        else:
+            body["image"] = image_url    # 已是 HTTPS URL，直接传入
+
+    submit_url = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video"
+    try:
+        r = _requests.post(submit_url, headers=headers, json=body, timeout=60)
         resp_data = r.json()
-        task_id = (
-            resp_data.get("data", {}).get("task", {}).get("id")
-            or resp_data.get("data", {}).get("taskId")
-            or resp_data.get("task_id")
-            or ""
-        )
-        if not task_id:
-            return {"error": f"提交失败，未获得 task_id：{r.text[:300]}", "debug_body": body}
-    except Exception as exc:
-        return {"error": f"提交请求异常：{exc}"}
+    except Exception as e:
+        return {"error": f"提交请求异常：{e}"}
+
+    # 解析 task_id
+    # 官方响应：{"code":0, "message":"SUCCEED", "data":{"task_id":"...", "task_status":"submitted"}}
+    if resp_data.get("code", -1) != 0:
+        return {"error": f"提交失败 code={resp_data.get('code')}：{resp_data.get('message', '')}",
+                "debug_body": body, "raw": resp_data}
+
+    task_id = resp_data.get("data", {}).get("task_id", "")
+    if not task_id:
+        return {"error": f"未获得 task_id：{resp_data}", "debug_body": body}
 
     if not poll:
-        return {"task_id": task_id, "status": 5, "debug_body": body}
+        return {"task_id": task_id, "status": "submitted", "debug_body": body}
 
     # 轮询等待完成
-    poll_url = f"{_KLING_BASE}/task/{task_id}/fetch"
-    elapsed  = 0
-    interval = 10
+    poll_url  = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video/{task_id}"
+    elapsed   = 0
+    interval  = 10
     while elapsed < max_wait:
         time.sleep(interval)
         elapsed += interval
         try:
-            pr = _requests.get(poll_url, headers={"Authorization": f"Bearer {_302_API_KEY}"}, timeout=20)
-            pd = pr.json().get("data", {})
-            status = pd.get("status")
-            if status == 99:  # 完成
-                # taskWorks[0].resource.resource  OR  works[0].resource.url
-                url = ""
-                task_works = pd.get("taskWorks") or []
-                works      = pd.get("works")     or []
-                if task_works:
-                    url = (task_works[0].get("resource") or {}).get("resource") or ""
-                if not url and works:
-                    url = (works[0].get("resource") or {}).get("url") or ""
-                if url:
-                    return {"url": url, "task_id": task_id}
+            # JWT 每次轮询都需要刷新（防止过期）
+            token = _kling_jwt()
+            pr = _requests.get(
+                poll_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=20,
+            )
+            pd = pr.json()
+            if pd.get("code", -1) != 0:
+                return {"error": f"查询失败：{pd.get('message','')}", "task_id": task_id}
+
+            task_data   = pd.get("data", {})
+            task_status = task_data.get("task_status", "")
+
+            if task_status == "succeed":
+                # 视频 URL：data.task_result.videos[0].url
+                videos = task_data.get("task_result", {}).get("videos", [])
+                video_url = videos[0].get("url", "") if videos else ""
+                if video_url:
+                    return {"url": video_url, "task_id": task_id}
                 return {"error": "任务完成但未返回视频 URL", "task_id": task_id}
-            elif status not in (5, 10, None):
-                return {"error": f"任务状态异常：status={status}", "task_id": task_id}
+
+            elif task_status == "failed":
+                reason = task_data.get("task_status_msg", "未知原因")
+                return {"error": f"任务失败：{reason}", "task_id": task_id}
+
+            # submitted / processing → 继续等待
         except Exception:
-            pass  # 网络抖动，继续等待
+            pass
 
-    return {"task_id": task_id, "status": 5, "error": f"等待超时（{max_wait}s），task_id={task_id}"}
+    return {"task_id": task_id, "status": "processing",
+            "error": f"等待超时（{max_wait}s），可手动轮询 task_id={task_id}"}
 
+
+# 兼容旧调用名（studio.py 等地方仍用 generate_video_302）
+generate_video_302 = generate_video_kling
 
 
 
