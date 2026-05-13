@@ -168,22 +168,12 @@ else:
 import os as _os
 _imgbb_key = _os.getenv("IMGBB_API_KEY", "")
 with st.expander("🔧 调试：测试图床上传连通性", expanded=False):
-    st.caption("依次测试 0x0.st → tmpfiles.org → litterbox，确认哪个可用")
+    st.caption("依次测试 tmpfiles.org → litterbox，确认哪个可用")
     if st.button("立即测试图床上传", key="test_imgbb"):
         import requests as _rq, base64 as _b64
         _test_bytes = _b64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         )
-        # 测试 0x0.st
-        try:
-            _r = _rq.post("https://0x0.st",
-                          files={"file": ("test.png", _test_bytes, "image/png")}, timeout=15)
-            if _r.status_code == 200 and _r.text.strip().startswith("https://"):
-                st.success(f"✅ 0x0.st 成功：{_r.text.strip()}")
-            else:
-                st.error(f"❌ 0x0.st 失败 status={_r.status_code}：{_r.text[:200]}")
-        except Exception as _e:
-            st.error(f"❌ 0x0.st 异常：{_e}")
         # 测试 tmpfiles.org
         try:
             _r2 = _rq.post("https://tmpfiles.org/api/v1/upload",
@@ -206,6 +196,101 @@ with st.expander("🔧 调试：测试图床上传连通性", expanded=False):
                 st.error(f"❌ litterbox 失败 status={_r3.status_code}：{_r3.text[:200]}")
         except Exception as _e3:
             st.error(f"❌ litterbox 异常：{_e3}")
+
+# ─── 首帧图上传 + 可灵提交全流程调试台 ────────────────────────────────────────
+with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", expanded=False):
+    st.caption("选择一张已生成的分镜图片，追踪：上传图床 → 提交可灵 → 获取 task_id 的每一步")
+    _dbg_imgs = {}
+    for _sc in st.session_state.get("studio_scenes", []):
+        _sid2 = _sc.get("scene_id") or "unknown"
+        _imgs2 = st.session_state.get("studio_scene_images", {}).get(_sid2, [])
+        for _j2, _b in enumerate(_imgs2):
+            _dbg_imgs[f"{_sid2} · 版本{_j2+1}"] = _b
+    if not _dbg_imgs:
+        st.info("请先生成至少一张分镜图片，再使用此调试台。")
+    else:
+        _dbg_sel = st.selectbox("选择分镜图片", list(_dbg_imgs.keys()), key="dbg_scene_sel")
+        _dbg_prompt = st.text_input("视频 Prompt（可修改）",
+                                    value="cinematic slow motion, warm nostalgic atmosphere",
+                                    key="dbg_vid_prompt")
+        if st.button("🚀 开始全流程追踪", key="dbg_run_trace", type="primary"):
+            import requests as _rq2, base64 as _b64_2
+            from llm_client import _302_API_KEY as _AK2, VIDEO_GEN_MODEL as _VGM
+
+            _dbg_b64 = _dbg_imgs[_dbg_sel]
+            _dbg_img_bytes = _b64_2.b64decode(_dbg_b64)
+
+            st.markdown("---")
+            # ── Step 1: 上传图床 ──────────────────────────────────────────────
+            st.markdown("**Step 1 · 上传首帧图到图床**")
+            _s1 = st.empty()
+            _s1.info("⏳ 正在上传到 tmpfiles.org...")
+            _pub_url = None
+            try:
+                _ur = _rq2.post("https://tmpfiles.org/api/v1/upload",
+                                files={"file": ("frame.png", _dbg_img_bytes, "image/png")},
+                                timeout=30)
+                if _ur.status_code == 200:
+                    _page = _ur.json().get("data", {}).get("url", "")
+                    _pub_url = _page.replace("tmpfiles.org/", "tmpfiles.org/dl/") if _page else None
+                    if _pub_url:
+                        _s1.success(f"✅ tmpfiles.org 上传成功\n\n直链：`{_pub_url}`")
+                    else:
+                        _s1.error(f"❌ tmpfiles.org 返回无 URL：{_ur.text[:200]}")
+                else:
+                    _s1.warning(f"⚠️ tmpfiles.org 失败 status={_ur.status_code}，切换 litterbox...")
+                    _lr = _rq2.post("https://litterbox.catbox.moe/resources/internals/api.php",
+                                    data={"reqtype": "fileupload", "time": "1h"},
+                                    files={"fileToUpload": ("frame.png", _dbg_img_bytes, "image/png")},
+                                    timeout=30)
+                    if _lr.status_code == 200 and _lr.text.strip().startswith("https://"):
+                        _pub_url = _lr.text.strip()
+                        _s1.success(f"✅ litterbox 上传成功\n\n直链：`{_pub_url}`")
+                    else:
+                        _s1.error(f"❌ litterbox 也失败：{_lr.text[:200]}")
+            except Exception as _ue:
+                _s1.error(f"❌ 上传异常：{_ue}")
+
+            if not _pub_url:
+                st.error("🛑 图床全部失败，无法继续提交可灵。")
+                st.stop()
+
+            # ── Step 2: 提交可灵 ──────────────────────────────────────────────
+            st.markdown("**Step 2 · 提交可灵 API**")
+            _s2 = st.empty()
+            _s2.info("⏳ 正在提交到可灵...")
+            _model_path = _VGM.lstrip("/")
+            _ep = _model_path.split("/")[-1] if "/" in _model_path else _model_path
+            _submit_url = f"https://api.302.ai/klingai/{_ep}"
+            _body = {
+                "prompt": _dbg_prompt,
+                "duration": 5,
+                "aspect_ratio": "auto",
+                "mode": "pro",
+                "image": _pub_url,
+            }
+            st.code(f"POST {_submit_url}\n\n请求体：{__import__('json').dumps(_body, ensure_ascii=False, indent=2)}", language="json")
+            try:
+                _kr = _rq2.post(
+                    _submit_url,
+                    headers={"Authorization": f"Bearer {_AK2}", "Content-Type": "application/json"},
+                    json=_body, timeout=60,
+                )
+                _kdata = _kr.json()
+                _task_id = (
+                    _kdata.get("data", {}).get("task", {}).get("id")
+                    or _kdata.get("data", {}).get("taskId")
+                    or _kdata.get("task_id") or ""
+                )
+                if _task_id:
+                    _s2.success(f"✅ 可灵提交成功！\n\ntask_id：`{_task_id}`")
+                    st.markdown("**Step 3 · 完整 API 响应**")
+                    st.json(_kdata)
+                else:
+                    _s2.error(f"❌ 提交失败，未获得 task_id")
+                    st.json(_kdata)
+            except Exception as _ke:
+                _s2.error(f"❌ 可灵请求异常：{_ke}")
 
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 st.markdown(
