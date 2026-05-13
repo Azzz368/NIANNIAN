@@ -534,53 +534,47 @@ _KLING_BASE = "https://api.302.ai/klingai"
 def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]:
     """
     将图片字节上传到图床，返回公开 HTTPS URL。
-    链路：ImgBB（有 key）→ freeimage.host → litterbox.catbox.moe → None
+    链路：0x0.st → tmpfiles.org → litterbox.catbox.moe → None
+    注：ImgBB 封锁了 Streamlit Cloud 等云服务商 IP，已移除。
     注：Kling omni3 的 image 字段只接受 HTTPS URL，不接受 base64。
     """
     import logging as _logging
     _log = _logging.getLogger("llm_client.upload")
 
-    # ── 方案0: ImgBB（有效 API key，最稳定）──────────────────────────────────────
-    # 官方文档：key 必须作为 URL query 参数传递，image 作为 POST form data
-    # curl: POST "https://api.imgbb.com/1/upload?key=YOUR_KEY" --form "image=<base64>"
-    if IMGBB_API_KEY:
-        try:
-            b64str = base64.b64encode(img_bytes).decode()
-            r = _requests.post(
-                "https://api.imgbb.com/1/upload",
-                params={"key": IMGBB_API_KEY},   # ← key 放 URL query 参数
-                data={"image": b64str},            # ← image 放 POST body
-                timeout=30,
-            )
-            resp_json = r.json()
-            if r.status_code == 200 and resp_json.get("success"):
-                url = resp_json.get("data", {}).get("url", "")
-                if url:
-                    _log.info(f"[upload] ImgBB 成功: {url}")
-                    return url
-                _log.warning(f"[upload] ImgBB 返回无 URL: {resp_json}")
-            else:
-                _log.warning(f"[upload] ImgBB 失败 status={r.status_code}: {r.text[:300]}")
-        except Exception as e:
-            _log.warning(f"[upload] ImgBB 异常: {e}")
-
-    # ── 方案1: freeimage.host（免费，无需注册）──────────────────────────────────
+    # ── 方案1: 0x0.st（无注册，无 IP 封锁，永久存储）──────────────────────────
     try:
-        b64str = base64.b64encode(img_bytes).decode()
         r = _requests.post(
-            "https://freeimage.host/api/1/upload",
-            data={"key": "6d207e02198a847aa98d0a2a901485a5", "source": b64str, "format": "json"},
+            "https://0x0.st",
+            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
+            timeout=30,
+        )
+        if r.status_code == 200 and r.text.strip().startswith("https://"):
+            url = r.text.strip()
+            _log.info(f"[upload] 0x0.st 成功: {url}")
+            return url
+        _log.warning(f"[upload] 0x0.st 失败 status={r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        _log.warning(f"[upload] 0x0.st 异常: {e}")
+
+    # ── 方案2: tmpfiles.org（无注册，48h 有效）──────────────────────────────────
+    try:
+        r = _requests.post(
+            "https://tmpfiles.org/api/v1/upload",
+            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
             timeout=30,
         )
         if r.status_code == 200:
-            url = r.json().get("image", {}).get("url", "")
-            if url:
-                _log.info(f"[upload] freeimage.host 成功: {url}")
-                return url
+            # 返回: {"status":"success","data":{"url":"https://tmpfiles.org/..."}}
+            # 需转为直链: tmpfiles.org/xxx → tmpfiles.org/dl/xxx
+            page_url = r.json().get("data", {}).get("url", "")
+            if page_url:
+                direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+                _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
+                return direct_url
     except Exception as e:
-        _log.warning(f"[upload] freeimage.host 异常: {e}")
+        _log.warning(f"[upload] tmpfiles.org 异常: {e}")
 
-    # ── 方案2: litterbox.catbox.moe（临时1小时，免费）────────────────────────────
+    # ── 方案3: litterbox.catbox.moe（1小时有效）────────────────────────────────
     try:
         r = _requests.post(
             "https://litterbox.catbox.moe/resources/internals/api.php",
@@ -589,8 +583,10 @@ def _upload_image_to_public(img_bytes: bytes, ext: str = "jpg") -> Optional[str]
             timeout=30,
         )
         if r.status_code == 200 and r.text.strip().startswith("https://"):
-            _log.info(f"[upload] litterbox 成功: {r.text.strip()}")
-            return r.text.strip()
+            url = r.text.strip()
+            _log.info(f"[upload] litterbox 成功: {url}")
+            return url
+        _log.warning(f"[upload] litterbox 失败 status={r.status_code}: {r.text[:200]}")
     except Exception as e:
         _log.warning(f"[upload] litterbox 异常: {e}")
 

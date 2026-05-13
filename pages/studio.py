@@ -164,33 +164,48 @@ else:
         unsafe_allow_html=True,
     )
 
-# ─── ImgBB 上传连通性测试（开发调试用）──────────────────────────────────────────
+# ─── 图床上传连通性测试（开发调试用）──────────────────────────────────────────
 import os as _os
 _imgbb_key = _os.getenv("IMGBB_API_KEY", "")
-with st.expander("🔧 调试：测试 ImgBB 图床连通性", expanded=False):
-    st.caption(f"当前 IMGBB_API_KEY：{'✅ 已读取（' + _imgbb_key[:6] + '...）' if _imgbb_key else '❌ 未读取到（请检查 Secrets 配置）'}")
-    if st.button("立即测试 ImgBB 上传", key="test_imgbb"):
+with st.expander("🔧 调试：测试图床上传连通性", expanded=False):
+    st.caption("依次测试 0x0.st → tmpfiles.org → litterbox，确认哪个可用")
+    if st.button("立即测试图床上传", key="test_imgbb"):
         import requests as _rq, base64 as _b64
-        # 用一个 1x1 透明 PNG 测试
         _test_bytes = _b64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         )
-        _test_b64 = _b64.b64encode(_test_bytes).decode()
+        # 测试 0x0.st
         try:
-            _r = _rq.post(
-                "https://api.imgbb.com/1/upload",
-                params={"key": _imgbb_key},
-                data={"image": _test_b64},
-                timeout=15,
-            )
-            _resp = _r.json()
-            if _r.status_code == 200 and _resp.get("success"):
-                _url = _resp.get("data", {}).get("url", "")
-                st.success(f"✅ ImgBB 上传成功！返回 URL：{_url}")
+            _r = _rq.post("https://0x0.st",
+                          files={"file": ("test.png", _test_bytes, "image/png")}, timeout=15)
+            if _r.status_code == 200 and _r.text.strip().startswith("https://"):
+                st.success(f"✅ 0x0.st 成功：{_r.text.strip()}")
             else:
-                st.error(f"❌ ImgBB 上传失败：status={_r.status_code}，响应：{_r.text[:400]}")
+                st.error(f"❌ 0x0.st 失败 status={_r.status_code}：{_r.text[:200]}")
         except Exception as _e:
-            st.error(f"❌ 请求异常：{_e}")
+            st.error(f"❌ 0x0.st 异常：{_e}")
+        # 测试 tmpfiles.org
+        try:
+            _r2 = _rq.post("https://tmpfiles.org/api/v1/upload",
+                           files={"file": ("test.png", _test_bytes, "image/png")}, timeout=15)
+            if _r2.status_code == 200:
+                _u = _r2.json().get("data", {}).get("url", "")
+                st.success(f"✅ tmpfiles.org 成功：{_u}")
+            else:
+                st.error(f"❌ tmpfiles.org 失败 status={_r2.status_code}：{_r2.text[:200]}")
+        except Exception as _e2:
+            st.error(f"❌ tmpfiles.org 异常：{_e2}")
+        # 测试 litterbox
+        try:
+            _r3 = _rq.post("https://litterbox.catbox.moe/resources/internals/api.php",
+                           data={"reqtype": "fileupload", "time": "1h"},
+                           files={"fileToUpload": ("test.png", _test_bytes, "image/png")}, timeout=15)
+            if _r3.status_code == 200 and _r3.text.strip().startswith("https://"):
+                st.success(f"✅ litterbox 成功：{_r3.text.strip()}")
+            else:
+                st.error(f"❌ litterbox 失败 status={_r3.status_code}：{_r3.text[:200]}")
+        except Exception as _e3:
+            st.error(f"❌ litterbox 异常：{_e3}")
 
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 st.markdown(
