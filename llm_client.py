@@ -605,8 +605,7 @@ def generate_video_302(
                 - base64 data URL → 上传到免费图床获取 HTTPS URL → 以 images:[url] JSON 提交
                 - https URL      → 直接以 images:[url] JSON 提交
     o1_type   : Kling omni3 功能类型。
-                - 有图片时默认 "firstTail"（首帧模式，图片作为第一帧）
-                - "referImage"：图片参考（风格/内容参考，不锁定首帧）
+                - 有图片时默认 "referImage"（图片参考，omni3 不支持首帧，最多 1-7 张）
                 - None + 无图片：纯文生视频
     poll      : True 时轮询等待完成并返回视频 URL；False 立即返回 task_id。
     返回:
@@ -620,7 +619,7 @@ def generate_video_302(
     auth_headers  = {"Authorization": f"Bearer {_302_API_KEY}", "Content-Type": "application/json"}
 
     # 处理 image_url：base64 data URL → 上传公共图床获取 HTTPS URL；https URL → 直接用
-    # Kling omni3 正确提交格式：images:[url]  +  o1_type:"firstTail"（首帧锁定）
+    # Kling omni3 提交格式：images:[url]  +  o1_type:"referImage"（图片参考模式）
     public_img_url: Optional[str] = None
     if image_url:
         if image_url.startswith("data:"):
@@ -648,9 +647,9 @@ def generate_video_302(
             "mode": "pro",
         }
         if public_img_url:
-            # Kling omni3 正确格式：images 数组 + o1_type "firstTail"
+            # Kling omni3：images 数组 + o1_type "referImage"（图片参考，omni3 不支持首帧）
             body["images"]   = [public_img_url]
-            body["o1_type"]  = o1_type or "firstTail"
+            body["o1_type"]  = o1_type or "referImage"
 
         r = _requests.post(submit_url, headers=auth_headers, json=body, timeout=60)
         r.raise_for_status()

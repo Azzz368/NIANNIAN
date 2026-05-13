@@ -275,10 +275,11 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
             _body = {
                 "prompt": _dbg_prompt,
                 "duration": 5,
-                "aspect_ratio": "auto",
+                "aspect_ratio": "1:1",
                 "mode": "pro",
+                "enable_audio": True,
                 "images": [_pub_url],
-                "o1_type": "firstTail",
+                "o1_type": "referImage",
             }
             st.code(f"POST {_submit_url}\n\n请求体：{__import__('json').dumps(_body, ensure_ascii=False, indent=2)}", language="json")
             try:
