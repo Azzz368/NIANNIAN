@@ -542,7 +542,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
 # 状态：submitted / processing / succeed / failed
 # 首帧：body.image = base64 或 HTTPS URL
 
-_KLING_OFFICIAL_BASE   = "https://api-beijing.klingai.com"
+_KLING_OFFICIAL_BASE   = "https://api-singapore.klingai.com"
 _KLING_ACCESS_KEY_ID     = os.getenv("KLING_ACCESS_KEY_ID", "")
 _KLING_ACCESS_KEY_SECRET = os.getenv("KLING_ACCESS_KEY_SECRET", "")
 
