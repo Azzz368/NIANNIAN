@@ -267,7 +267,8 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 "duration": 5,
                 "aspect_ratio": "auto",
                 "mode": "pro",
-                "image": _pub_url,
+                "images": [_pub_url],
+                "o1_type": "firstTail",
             }
             st.code(f"POST {_submit_url}\n\n请求体：{__import__('json').dumps(_body, ensure_ascii=False, indent=2)}", language="json")
             try:
