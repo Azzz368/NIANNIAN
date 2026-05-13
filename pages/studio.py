@@ -255,7 +255,17 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 st.error("🛑 图床全部失败，无法继续提交可灵。")
                 st.stop()
 
-            # ── Step 2: 提交可灵 ──────────────────────────────────────────────
+            # ── Step 1.5: 验证图片 URL 是否真的可访问 ────────────────────────
+            st.markdown("**Step 1.5 · 验证图片 URL 可访问性**")
+            try:
+                _hd = _rq2.head(_pub_url, timeout=10, allow_redirects=True)
+                if _hd.status_code == 200:
+                    st.success(f"✅ URL 可访问，Content-Type: `{_hd.headers.get('content-type','?')}`，"
+                               f"大小: `{_hd.headers.get('content-length','?')}` bytes")
+                else:
+                    st.error(f"❌ URL 返回 {_hd.status_code}，可灵可能无法下载此图片！")
+            except Exception as _he:
+                st.warning(f"⚠️ HEAD 请求失败（不影响提交）：{_he}")
             st.markdown("**Step 2 · 提交可灵 API**")
             _s2 = st.empty()
             _s2.info("⏳ 正在提交到可灵...")
