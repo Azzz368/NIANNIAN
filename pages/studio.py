@@ -5,7 +5,7 @@ from typing import Dict, List
 import streamlit as st
 import gate_manager
 import pipeline_runner
-from llm_client import build_scene_prompts, generate_image_302, generate_image_302_ref, generate_video_302
+from llm_client import build_scene_prompts, generate_image_302, generate_image_302_ref, generate_video_302, _parse_gemini_image_response as _parse_gemini_image_resp
 
 st.set_page_config(page_title="念念 · 分镜制作台", layout="wide", initial_sidebar_state="collapsed")
 
@@ -386,12 +386,26 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
             st.caption(f"content 类型：`{type(_raw_content).__name__}`")
             if isinstance(_raw_content, str):
                 st.caption(f"content 前200字：`{_raw_content[:200]}`")
+            elif isinstance(_raw_content, list):
+                st.caption(f"content 列表长度：{len(_raw_content)}，各 type：{[p.get('type','?') if isinstance(p,dict) else type(p).__name__ for p in _raw_content]}")
 
-            from llm_client import _parse_gemini_image_response as _parse_gemini
-            _gen_b64_dbg, _gen_err_dbg = _parse_gemini(_ref_resp, "[调试台]")
+            # 展示完整 model_dump（便于诊断 302.ai 非标准字段）
+            with st.expander("🔬 原始响应 model_dump（debug）"):
+                import json as _dbg_json
+                try:
+                    _dump = _ref_resp.model_dump() if hasattr(_ref_resp, "model_dump") else {}
+                    # 截断超长 base64 字符串以免界面卡死
+                    _dump_str = _dbg_json.dumps(_dump, ensure_ascii=False, indent=2)
+                    if len(_dump_str) > 8000:
+                        _dump_str = _dump_str[:8000] + "\n... (截断)"
+                    st.code(_dump_str, language="json")
+                except Exception as _de:
+                    st.warning(f"model_dump 失败：{_de}")
+
+            _gen_b64_dbg, _gen_err_dbg = _parse_gemini_image_resp(_ref_resp, "[调试台]")
             if _gen_b64_dbg:
                 st.success(f"✅ 解析成功（base64 长度={len(_gen_b64_dbg)}）")
-                st.image(_b64_ref.b64decode(_gen_b64_dbg), caption="生成图片预览", use_container_width=True)
+                st.image(_b64_ref.b64decode(_gen_b64_dbg), caption="生成图片预览", width="stretch")
             else:
                 st.error(f"❌ 解析失败：{_gen_err_dbg}")
                 st.text_area("原始 content", value=str(_raw_content)[:500], height=120)

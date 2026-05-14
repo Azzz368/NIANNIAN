@@ -538,19 +538,23 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
 def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
     """
     解析 gemini-3-pro-image-preview 经由 302.ai 网关返回的图片。
-    兼容四种格式：
+    兼容多种格式：
       A. content 列表中 type=image_url，url 以 data: 开头（base64 data URL）
       B. content 列表中 type=image_url，url 以 http 开头（HTTPS，下载）
       C. content 为字符串，含 markdown 图片 ![...](url)（302.ai 常见格式）
       D. content 为字符串，含裸 HTTPS 图片 URL
+      E. 302.ai 特殊格式：content="![image]()" 但图片 base64 藏在 message
+         的额外字段（通过 model_dump() 深扫找 data:image 或 base64 字段）
     返回 (b64_string, None) 或 (None, error_str)。
     """
     import re as _re
+    import json as _json
     import logging as _log_pg
     _log = _log_pg.getLogger("llm_client.gemini_parse")
 
     try:
-        content = resp.choices[0].message.content
+        msg = resp.choices[0].message
+        content = msg.content
     except Exception as e:
         return None, f"读取响应 content 失败：{e}"
 
@@ -558,8 +562,13 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
     if isinstance(content, list):
         for part in content:
             if not isinstance(part, dict):
-                continue
-            if part.get("type") == "image_url":
+                # pydantic 对象尝试转 dict
+                try:
+                    part = part.model_dump() if hasattr(part, "model_dump") else vars(part)
+                except Exception:
+                    continue
+            ptype = part.get("type", "")
+            if ptype == "image_url":
                 url = part.get("image_url", {}).get("url", "")
                 if url.startswith("data:"):
                     _log.info(f"{log_tag} 格式A：data URL")
@@ -568,10 +577,21 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
                     b64 = _download_url_to_b64(url, log_tag)
                     if b64:
                         return b64, None
+            elif ptype == "image":
+                # 部分网关把图片放在 part["image"]{"url"/"data"}
+                img_field = part.get("image", {})
+                if isinstance(img_field, dict):
+                    url = img_field.get("url", "") or img_field.get("data", "")
+                    if url.startswith("data:"):
+                        return url.split(",", 1)[-1], None
+                    elif url.startswith("http"):
+                        b64 = _download_url_to_b64(url, log_tag)
+                        if b64:
+                            return b64, None
 
     # ── 格式 C/D：content 是字符串，从中提取图片 URL ─────────────────────────
     if isinstance(content, str):
-        # 格式C：markdown 图片语法 ![...](url)
+        # 格式C：markdown 图片语法 ![...](url)，要求 URL 非空
         md_matches = _re.findall(r'!\[.*?\]\((https?://[^\s)]+)\)', content)
         for url in md_matches:
             _log.info(f"{log_tag} 格式C：markdown 图片链接 {url[:60]}")
@@ -594,11 +614,68 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
             if b64:
                 return b64, None
 
-        # 真的只有文字
-        _log.warning(f"{log_tag} 模型返回纯文字，未找到图片：{content[:120]}")
-        return None, f"gemini 返回文字而非图片：{content[:80]}"
+    # ── 格式 E：深扫 model_dump() 找藏在其他字段的图片数据 ──────────────────
+    # 适用于 ![image]() 空URL 但图片实际在 message 的非标准字段中
+    try:
+        raw_dict = resp.model_dump() if hasattr(resp, "model_dump") else {}
+        raw_str = _json.dumps(raw_dict, ensure_ascii=False)
 
-    return None, "gemini 响应中未找到图片数据"
+        # E1: 找 data:image/...;base64, 开头的 base64 串
+        data_url_hits = _re.findall(r'data:image/[^;]+;base64,([A-Za-z0-9+/=]{200,})', raw_str)
+        for hit in data_url_hits:
+            _log.info(f"{log_tag} 格式E1：model_dump 中发现 data:image base64（长度={len(hit)}）")
+            return hit, None
+
+        # E2: 找 file.302.ai 或其他 CDN URL
+        cdn_hits = _re.findall(r'https://file\.302\.ai/[^"\'\\s]+', raw_str)
+        cdn_hits += _re.findall(r'https?://[^"\'\\s]+\.(?:png|jpg|jpeg|webp)[^"\'\\s]*', raw_str, _re.IGNORECASE)
+        seen_e = set()
+        for url in cdn_hits:
+            url = url.rstrip('.,\\/"\' ')
+            if url in seen_e or '![image]' in url:
+                continue
+            seen_e.add(url)
+            _log.info(f"{log_tag} 格式E2：model_dump 中发现 CDN URL {url[:60]}")
+            b64 = _download_url_to_b64(url, log_tag)
+            if b64:
+                return b64, None
+
+        # E3: 找纯 base64 字段（key 含 "image"/"b64"/"data"）
+        def _scan_dict(d, depth=0):
+            if depth > 8:
+                return None
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    if isinstance(v, str) and len(v) > 500 and k.lower() in (
+                        "b64_json", "image", "data", "base64", "content_b64", "image_data"
+                    ):
+                        try:
+                            import base64 as _b64chk
+                            _b64chk.b64decode(v[:64])  # 验证是合法 base64
+                            _log.info(f"{log_tag} 格式E3：字段 {k} 中发现 base64（长度={len(v)}）")
+                            return v
+                        except Exception:
+                            pass
+                    result = _scan_dict(v, depth + 1)
+                    if result:
+                        return result
+            elif isinstance(d, list):
+                for item in d:
+                    result = _scan_dict(item, depth + 1)
+                    if result:
+                        return result
+            return None
+
+        b64_hit = _scan_dict(raw_dict)
+        if b64_hit:
+            return b64_hit, None
+
+    except Exception as _e_scan:
+        _log.warning(f"{log_tag} model_dump 深扫出错：{_e_scan}")
+
+    # 真的只有文字
+    _log.warning(f"{log_tag} 模型返回纯文字，未找到图片：{str(content)[:120]}")
+    return None, f"gemini 返回文字而非图片：{str(content)[:80]}"
 
 
 def _download_url_to_b64(url: str, log_tag: str = "") -> Optional[str]:
