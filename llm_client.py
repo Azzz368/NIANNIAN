@@ -4,17 +4,18 @@
   文本结构化分析（家属访谈 / MV01-06）: claude-sonnet-4-6  →（失败自动回退）→ gpt-5.4
   图像内容理解（describe_image）       : gemini-2.0-pro-image-preview
   图像生成（generate_image_302）        : gemini-2.0-pro-image-preview
-  视频生成（generate_video_kling）      : kling-v3（可灵官方直连，首帧模式）
+  视频生成（generate_video_kling）      : 优先可灵官方直连（kling-v3，首帧模式）
+                                         → 自动回退 302.ai（m2v_26_image2video_5s）
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
-  AI302_API_KEY          = sk-xxxxxxxxxxxx
+  AI302_API_KEY          = sk-xxxxxxxxxxxx       ← 必填，图文/视频 302.ai 备用均使用
   AI302_TEXT_MODEL       = claude-sonnet-4-6
   AI302_TEXT_FALLBACK    = gpt-5.4
   AI302_VISION_MODEL     = gemini-2.0-pro-image-preview
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
   AI302_AUDIO_MODEL      = whisper-1
-  KLING_ACCESS_KEY_ID    = （可灵官方 AccessKey ID）
-  KLING_ACCESS_KEY_SECRET= （可灵官方 AccessKey Secret）
+  KLING_ACCESS_KEY_ID    = （可灵官方 AccessKey ID，留空则自动走 302.ai 备用）
+  KLING_ACCESS_KEY_SECRET= （可灵官方 AccessKey Secret，留空则自动走 302.ai 备用）
   LOCAL_LLM_BASE_URL     =  （本地备用，可留空）
   LOCAL_LLM_MODEL        =
 """
@@ -534,13 +535,23 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
         return None, fallback_err_prefix + str(exc)
 
 
-# ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────────
+# ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────
 # 文档：https://www.klingai.com/document-api/apiReference/model/imageToVideo
 # 鉴权：JWT（HS256），iss=AccessKeyId，exp=当前+30min
 # 提交：POST https://api.klingai.com/v1/videos/image2video
 # 查询：GET  https://api.klingai.com/v1/videos/image2video/{task_id}
 # 状态：submitted / processing / succeed / failed
 # 首帧：body.image = base64 或 HTTPS URL
+
+# ── 302.ai 备用视频接口（Kling 2.6，图生视频 5s）────────────────────────────────
+# 文档：https://doc.302.ai/386524568e0
+# 提交：POST https://api.302.ai/klingai/m2v_26_image2video_5s  (multipart/form-data)
+# 查询：GET  https://api.302.ai/klingai/fetch?task_id=xxx
+# 状态：5=排队中 / 10=处理中 / 50=失败退款 / 99=成功
+# 视频：data.works[0].resource
+
+_302_VIDEO_I2V_URL   = "https://api.302.ai/klingai/m2v_26_image2video_5s"
+_302_VIDEO_FETCH_URL = "https://api.302.ai/klingai/fetch"
 
 _KLING_OFFICIAL_BASE   = "https://api-singapore.klingai.com"
 _KLING_ACCESS_KEY_ID     = os.getenv("KLING_ACCESS_KEY_ID", "")
@@ -608,64 +619,217 @@ def _kling_jwt() -> str:
     return _jwt.encode(payload, _KLING_ACCESS_KEY_SECRET, algorithm="HS256")
 
 
+def generate_video_302ai_i2v(
+    prompt: str,
+    image_b64_or_url: Optional[str] = None,   # base64 data URL 或公开 HTTPS URL
+    negative_prompt: str = "",
+    cfg: float = 0.5,
+    duration: int = 5,
+    poll: bool = True,
+    max_wait: int = 600,
+) -> Dict[str, Any]:
+    """
+    通过 302.ai 调用 Kling 2.6 图生视频（5s）。
+    接口文档：https://doc.302.ai/386524568e0
+    提交：POST https://api.302.ai/klingai/m2v_26_image2video_5s
+    查询：GET  https://api.302.ai/klingai/fetch?task_id=xxx
+    状态码：5=排队 / 10=处理中 / 50=失败 / 99=成功
+    返回：
+      成功 → {"url": "https://...", "task_id": "...", "source": "302ai"}
+      排队 → {"task_id": "...", "status": 10, "source": "302ai"}
+      失败 → {"error": "...", "source": "302ai"}
+    """
+    import logging as _log302
+    _log302i = _log302.getLogger("llm_client.302ai_i2v")
+
+    api_key = _302_API_KEY
+    if not api_key or api_key.startswith("sk-填写"):
+        return {"error": "未配置 AI302_API_KEY，无法使用 302.ai 视频接口", "source": "302ai"}
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    # 构建 multipart/form-data 请求体
+    files: Dict[str, Any] = {}
+    data: Dict[str, Any] = {
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "cfg": str(cfg),
+        "duration": str(duration),
+    }
+
+    if image_b64_or_url:
+        if image_b64_or_url.startswith("data:"):
+            # base64 data URL → 解码为字节，作为文件上传
+            try:
+                header_part, b64_part = image_b64_or_url.split(",", 1)
+                mime = header_part.split(":")[1].split(";")[0]
+                ext = mime.split("/")[-1] if "/" in mime else "png"
+                img_bytes = base64.b64decode(b64_part)
+                files["image"] = (f"frame.{ext}", img_bytes, mime)
+            except Exception as e:
+                return {"error": f"base64 图片解析失败：{e}", "source": "302ai"}
+        else:
+            # 已是 HTTPS URL，直接作为文本字段传入
+            data["image"] = image_b64_or_url
+
+    try:
+        r = _requests.post(
+            _302_VIDEO_I2V_URL,
+            headers=headers,
+            files=files if files else None,
+            data=data,
+            timeout=60,
+        )
+        try:
+            resp = r.json()
+        except Exception:
+            return {"error": f"302.ai 响应非 JSON (status={r.status_code})：{r.text[:300]}", "source": "302ai"}
+    except Exception as e:
+        return {"error": f"302.ai 提交请求异常：{e}", "source": "302ai"}
+
+    if resp.get("status") != 200 or resp.get("result") != 1:
+        return {"error": f"302.ai 提交失败：{resp.get('message', str(resp))}", "source": "302ai"}
+
+    task_id = resp.get("data", {}).get("task", {}).get("id", "")
+    if not task_id:
+        return {"error": f"302.ai 未返回 task_id：{resp}", "source": "302ai"}
+
+    _log302i.info(f"[302ai_i2v] 提交成功 task_id={task_id}")
+
+    if not poll:
+        return {"task_id": task_id, "status": 5, "source": "302ai"}
+
+    # ── 轮询等待完成 ──
+    elapsed = 0
+    interval = 10
+    while elapsed < max_wait:
+        time.sleep(interval)
+        elapsed += interval
+        try:
+            pr = _requests.get(
+                _302_VIDEO_FETCH_URL,
+                headers=headers,
+                params={"task_id": task_id},
+                timeout=20,
+            )
+            pd = pr.json()
+            cur_status = pd.get("data", {}).get("status", 5)
+
+            if cur_status == 99:
+                works = pd.get("data", {}).get("works", [])
+                video_url = works[0].get("resource", "") if works else ""
+                if video_url:
+                    return {"url": video_url, "task_id": task_id, "status": 99, "source": "302ai"}
+                return {"error": "302.ai 任务成功但未返回视频 URL", "task_id": task_id, "source": "302ai"}
+            elif cur_status == 50:
+                return {"error": "302.ai 任务失败（已自动退款）", "task_id": task_id, "source": "302ai"}
+            # status 5(排队) / 10(处理中) → 继续等待
+        except Exception:
+            pass
+
+    return {"task_id": task_id, "status": 10, "source": "302ai",
+            "error": f"302.ai 等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
+
+
 def generate_video_kling(
     prompt: str,
-    image_url: Optional[str] = None,   # base64 data URL 或 HTTPS URL（用作首帧）
+    image_url: Optional[str] = None,   # base64 data URL 或 HTTPS URL（首帧图）
+    image_tail_url: Optional[str] = None,  # 尾帧图（可选，kling-v2-6 支持）
+    negative_prompt: str = "",
     duration: int = 5,
     mode: str = "pro",
     aspect_ratio: str = "16:9",
+    sound: str = "off",
     poll: bool = True,
     max_wait: int = 600,
 ) -> Dict[str, Any]:
     """
     调用可灵官方 API（kling-v3）生成视频。
-    image_url : base64 data URL 或 HTTPS URL，作为视频首帧（图生视频）。
-                留空则为纯文生视频。
-    poll      : True 时轮询等待完成并返回视频 URL；False 立即返回 task_id。
+    若 KLING_ACCESS_KEY_ID / SECRET 未配置，或官方 API 调用失败，
+    自动 fallback 到 302.ai（m2v_26_image2video_5s）。
+
+    image_url      : 首帧图，base64 data URL 或 HTTPS URL。
+    image_tail_url : 尾帧图（可选），同格式。
+    poll           : True 时轮询等待完成并返回视频 URL；False 立即返回 task_id。
     返回:
-      成功 → {"url": "https://...", "task_id": "..."}
-      排队 → {"task_id": "...", "status": "processing"}
+      成功 → {"url": "https://...", "task_id": "...", "source": "kling"|"302ai"}
+      排队 → {"task_id": "...", "status": ..., "source": ...}
       失败 → {"error": "..."}
     """
-    if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
-        return {"error": "未配置 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET，请在 Secrets 中填写"}
+    import logging as _logv
+    _log_v = _logv.getLogger("llm_client.video")
 
+    # ── 1. 若未配置可灵官方 key，直接走 302.ai ───────────────────────────────
+    if not _KLING_ACCESS_KEY_ID or not _KLING_ACCESS_KEY_SECRET:
+        _log_v.info("[video] 可灵官方 key 未配置，直接使用 302.ai 备用接口")
+        return generate_video_302ai_i2v(
+            prompt=prompt,
+            image_b64_or_url=image_url,
+            duration=duration,
+            poll=poll,
+            max_wait=max_wait,
+        )
+
+    # ── 2. 尝试可灵官方 API ──────────────────────────────────────────────────
     try:
         token = _kling_jwt()
     except Exception as e:
-        return {"error": f"JWT 生成失败：{e}"}
+        _log_v.warning(f"[video] JWT 生成失败，fallback 到 302.ai：{e}")
+        return generate_video_302ai_i2v(
+            prompt=prompt, image_b64_or_url=image_url,
+            duration=duration, poll=poll, max_wait=max_wait,
+        )
 
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
 
-    # 构建请求体
+    # 构建请求体（kling-v3 接口规范）
     body: Dict[str, Any] = {
         "model_name": "kling-v3",
         "prompt": prompt,
-        "duration": str(duration),      # 官方接受字符串 "5" 或 "10"
-        "mode": mode,                   # "std" 或 "pro"
+        "negative_prompt": negative_prompt,
+        "duration": str(duration),       # "5" 或 "10"
+        "mode": mode,                    # "std" 或 "pro"
         "aspect_ratio": aspect_ratio,
-        "cfg_scale": 0.5,
+        "sound": sound,                  # "on" / "off"
+        "callback_url": "",
+        "external_task_id": "",
     }
 
-    # 处理首帧图片：官方 API image 字段只接受 HTTPS URL，base64 需先上传图床
-    if image_url:
-        if image_url.startswith("data:"):
+    def _resolve_image(raw_url: str) -> Optional[str]:
+        """base64 data URL → 图床 HTTPS URL；HTTPS URL 直接返回；失败返回 None"""
+        if raw_url.startswith("data:"):
             try:
-                header_part, b64_part = image_url.split(",", 1)
+                header_part, b64_part = raw_url.split(",", 1)
                 mime = header_part.split(":")[1].split(";")[0]
                 ext  = mime.split("/")[-1] if "/" in mime else "png"
                 img_bytes = base64.b64decode(b64_part)
-                public_url = _upload_image_to_public(img_bytes, ext)
-            except Exception as e:
-                return {"error": f"base64 解析失败：{e}"}
-            if not public_url:
-                return {"error": "首帧图片上传图床失败，请稍后重试"}
-            body["image"] = public_url
+                return _upload_image_to_public(img_bytes, ext)
+            except Exception as _e:
+                _log_v.warning(f"[video] base64 解析失败：{_e}")
+                return None
+        return raw_url  # 已是 HTTPS URL
+
+    # 首帧图
+    if image_url:
+        public_image = _resolve_image(image_url)
+        if not public_image:
+            _log_v.warning("[video] 首帧图处理失败，fallback 到 302.ai")
+            return generate_video_302ai_i2v(
+                prompt=prompt, image_b64_or_url=image_url,
+                duration=duration, poll=poll, max_wait=max_wait,
+            )
+        body["image"] = public_image
+
+    # 尾帧图（可选）
+    if image_tail_url:
+        public_tail = _resolve_image(image_tail_url)
+        if public_tail:
+            body["image_tail"] = public_tail
         else:
-            body["image"] = image_url    # 已是 HTTPS URL，直接传入
+            _log_v.warning("[video] 尾帧图处理失败，忽略 image_tail 字段继续提交")
 
     submit_url = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video"
     try:
@@ -673,24 +837,38 @@ def generate_video_kling(
         try:
             resp_data = r.json()
         except Exception:
-            return {"error": f"响应非 JSON (status={r.status_code})：{r.text[:300]}", "debug_body": body}
+            _log_v.warning(f"[video] 官方 API 响应非 JSON，fallback 到 302.ai")
+            return generate_video_302ai_i2v(
+                prompt=prompt, image_b64_or_url=image_url,
+                duration=duration, poll=poll, max_wait=max_wait,
+            )
     except Exception as e:
-        return {"error": f"提交请求异常：{e}"}
+        _log_v.warning(f"[video] 官方 API 请求异常，fallback 到 302.ai：{e}")
+        return generate_video_302ai_i2v(
+            prompt=prompt, image_b64_or_url=image_url,
+            duration=duration, poll=poll, max_wait=max_wait,
+        )
 
-    # 解析 task_id
     # 官方响应：{"code":0, "message":"SUCCEED", "data":{"task_id":"...", "task_status":"submitted"}}
     if resp_data.get("code", -1) != 0:
-        return {"error": f"提交失败 code={resp_data.get('code')}：{resp_data.get('message', '')}",
-                "debug_body": body, "raw": resp_data}
+        _log_v.warning(f"[video] 官方 API 提交失败 code={resp_data.get('code')}，fallback 到 302.ai")
+        return generate_video_302ai_i2v(
+            prompt=prompt, image_b64_or_url=image_url,
+            duration=duration, poll=poll, max_wait=max_wait,
+        )
 
     task_id = resp_data.get("data", {}).get("task_id", "")
     if not task_id:
-        return {"error": f"未获得 task_id：{resp_data}", "debug_body": body}
+        _log_v.warning(f"[video] 官方 API 未返回 task_id，fallback 到 302.ai")
+        return generate_video_302ai_i2v(
+            prompt=prompt, image_b64_or_url=image_url,
+            duration=duration, poll=poll, max_wait=max_wait,
+        )
 
     if not poll:
-        return {"task_id": task_id, "status": "submitted", "debug_body": body}
+        return {"task_id": task_id, "status": "submitted", "source": "kling", "debug_body": body}
 
-    # 轮询等待完成
+    # ── 轮询等待完成 ──────────────────────────────────────────────────────────
     poll_url  = f"{_KLING_OFFICIAL_BASE}/v1/videos/image2video/{task_id}"
     elapsed   = 0
     interval  = 10
@@ -698,7 +876,6 @@ def generate_video_kling(
         time.sleep(interval)
         elapsed += interval
         try:
-            # JWT 每次轮询都需要刷新（防止过期）
             token = _kling_jwt()
             pr = _requests.get(
                 poll_url,
@@ -717,18 +894,18 @@ def generate_video_kling(
                 videos = task_data.get("task_result", {}).get("videos", [])
                 video_url = videos[0].get("url", "") if videos else ""
                 if video_url:
-                    return {"url": video_url, "task_id": task_id}
-                return {"error": "任务完成但未返回视频 URL", "task_id": task_id}
+                    return {"url": video_url, "task_id": task_id, "source": "kling"}
+                return {"error": "任务完成但未返回视频 URL", "task_id": task_id, "source": "kling"}
 
             elif task_status == "failed":
                 reason = task_data.get("task_status_msg", "未知原因")
-                return {"error": f"任务失败：{reason}", "task_id": task_id}
+                return {"error": f"任务失败：{reason}", "task_id": task_id, "source": "kling"}
 
             # submitted / processing → 继续等待
         except Exception:
             pass
 
-    return {"task_id": task_id, "status": "processing",
+    return {"task_id": task_id, "status": "processing", "source": "kling",
             "error": f"等待超时（{max_wait}s），可手动轮询 task_id={task_id}"}
 
 

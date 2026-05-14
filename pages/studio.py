@@ -253,9 +253,13 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
             _body = {
                 "model_name": "kling-v3",
                 "prompt": _dbg_prompt,
+                "negative_prompt": "",
                 "duration": "5",
                 "mode": "pro",
                 "aspect_ratio": "16:9",
+                "sound": "off",
+                "callback_url": "",
+                "external_task_id": "",
                 "image": _pub_url,
             }
             st.code(__import__("json").dumps(_body, ensure_ascii=False, indent=2), language="json")
@@ -446,44 +450,81 @@ if phase == "done":
                             # 视频排队/生成中
                             cur_status = vr.get("status", 5)
                             label_txt, label_cls = _VID_STATUS_LABEL.get(cur_status, ("进行中", "vid-running"))
+                            _vid_source = vr.get("source", "kling")
+                            _source_badge = "302.ai" if _vid_source == "302ai" else "可灵官方"
                             st.markdown(
                                 f"<div style='margin:4px 0 6px;'>"
                                 f"<span class='vid-badge {label_cls}'>{label_txt}</span>"
                                 f"<span style='font-size:.72rem;color:var(--muted-l);margin-left:8px;'>"
-                                f"task: {vr['task_id'][-8:]}</span></div>",
+                                f"[{_source_badge}] task: {vr['task_id'][-10:]}</span></div>",
                                 unsafe_allow_html=True,
                             )
                             if st.button("刷新视频状态", key=f"qvid_{vid_key}", use_container_width=True):
                                 import requests as _rq
-                                from llm_client import _kling_jwt as _kjwt2, _KLING_OFFICIAL_BASE as _KB2
-                                try:
-                                    _poll_url = f"{_KB2}/v1/videos/image2video/{vr['task_id']}"
-                                    _r2 = _rq.get(
-                                        _poll_url,
-                                        headers={"Authorization": f"Bearer {_kjwt2()}"},
-                                        timeout=20,
-                                    )
-                                    _pd = _r2.json()
-                                    _task_data = _pd.get("data", {})
-                                    _new_status = _task_data.get("task_status", "processing")
-                                    if _new_status == "succeed":
-                                        _videos = _task_data.get("task_result", {}).get("videos", [])
-                                        _vurl = _videos[0].get("url", "") if _videos else ""
-                                        st.session_state["studio_scene_videos"][vid_key] = {
-                                            "url": _vurl, "task_id": vr["task_id"], "status": 99
-                                        }
-                                    elif _new_status == "failed":
-                                        st.session_state["studio_scene_videos"][vid_key] = {
-                                            **vr, "status": "failed",
-                                            "error": _task_data.get("task_status_msg", "失败")
-                                        }
-                                    else:
-                                        st.session_state["studio_scene_videos"][vid_key] = {
-                                            **vr, "status": "processing"
-                                        }
-                                    st.rerun()
-                                except Exception as _e:
-                                    st.warning(f"查询失败：{_e}")
+                                _vid_source2 = vr.get("source", "kling")
+                                if _vid_source2 == "302ai":
+                                    # ── 302.ai 轮询 ───────────────────────────
+                                    from llm_client import _302_VIDEO_FETCH_URL as _FETCH_URL, _302_API_KEY as _API302
+                                    try:
+                                        _pr = _rq.get(
+                                            _FETCH_URL,
+                                            headers={"Authorization": f"Bearer {_API302}"},
+                                            params={"task_id": vr["task_id"]},
+                                            timeout=20,
+                                        )
+                                        _pd = _pr.json()
+                                        _new_status = _pd.get("data", {}).get("status", 5)
+                                        if _new_status == 99:
+                                            _works = _pd.get("data", {}).get("works", [])
+                                            _vurl = _works[0].get("resource", "") if _works else ""
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                "url": _vurl, "task_id": vr["task_id"],
+                                                "status": 99, "source": "302ai",
+                                            }
+                                        elif _new_status == 50:
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                **vr, "status": 50,
+                                                "error": "302.ai 任务失败（已自动退款）"
+                                            }
+                                        else:
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                **vr, "status": _new_status
+                                            }
+                                        st.rerun()
+                                    except Exception as _e:
+                                        st.warning(f"302.ai 查询失败：{_e}")
+                                else:
+                                    # ── 可灵官方轮询 ───────────────────────────
+                                    from llm_client import _kling_jwt as _kjwt2, _KLING_OFFICIAL_BASE as _KB2
+                                    try:
+                                        _poll_url = f"{_KB2}/v1/videos/image2video/{vr['task_id']}"
+                                        _r2 = _rq.get(
+                                            _poll_url,
+                                            headers={"Authorization": f"Bearer {_kjwt2()}"},
+                                            timeout=20,
+                                        )
+                                        _pd = _r2.json()
+                                        _task_data = _pd.get("data", {})
+                                        _new_status = _task_data.get("task_status", "processing")
+                                        if _new_status == "succeed":
+                                            _videos = _task_data.get("task_result", {}).get("videos", [])
+                                            _vurl = _videos[0].get("url", "") if _videos else ""
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                "url": _vurl, "task_id": vr["task_id"],
+                                                "status": 99, "source": "kling",
+                                            }
+                                        elif _new_status == "failed":
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                **vr, "status": "failed",
+                                                "error": _task_data.get("task_status_msg", "失败")
+                                            }
+                                        else:
+                                            st.session_state["studio_scene_videos"][vid_key] = {
+                                                **vr, "status": "processing"
+                                            }
+                                        st.rerun()
+                                    except Exception as _e:
+                                        st.warning(f"可灵查询失败：{_e}")
                         elif vid_prompt:
                             if st.button("生成视频", key=f"genvid_{vid_key}", use_container_width=True):
                                 with st.spinner("正在上传首帧图并提交视频任务..."):
