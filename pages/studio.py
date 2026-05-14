@@ -293,6 +293,131 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 import traceback as _tb
                 st.code(_tb.format_exc(), language="text")
 
+# ─── 逝者参考图 → 分镜图生成 全流程调试台 ──────────────────────────────────────
+with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程追踪", expanded=False):
+    st.caption("追踪：读取逝者参考图 → 上传图床获取 URL → 调用 gemini-3-pro-image-preview → 解析图片结果")
+
+    import base64 as _b64_ref, os as _os_ref, requests as _rq_ref
+
+    # ── 读取逝者参考图 ────────────────────────────────────────────────────────
+    _ref_b64_dbg = st.session_state.get("ancestor_photo_b64") or st.session_state.get("anc_photo_b64")
+    _anc_keys = [k for k in st.session_state if "anc" in k.lower() or "ancestor" in k.lower() or "photo" in k.lower()]
+    st.caption(f"Session 中与参考图相关的 key：`{_anc_keys}`")
+
+    if _ref_b64_dbg:
+        _ref_bytes_preview = _b64_ref.b64decode(_ref_b64_dbg)
+        st.success(f"✅ 找到逝者参考图（{len(_ref_bytes_preview)//1024} KB）")
+        st.image(_ref_bytes_preview, caption="逝者参考图预览", width=180)
+    else:
+        st.warning("⚠️ 当前 session 中未找到逝者参考图，请先在上方上传逝者照片后再测试。")
+
+    _ref_prompt_dbg = st.text_input(
+        "测试用分镜 Prompt",
+        value="老人在阳光斑驳的院子里静坐，回忆往事，电影质感，暖色调",
+        key="dbg_ref_prompt",
+    )
+
+    if st.button("🚀 开始参考图生图追踪", key="dbg_ref_run", type="primary"):
+        if not _ref_b64_dbg:
+            st.error("❌ 没有参考图，无法测试。请先上传逝者照片。")
+        else:
+            from llm_client import _upload_image_to_public as _upl_ref, IMAGE_REF_MODEL as _ref_model, PRIMARY_CLIENT as _ref_client
+
+            _ref_img_bytes = _b64_ref.b64decode(_ref_b64_dbg)
+            st.markdown("---")
+
+            # ── Step 1: 确认模型配置 ─────────────────────────────────────────
+            st.markdown("**Step 1 · 确认模型配置**")
+            st.caption(f"AI302_IMAGE_REF_MODEL env = `{_os_ref.getenv('AI302_IMAGE_REF_MODEL', '（未设置，用默认值）')}`")
+            st.caption(f"实际使用 IMAGE_REF_MODEL = `{_ref_model}`")
+            st.caption(f"302.ai BASE_URL = `{_ref_client.base_url}`")
+
+            # ── Step 2: 上传参考图到图床 ─────────────────────────────────────
+            st.markdown("**Step 2 · 上传参考图到图床**")
+            _s_upl = st.empty()
+            _s_upl.info("⏳ 上传中...")
+            _pub_ref_url = _upl_ref(_ref_img_bytes, "png")
+            if _pub_ref_url:
+                _s_upl.success(f"✅ 上传成功：`{_pub_ref_url}`")
+            else:
+                _s_upl.error("❌ 图床上传失败，无法继续")
+                st.stop()
+
+            # ── Step 3: 构造请求体并调用 gemini ─────────────────────────────
+            st.markdown("**Step 3 · 调用 gemini-3-pro-image-preview（via 302.ai）**")
+            _full_prompt_dbg = (
+                f"请严格保留参考图中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。"
+                f"生成一幅电影感的追思纪念场景：{_ref_prompt_dbg}。"
+                f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
+            )
+            _req_body_preview = {
+                "model": _ref_model,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": _full_prompt_dbg},
+                        {"type": "image_url", "image_url": {"url": _pub_ref_url}},
+                    ],
+                }],
+            }
+            st.code(__import__("json").dumps(_req_body_preview, ensure_ascii=False, indent=2), language="json")
+
+            _s3 = st.empty()
+            _s3.info("⏳ 请求中，gemini 生图通常需要 10-30 秒...")
+            try:
+                _ref_resp = _ref_client.chat.completions.create(
+                    model=_ref_model,
+                    messages=_req_body_preview["messages"],
+                    stream=False,
+                )
+                _s3.success("✅ API 响应已收到")
+            except Exception as _ref_exc:
+                _s3.error(f"❌ API 调用失败：{_ref_exc}")
+                import traceback as _tb_ref
+                st.code(_tb_ref.format_exc(), language="text")
+                st.stop()
+
+            # ── Step 4: 解析响应 ─────────────────────────────────────────────
+            st.markdown("**Step 4 · 解析响应内容**")
+            _raw_content = _ref_resp.choices[0].message.content
+            st.caption(f"content 类型：`{type(_raw_content).__name__}`")
+
+            if isinstance(_raw_content, list):
+                st.caption(f"content 共 {len(_raw_content)} 个 part")
+                _found_img = False
+                for _pi, _part in enumerate(_raw_content):
+                    _ptype = _part.get("type") if isinstance(_part, dict) else str(type(_part))
+                    st.caption(f"  part[{_pi}] type={_ptype}")
+                    if isinstance(_part, dict) and _part.get("type") == "image_url":
+                        _url_val = _part.get("image_url", {}).get("url", "")
+                        if _url_val.startswith("data:"):
+                            _gen_b64 = _url_val.split(",", 1)[-1]
+                            st.success(f"✅ 找到 data URL 图片（base64 长度={len(_gen_b64)}）")
+                            st.image(_b64_ref.b64decode(_gen_b64), caption="生成图片预览", use_column_width=True)
+                            _found_img = True
+                        elif _url_val.startswith("http"):
+                            _s_dl = st.empty()
+                            _s_dl.info(f"📥 检测到 HTTPS 图片 URL，下载中：`{_url_val[:80]}...`")
+                            try:
+                                _dl_r = _rq_ref.get(_url_val, timeout=30)
+                                if _dl_r.status_code == 200:
+                                    _gen_b64 = _b64_ref.b64encode(_dl_r.content).decode()
+                                    _s_dl.success(f"✅ 下载成功（{len(_dl_r.content)//1024} KB）")
+                                    st.image(_dl_r.content, caption="生成图片预览", use_column_width=True)
+                                    _found_img = True
+                                else:
+                                    _s_dl.error(f"❌ 下载失败 HTTP {_dl_r.status_code}")
+                            except Exception as _dl_e:
+                                _s_dl.error(f"❌ 下载异常：{_dl_e}")
+                if not _found_img:
+                    st.warning("⚠️ 响应 content 列表中未找到 image_url 块，原始内容：")
+                    st.json([str(p) for p in _raw_content])
+            elif isinstance(_raw_content, str):
+                st.warning(f"⚠️ 模型返回了纯文字（可能未生成图片）：\n\n{_raw_content[:300]}")
+            else:
+                st.error(f"❌ 未知 content 类型：{type(_raw_content)}")
+                st.write(_raw_content)
+
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 st.markdown(
     "<div class='step-row'><span class='step-dot'>4</span>"
