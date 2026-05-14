@@ -50,6 +50,7 @@ DIALOGUE_MODEL      = os.getenv("AI302_DIALOGUE_MODEL",  "doubao-Seed-2-0-lite")
 VISION_MODEL        = os.getenv("AI302_VISION_MODEL",       "gemini-2.5-flash")
 IMAGE_GEN_MODEL     = os.getenv("AI302_IMAGE_GEN_MODEL",    "google/nano-banana/text-to-image")
 IMAGE_GEN_FALLBACK  = os.getenv("AI302_IMAGE_GEN_FALLBACK", "gpt-4o-image-generation")
+IMAGE_REF_MODEL     = os.getenv("AI302_IMAGE_REF_MODEL",    "gemini-3-pro-image-preview")
 VIDEO_GEN_MODEL     = os.getenv("AI302_VIDEO_GEN_MODEL",    "kling-v1-5-pro")
 AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 
@@ -462,48 +463,89 @@ def _generate_image_wavespeed(prompt: str, model: str) -> tuple:
 
 def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
     """
-    有参考照片时的图生图：使用 gemini-3-pro-image-preview（多模态输入）。
-    通过 302.ai 统一网关调用，传入参考图 + 文字 Prompt，让模型在画面中保留人物形象。
+    有参考照片时的图生图：使用 gemini-3-pro-image-preview（由 AI302_IMAGE_REF_MODEL 控制）。
+    流程：
+      1. 将参考图 base64 → 上传图床 → 获取公开 HTTPS URL
+      2. 将 URL + Prompt 发给 gemini-3-pro-image-preview（302.ai 网关）
+      3. 解析响应中的 image 块，返回生成图 base64
     返回 (b64_string, None) 成功；(None, error_message) 失败。
     """
     import logging as _log_ref
     _log_r = _log_ref.getLogger("llm_client.image_ref")
 
+    # ── Step 1: 上传参考图到图床，获取公开 URL ──────────────────────────────
     try:
-        ref_data_url = f"data:image/png;base64,{reference_b64}"
-        full_prompt = (
-            f"请严格保留参考图中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。"
-            f"生成一幅电影感的追思纪念场景：{prompt}。"
-            f"风格：电影质感、暖色调、16:9 构图。"
-        )
+        ref_bytes = base64.b64decode(reference_b64)
+    except Exception as e:
+        return None, f"参考图 base64 解码失败：{e}"
+
+    _log_r.info("[image_ref] 上传参考图到图床...")
+    public_url = _upload_image_to_public(ref_bytes, "png")
+    if not public_url:
+        return None, "参考图上传图床失败，无法获取公开 URL"
+    _log_r.info(f"[image_ref] 图床上传成功：{public_url}")
+
+    # ── Step 2: 调用 gemini-3-pro-image-preview ─────────────────────────────
+    full_prompt = (
+        f"请严格保留参考图中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。"
+        f"生成一幅电影感的追思纪念场景：{prompt}。"
+        f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
+    )
+    try:
         resp = PRIMARY_CLIENT.chat.completions.create(
-            model="gemini-3-pro-image-preview",
+            model=IMAGE_REF_MODEL,   # gemini-3-pro-image-preview（从 .env 读取）
             messages=[
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": full_prompt},
-                        {"type": "image_url", "image_url": {"url": ref_data_url}},
+                        {"type": "image_url", "image_url": {"url": public_url}},
                     ],
                 }
             ],
             stream=False,
         )
-        # gemini-3-pro-image-preview 在 content 里返回 image 块
-        for part in (resp.choices[0].message.content or []):
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                url = part.get("image_url", {}).get("url", "")
-                if url.startswith("data:"):
-                    b64 = url.split(",", 1)[-1]
-                    return b64, None
-        # 也可能直接在 b64_json 字段
-        if hasattr(resp.choices[0].message, "content") and isinstance(resp.choices[0].message.content, str):
-            # 文字回复，说明模型没有输出图片
-            return None, f"gemini-3-pro-image-preview 未返回图片（可能 prompt 被拒绝）"
-        return None, "gemini-3-pro-image-preview 返回结构未识别"
     except Exception as exc:
-        _log_r.warning(f"[generate_image_302_ref] 失败：{exc}")
-        return None, str(exc)
+        _log_r.warning(f"[image_ref] API 调用失败：{exc}")
+        return None, f"gemini-3-pro-image-preview 调用失败：{exc}"
+
+    # ── Step 3: 解析响应 ─────────────────────────────────────────────────────
+    # gemini 通过 302.ai 网关可能以多种格式返回图片：
+    # 方式A: content 列表中有 type=image_url 的块（data: URL）
+    # 方式B: content 列表中有 type=image_url 的块（HTTPS URL，需下载）
+    # 方式C: 纯文字回复（生成失败）
+    try:
+        content = resp.choices[0].message.content
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        # data URL → 直接取 base64
+                        b64 = url.split(",", 1)[-1]
+                        _log_r.info("[image_ref] 解析到 data URL 图片")
+                        return b64, None
+                    elif url.startswith("http"):
+                        # HTTPS URL → 下载转 base64
+                        try:
+                            dl = _requests.get(url, timeout=30)
+                            if dl.status_code == 200:
+                                b64 = base64.b64encode(dl.content).decode()
+                                _log_r.info("[image_ref] 下载 HTTPS 图片成功")
+                                return b64, None
+                        except Exception as dl_e:
+                            _log_r.warning(f"[image_ref] 下载图片失败：{dl_e}")
+        elif isinstance(content, str):
+            # 纯文字 → 模型没有生成图片
+            _log_r.warning(f"[image_ref] 模型返回文字而非图片：{content[:100]}")
+            return None, f"gemini-3-pro-image-preview 未返回图片（文字回复）：{content[:80]}"
+    except Exception as exc:
+        _log_r.warning(f"[image_ref] 响应解析失败：{exc}")
+        return None, f"响应解析失败：{exc}"
+
+    return None, "gemini-3-pro-image-preview 响应中未找到图片数据"
 
 
 def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
