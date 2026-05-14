@@ -483,10 +483,6 @@ if phase == "done":
                 bar = st.progress(0, text="批量生成中...")
                 _batch_anc_b64   = st.session_state.get("ancestor_photo_b64")
                 _batch_dec_name  = str(st.session_state.get("form_data", {}).get("deceased_name", "")).lower()
-                _ref_kws_batch   = ["逝者","爷爷","奶奶","父亲","母亲","grandfather",
-                                    "elderly man","elderly woman","deceased","他","她"]
-                if _batch_dec_name:
-                    _ref_kws_batch.append(_batch_dec_name)
                 # 上传配角图床（只做一次）
                 _batch_cast = _resolve_cast_urls()
                 for idx, sc in enumerate(scenes):
@@ -495,15 +491,10 @@ if phase == "done":
                     try:
                         _pm  = build_scene_prompts(sc, character_bible, scene_library, cast_roles=_batch_cast)
                         _img_prompt = _pm.get("image_prompt") or _pr
-                        # 判断该分镜是否涉及逝者，若是则传入参考照片
-                        _use_ref_batch = False
-                        if _batch_anc_b64:
-                            _subj_lc = str(sc.get("subject", "")).lower()
-                            _desc_lc = str(sc.get("description", "")).lower()
-                            _use_ref_batch = any(kw in _subj_lc or kw in _desc_lc for kw in _ref_kws_batch)
+                        # 有逝者参考图时，所有分镜都传入参考图（face-lock 由 generate_image_302_ref 内部保证）
                         _b64, _ = generate_image_302(
                             _img_prompt,
-                            reference_b64=_batch_anc_b64 if _use_ref_batch else None,
+                            reference_b64=_batch_anc_b64 if _batch_anc_b64 else None,
                         )
                         if _b64:
                             _cur = st.session_state["studio_scene_images"].get(_sid, [])
@@ -719,39 +710,23 @@ if phase == "done":
                             pm  = build_scene_prompts(scene, character_bible, scene_library, cast_roles=_single_cast)
                             img_prompt = pm.get("image_prompt") or pr_raw
 
-                            # ── 判断该分镜是否出现逝者，若有则传入参考照片 ──────
+                            # ── 有逝者参考图时所有分镜都传入，face-lock 由 generate_image_302_ref 保证 ──
                             _ancestor_b64 = st.session_state.get("ancestor_photo_b64")
-                            _use_ref = False
-                            if _ancestor_b64:
-                                _subject = str(scene.get("subject", "")).lower()
-                                _desc_lc = str(desc).lower()
-                                _deceased_name = str(
-                                    st.session_state.get("form_data", {}).get("deceased_name", "")
-                                ).lower()
-                                # 分镜主体含逝者相关词则使用参考照片
-                                _ref_kws = ["逝者", "爷爷", "奶奶", "父亲", "母亲", "grandfather",
-                                            "elderly man", "elderly woman", "deceased", "他", "她"]
-                                if _deceased_name:
-                                    _ref_kws.append(_deceased_name)
-                                _use_ref = any(kw in _subject or kw in _desc_lc for kw in _ref_kws)
 
                             b64, err = generate_image_302(
                                 img_prompt,
-                                reference_b64=_ancestor_b64 if _use_ref else None,
+                                reference_b64=_ancestor_b64 if _ancestor_b64 else None,
                             )
                             if b64:
                                 st.session_state["studio_scene_images"][sid] = \
                                     st.session_state["studio_scene_images"].get(sid, []) + [b64]
                                 st.session_state["studio_scene_vidprompts"][sid] = \
                                     pm.get("video_prompt") or desc
-                                if _use_ref:
+                                if _ancestor_b64:
                                     st.success("✅ 已使用逝者参考照片生成，形象已锁定")
                                 st.rerun()
                             else:
-                                if _use_ref and err:
-                                    st.error(f"❌ 参考图生成失败（images.edit 错误）：{err}\n\n已降级为无参考图生成，请重试。")
-                                else:
-                                    st.error(f"图片生成失败：{err}")
+                                st.error(f"图片生成失败：{err}")
                         except Exception as ex:
                             st.error(str(ex))
 

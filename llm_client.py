@@ -638,8 +638,10 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
     # ── 无参考照片：纯文本生图，同样走 gemini-3-pro-image-preview ────────────
     _log_i.info(f"[image] 调用 {IMAGE_REF_MODEL} 纯文本生图")
     full_prompt = (
-        f"请生成一幅电影感的追思纪念场景图片：{prompt}。"
-        f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
+        f"请严格遵循以下分镜描述，生成一幅电影感的追思纪念场景图片。"
+        f"分镜描述：{prompt}。"
+        f"风格要求：电影质感、暖色调、16:9 构图、photorealistic, cinematic still, 8K。"
+        f"请直接输出生成的图片。"
     )
     try:
         resp = PRIMARY_CLIENT.chat.completions.create(
