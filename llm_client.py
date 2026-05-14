@@ -550,86 +550,60 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
 
 def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
     """
-    生成图像主入口。
-    · 有参考照片 → 优先用 gemini-3-pro-image-preview（图生图，保留人物形象）
-                   失败则降级至 gpt-4o images.edit
-                   再失败则降级至无参考图普通生成
-    · 无参考照片 → nano-banana（Wavespeed）→ 失败则 gpt-4o-image-generation
+    生成图像主入口 —— 统一使用 gemini-3-pro-image-preview（IMAGE_REF_MODEL）。
+    · 有参考照片 → 上传图床获取 HTTPS URL，图文一起发给 gemini，保留人物形象
+    · 无参考照片 → 纯文本 prompt 发给 gemini，直接生成分镜图
     返回 (b64_string, None) 成功；(None, error_message) 失败。
     """
     import logging as _log_img
+    import requests as _rq_img
     _log_i = _log_img.getLogger("llm_client.image")
 
-    # ── 有参考照片：先走 gemini-3-pro-image-preview 图生图 ──────────────────
+    # ── 有参考照片：委托 generate_image_302_ref ──────────────────────────────
     if reference_b64:
         b64, err = generate_image_302_ref(prompt, reference_b64)
         if b64:
-            _log_i.info("[image] gemini-3-pro-image-preview 图生图成功")
+            _log_i.info("[image] gemini 图生图成功（有参考图）")
             return b64, None
-        _log_i.warning(f"[image] gemini-3-pro-image-preview 失败（{err}），降级至 gpt-4o images.edit")
+        return None, err
 
-        # 降级：gpt-4o images.edit
-        _ref_edit_error: Optional[str] = None
-        try:
-            import io as _io
-            import base64 as _b64
-            from PIL import Image as _PILImg
-
-            raw = _b64.b64decode(reference_b64)
-            pil = _PILImg.open(_io.BytesIO(raw)).convert("RGBA")
-            pil.thumbnail((1024, 1024), _PILImg.LANCZOS)
-            buf = _io.BytesIO()
-            pil.save(buf, format="PNG")
-            buf.seek(0)
-            buf.name = "reference.png"
-
-            edit_prompt = (
-                f"Use the person in the reference image as the main character. "
-                f"Keep the character's face, age, skin tone, and appearance IDENTICAL to the reference photo. "
-                f"Generate a new cinematic memorial scene: {prompt}"
-            )
-            resp = PRIMARY_CLIENT.images.edit(
-                model=IMAGE_GEN_FALLBACK,
-                image=buf,
-                prompt=edit_prompt,
-                size="1024x1024",
-                response_format="b64_json",
-                n=1,
-            )
-            b64 = resp.data[0].b64_json if resp.data else None
-            if b64:
-                _log_i.info("[image] gpt-4o images.edit 成功")
-                return b64, None
-            _ref_edit_error = "images.edit 返回空数据"
-        except Exception as exc:
-            _ref_edit_error = str(exc)
-            _log_i.warning(f"[image] gpt-4o images.edit 失败（{exc}），降级为普通生成")
-        # 两级参考图生成均失败 → 继续普通生成（不中断流程）
-
-    # ── 无参考图（或参考图生成失败）：主力 nano-banana ──────────────────────────
-    if "/" in IMAGE_GEN_MODEL:
-        b64, err = _generate_image_wavespeed(prompt, IMAGE_GEN_MODEL)
-        if b64:
-            return b64, None
-        fallback_err_prefix = f"[nano-banana 失败：{err}] → 尝试备用模型…"
-    else:
-        fallback_err_prefix = ""
-
-    # 备用：gpt-4o-image-generation（标准 OpenAI images.generate）
+    # ── 无参考照片：纯文本生图，同样走 gemini-3-pro-image-preview ────────────
+    _log_i.info(f"[image] 调用 {IMAGE_REF_MODEL} 纯文本生图")
+    full_prompt = (
+        f"请生成一幅电影感的追思纪念场景图片：{prompt}。"
+        f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
+    )
     try:
-        resp = PRIMARY_CLIENT.images.generate(
-            model=IMAGE_GEN_FALLBACK,
-            prompt=prompt,
-            size="1024x1024",
-            response_format="b64_json",
-            n=1,
+        resp = PRIMARY_CLIENT.chat.completions.create(
+            model=IMAGE_REF_MODEL,
+            messages=[{"role": "user", "content": full_prompt}],
+            stream=False,
         )
-        b64 = resp.data[0].b64_json if resp.data else None
-        if b64:
-            return b64, None
-        return None, fallback_err_prefix + "备用模型返回空数据"
     except Exception as exc:
-        return None, fallback_err_prefix + str(exc)
+        _log_i.warning(f"[image] {IMAGE_REF_MODEL} 调用失败：{exc}")
+        return None, str(exc)
+
+    # 解析响应（与 generate_image_302_ref 一致）
+    content = resp.choices[0].message.content
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                if url.startswith("data:"):
+                    return url.split(",", 1)[-1], None
+                elif url.startswith("http"):
+                    try:
+                        dl = _rq_img.get(url, timeout=30)
+                        if dl.status_code == 200:
+                            return base64.b64encode(dl.content).decode(), None
+                    except Exception as dl_e:
+                        return None, f"图片下载失败：{dl_e}"
+    elif isinstance(content, str):
+        return None, f"{IMAGE_REF_MODEL} 返回文字而非图片：{content[:80]}"
+
+    return None, f"{IMAGE_REF_MODEL} 响应中未找到图片数据"
 
 
 # ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────
