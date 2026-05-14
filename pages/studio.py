@@ -5,7 +5,7 @@ from typing import Dict, List
 import streamlit as st
 import gate_manager
 import pipeline_runner
-from llm_client import build_scene_prompts, generate_image_302, generate_video_302
+from llm_client import build_scene_prompts, generate_image_302, generate_image_302_ref, generate_video_302
 
 st.set_page_config(page_title="念念 · 分镜制作台", layout="wide", initial_sidebar_state="collapsed")
 
@@ -526,11 +526,35 @@ if phase == "done":
                                     except Exception as _e:
                                         st.warning(f"可灵查询失败：{_e}")
                         elif vid_prompt:
-                            if st.button("生成视频", key=f"genvid_{vid_key}", use_container_width=True):
+                            # ── Prompt 编辑框 + 时长选择 ──────────────────────
+                            _vp_key   = f"vid_prompt_edit_{vid_key}"
+                            _vd_key   = f"vid_dur_{vid_key}"
+                            _cur_vp   = st.session_state.get(_vp_key, vid_prompt)
+                            _cur_dur  = st.session_state.get(_vd_key, 5)
+
+                            _edited_prompt = st.text_area(
+                                "可灵 Prompt（可修改）",
+                                value=_cur_vp,
+                                key=_vp_key,
+                                height=80,
+                                label_visibility="collapsed",
+                                placeholder="输入发给可灵的视频描述，确认后点击生成视频",
+                            )
+                            _dur_col, _btn_col = st.columns([1, 2])
+                            with _dur_col:
+                                _sel_dur = st.selectbox(
+                                    "时长",
+                                    options=[5, 10],
+                                    index=0 if _cur_dur == 5 else 1,
+                                    key=_vd_key,
+                                    format_func=lambda x: f"{x} 秒",
+                                    label_visibility="collapsed",
+                                )
+                            with _btn_col:
+                              if st.button("生成视频 →", key=f"genvid_{vid_key}", use_container_width=True, type="primary"):
                                 with st.spinner("正在上传首帧图并提交视频任务..."):
-                                    # 若有逝者参考照片且该分镜涉及逝者，在 prompt 前注入外貌一致性指令
                                     _vid_anc = st.session_state.get("ancestor_photo_b64")
-                                    _vid_final_prompt = vid_prompt
+                                    _vid_final_prompt = _edited_prompt or vid_prompt
                                     if _vid_anc:
                                         _vid_subj = str(scene.get("subject", "")).lower()
                                         _vid_desc = str(desc).lower()
@@ -544,12 +568,12 @@ if phase == "done":
                                             _vid_final_prompt = (
                                                 "Keep the main character's face and appearance IDENTICAL to the first frame image. "
                                                 "Do NOT alter the person's face, age, or features. "
-                                                + vid_prompt
+                                                + _vid_final_prompt
                                             )
                                     vr2 = generate_video_302(
                                         _vid_final_prompt,
                                         image_url="data:image/png;base64," + imgs[j],
-                                        duration=5, poll=False,
+                                        duration=_sel_dur, poll=False,
                                     )
                                 if vr2.get("error"):
                                     _err_msg = vr2["error"]

@@ -460,26 +460,81 @@ def _generate_image_wavespeed(prompt: str, model: str) -> tuple:
         return None, str(exc)
 
 
-def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
+def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
     """
-    生成图像：先尝试 nano-banana（Wavespeed），失败则回退至 gpt-4o-image-generation。
-    reference_b64 : 参考人像的 base64 字符串（PNG/JPG）。
-                    若提供，将跳过 nano-banana，直接用 gpt-4o images.edit 以参考图为锚点生成，
-                    确保分镜中逝者形象与参考照片一致。
+    有参考照片时的图生图：使用 gemini-3-pro-image-preview（多模态输入）。
+    通过 302.ai 统一网关调用，传入参考图 + 文字 Prompt，让模型在画面中保留人物形象。
     返回 (b64_string, None) 成功；(None, error_message) 失败。
     """
-    # ── 有参考照片时：走 gpt-4o images.edit（角色形象锚定）────────────────────
-    _ref_edit_error: Optional[str] = None
+    import logging as _log_ref
+    _log_r = _log_ref.getLogger("llm_client.image_ref")
+
+    try:
+        ref_data_url = f"data:image/png;base64,{reference_b64}"
+        full_prompt = (
+            f"请严格保留参考图中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。"
+            f"生成一幅电影感的追思纪念场景：{prompt}。"
+            f"风格：电影质感、暖色调、16:9 构图。"
+        )
+        resp = PRIMARY_CLIENT.chat.completions.create(
+            model="gemini-3-pro-image-preview",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": full_prompt},
+                        {"type": "image_url", "image_url": {"url": ref_data_url}},
+                    ],
+                }
+            ],
+            stream=False,
+        )
+        # gemini-3-pro-image-preview 在 content 里返回 image 块
+        for part in (resp.choices[0].message.content or []):
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                if url.startswith("data:"):
+                    b64 = url.split(",", 1)[-1]
+                    return b64, None
+        # 也可能直接在 b64_json 字段
+        if hasattr(resp.choices[0].message, "content") and isinstance(resp.choices[0].message.content, str):
+            # 文字回复，说明模型没有输出图片
+            return None, f"gemini-3-pro-image-preview 未返回图片（可能 prompt 被拒绝）"
+        return None, "gemini-3-pro-image-preview 返回结构未识别"
+    except Exception as exc:
+        _log_r.warning(f"[generate_image_302_ref] 失败：{exc}")
+        return None, str(exc)
+
+
+def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
+    """
+    生成图像主入口。
+    · 有参考照片 → 优先用 gemini-3-pro-image-preview（图生图，保留人物形象）
+                   失败则降级至 gpt-4o images.edit
+                   再失败则降级至无参考图普通生成
+    · 无参考照片 → nano-banana（Wavespeed）→ 失败则 gpt-4o-image-generation
+    返回 (b64_string, None) 成功；(None, error_message) 失败。
+    """
+    import logging as _log_img
+    _log_i = _log_img.getLogger("llm_client.image")
+
+    # ── 有参考照片：先走 gemini-3-pro-image-preview 图生图 ──────────────────
     if reference_b64:
+        b64, err = generate_image_302_ref(prompt, reference_b64)
+        if b64:
+            _log_i.info("[image] gemini-3-pro-image-preview 图生图成功")
+            return b64, None
+        _log_i.warning(f"[image] gemini-3-pro-image-preview 失败（{err}），降级至 gpt-4o images.edit")
+
+        # 降级：gpt-4o images.edit
+        _ref_edit_error: Optional[str] = None
         try:
             import io as _io
             import base64 as _b64
             from PIL import Image as _PILImg
 
-            # OpenAI images.edit 严格要求 RGBA PNG，先转换
             raw = _b64.b64decode(reference_b64)
             pil = _PILImg.open(_io.BytesIO(raw)).convert("RGBA")
-            # 缩放到 1024×1024 以内（API 上限 4 MB）
             pil.thumbnail((1024, 1024), _PILImg.LANCZOS)
             buf = _io.BytesIO()
             pil.save(buf, format="PNG")
@@ -492,7 +547,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
                 f"Generate a new cinematic memorial scene: {prompt}"
             )
             resp = PRIMARY_CLIENT.images.edit(
-                model=IMAGE_GEN_FALLBACK,   # gpt-4o-image-generation
+                model=IMAGE_GEN_FALLBACK,
                 image=buf,
                 prompt=edit_prompt,
                 size="1024x1024",
@@ -501,13 +556,13 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
             )
             b64 = resp.data[0].b64_json if resp.data else None
             if b64:
+                _log_i.info("[image] gpt-4o images.edit 成功")
                 return b64, None
             _ref_edit_error = "images.edit 返回空数据"
         except Exception as exc:
-            # 参考图生成失败 → 降级为无参考图生成，但把错误暴露出来方便调试
             _ref_edit_error = str(exc)
-            import logging as _log
-            _log.warning(f"[generate_image_302] images.edit 失败，降级为普通生成：{exc}")
+            _log_i.warning(f"[image] gpt-4o images.edit 失败（{exc}），降级为普通生成")
+        # 两级参考图生成均失败 → 继续普通生成（不中断流程）
 
     # ── 无参考图（或参考图生成失败）：主力 nano-banana ──────────────────────────
     if "/" in IMAGE_GEN_MODEL:
