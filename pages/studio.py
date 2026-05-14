@@ -384,42 +384,17 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
             st.markdown("**Step 4 · 解析响应内容**")
             _raw_content = _ref_resp.choices[0].message.content
             st.caption(f"content 类型：`{type(_raw_content).__name__}`")
+            if isinstance(_raw_content, str):
+                st.caption(f"content 前200字：`{_raw_content[:200]}`")
 
-            if isinstance(_raw_content, list):
-                st.caption(f"content 共 {len(_raw_content)} 个 part")
-                _found_img = False
-                for _pi, _part in enumerate(_raw_content):
-                    _ptype = _part.get("type") if isinstance(_part, dict) else str(type(_part))
-                    st.caption(f"  part[{_pi}] type={_ptype}")
-                    if isinstance(_part, dict) and _part.get("type") == "image_url":
-                        _url_val = _part.get("image_url", {}).get("url", "")
-                        if _url_val.startswith("data:"):
-                            _gen_b64 = _url_val.split(",", 1)[-1]
-                            st.success(f"✅ 找到 data URL 图片（base64 长度={len(_gen_b64)}）")
-                            st.image(_b64_ref.b64decode(_gen_b64), caption="生成图片预览", use_column_width=True)
-                            _found_img = True
-                        elif _url_val.startswith("http"):
-                            _s_dl = st.empty()
-                            _s_dl.info(f"📥 检测到 HTTPS 图片 URL，下载中：`{_url_val[:80]}...`")
-                            try:
-                                _dl_r = _rq_ref.get(_url_val, timeout=30)
-                                if _dl_r.status_code == 200:
-                                    _gen_b64 = _b64_ref.b64encode(_dl_r.content).decode()
-                                    _s_dl.success(f"✅ 下载成功（{len(_dl_r.content)//1024} KB）")
-                                    st.image(_dl_r.content, caption="生成图片预览", use_column_width=True)
-                                    _found_img = True
-                                else:
-                                    _s_dl.error(f"❌ 下载失败 HTTP {_dl_r.status_code}")
-                            except Exception as _dl_e:
-                                _s_dl.error(f"❌ 下载异常：{_dl_e}")
-                if not _found_img:
-                    st.warning("⚠️ 响应 content 列表中未找到 image_url 块，原始内容：")
-                    st.json([str(p) for p in _raw_content])
-            elif isinstance(_raw_content, str):
-                st.warning(f"⚠️ 模型返回了纯文字（可能未生成图片）：\n\n{_raw_content[:300]}")
+            from llm_client import _parse_gemini_image_response as _parse_gemini
+            _gen_b64_dbg, _gen_err_dbg = _parse_gemini(_ref_resp, "[调试台]")
+            if _gen_b64_dbg:
+                st.success(f"✅ 解析成功（base64 长度={len(_gen_b64_dbg)}）")
+                st.image(_b64_ref.b64decode(_gen_b64_dbg), caption="生成图片预览", use_container_width=True)
             else:
-                st.error(f"❌ 未知 content 类型：{type(_raw_content)}")
-                st.write(_raw_content)
+                st.error(f"❌ 解析失败：{_gen_err_dbg}")
+                st.text_area("原始 content", value=str(_raw_content)[:500], height=120)
 
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
 

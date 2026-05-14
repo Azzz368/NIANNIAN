@@ -516,7 +516,7 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
     )
     try:
         resp = PRIMARY_CLIENT.chat.completions.create(
-            model=IMAGE_REF_MODEL,   # gemini-3-pro-image-preview（从 .env 读取）
+            model=IMAGE_REF_MODEL,
             messages=[
                 {
                     "role": "user",
@@ -532,43 +532,88 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
         _log_r.warning(f"[image_ref] API 调用失败：{exc}")
         return None, f"gemini-3-pro-image-preview 调用失败：{exc}"
 
-    # ── Step 3: 解析响应 ─────────────────────────────────────────────────────
-    # gemini 通过 302.ai 网关可能以多种格式返回图片：
-    # 方式A: content 列表中有 type=image_url 的块（data: URL）
-    # 方式B: content 列表中有 type=image_url 的块（HTTPS URL，需下载）
-    # 方式C: 纯文字回复（生成失败）
+    return _parse_gemini_image_response(resp, "[image_ref]")
+
+
+def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
+    """
+    解析 gemini-3-pro-image-preview 经由 302.ai 网关返回的图片。
+    兼容四种格式：
+      A. content 列表中 type=image_url，url 以 data: 开头（base64 data URL）
+      B. content 列表中 type=image_url，url 以 http 开头（HTTPS，下载）
+      C. content 为字符串，含 markdown 图片 ![...](url)（302.ai 常见格式）
+      D. content 为字符串，含裸 HTTPS 图片 URL
+    返回 (b64_string, None) 或 (None, error_str)。
+    """
+    import re as _re
+    import logging as _log_pg
+    _log = _log_pg.getLogger("llm_client.gemini_parse")
+
     try:
         content = resp.choices[0].message.content
-        if isinstance(content, list):
-            for part in content:
-                if not isinstance(part, dict):
-                    continue
-                if part.get("type") == "image_url":
-                    url = part.get("image_url", {}).get("url", "")
-                    if url.startswith("data:"):
-                        # data URL → 直接取 base64
-                        b64 = url.split(",", 1)[-1]
-                        _log_r.info("[image_ref] 解析到 data URL 图片")
-                        return b64, None
-                    elif url.startswith("http"):
-                        # HTTPS URL → 下载转 base64
-                        try:
-                            dl = _requests.get(url, timeout=30)
-                            if dl.status_code == 200:
-                                b64 = base64.b64encode(dl.content).decode()
-                                _log_r.info("[image_ref] 下载 HTTPS 图片成功")
-                                return b64, None
-                        except Exception as dl_e:
-                            _log_r.warning(f"[image_ref] 下载图片失败：{dl_e}")
-        elif isinstance(content, str):
-            # 纯文字 → 模型没有生成图片
-            _log_r.warning(f"[image_ref] 模型返回文字而非图片：{content[:100]}")
-            return None, f"gemini-3-pro-image-preview 未返回图片（文字回复）：{content[:80]}"
-    except Exception as exc:
-        _log_r.warning(f"[image_ref] 响应解析失败：{exc}")
-        return None, f"响应解析失败：{exc}"
+    except Exception as e:
+        return None, f"读取响应 content 失败：{e}"
 
-    return None, "gemini-3-pro-image-preview 响应中未找到图片数据"
+    # ── 格式 A/B：content 是列表（标准 multipart）────────────────────────────
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                if url.startswith("data:"):
+                    _log.info(f"{log_tag} 格式A：data URL")
+                    return url.split(",", 1)[-1], None
+                elif url.startswith("http"):
+                    b64 = _download_url_to_b64(url, log_tag)
+                    if b64:
+                        return b64, None
+
+    # ── 格式 C/D：content 是字符串，从中提取图片 URL ─────────────────────────
+    if isinstance(content, str):
+        # 格式C：markdown 图片语法 ![...](url)
+        md_matches = _re.findall(r'!\[.*?\]\((https?://[^\s)]+)\)', content)
+        for url in md_matches:
+            _log.info(f"{log_tag} 格式C：markdown 图片链接 {url[:60]}")
+            b64 = _download_url_to_b64(url, log_tag)
+            if b64:
+                return b64, None
+
+        # 格式D：裸 HTTPS URL（302.ai CDN 域名）
+        url_matches = _re.findall(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)(?:\?\S*)?', content, _re.IGNORECASE)
+        # 也匹配 302.ai file CDN
+        url_matches += _re.findall(r'https://file\.302\.ai/\S+', content)
+        seen = set()
+        for url in url_matches:
+            url = url.rstrip('.')
+            if url in seen:
+                continue
+            seen.add(url)
+            _log.info(f"{log_tag} 格式D：裸 URL {url[:60]}")
+            b64 = _download_url_to_b64(url, log_tag)
+            if b64:
+                return b64, None
+
+        # 真的只有文字
+        _log.warning(f"{log_tag} 模型返回纯文字，未找到图片：{content[:120]}")
+        return None, f"gemini 返回文字而非图片：{content[:80]}"
+
+    return None, "gemini 响应中未找到图片数据"
+
+
+def _download_url_to_b64(url: str, log_tag: str = "") -> Optional[str]:
+    """下载 HTTPS 图片 URL，返回 base64 字符串；失败返回 None。"""
+    import logging as _log_dl
+    _log = _log_dl.getLogger("llm_client.download")
+    try:
+        r = _requests.get(url, timeout=30)
+        if r.status_code == 200 and r.content:
+            _log.info(f"{log_tag} 下载成功 {len(r.content)//1024}KB")
+            return base64.b64encode(r.content).decode()
+        _log.warning(f"{log_tag} 下载失败 HTTP {r.status_code}")
+    except Exception as e:
+        _log.warning(f"{log_tag} 下载异常：{e}")
+    return None
 
 
 def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
@@ -606,27 +651,7 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
         _log_i.warning(f"[image] {IMAGE_REF_MODEL} 调用失败：{exc}")
         return None, str(exc)
 
-    # 解析响应（与 generate_image_302_ref 一致）
-    content = resp.choices[0].message.content
-    if isinstance(content, list):
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "image_url":
-                url = part.get("image_url", {}).get("url", "")
-                if url.startswith("data:"):
-                    return url.split(",", 1)[-1], None
-                elif url.startswith("http"):
-                    try:
-                        dl = _rq_img.get(url, timeout=30)
-                        if dl.status_code == 200:
-                            return base64.b64encode(dl.content).decode(), None
-                    except Exception as dl_e:
-                        return None, f"图片下载失败：{dl_e}"
-    elif isinstance(content, str):
-        return None, f"{IMAGE_REF_MODEL} 返回文字而非图片：{content[:80]}"
-
-    return None, f"{IMAGE_REF_MODEL} 响应中未找到图片数据"
+    return _parse_gemini_image_response(resp, "[image_noref]")
 
 
 # ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────
