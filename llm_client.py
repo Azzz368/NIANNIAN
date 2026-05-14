@@ -347,14 +347,17 @@ def build_scene_prompts(
     scene: Dict[str, Any],
     character_bible: Optional[Dict[str, Any]] = None,
     scene_library: Optional[List] = None,
+    cast_roles: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """
-    根据分镜 + 三要素，用 gpt-4o 同时生成：
-      - image_prompt : 英文，首帧图片，严格锁定角色 DNA（中国老年男性外貌）
-      - video_prompt : 中文，可灵首帧生视频，含镜头运动/情绪/氛围
-    返回 {"image_prompt": "...", "video_prompt": "..."}
+    根据分镜 + 三要素 + 电影角色表，用 LLM 同时生成：
+      - image_prompt : 英文首帧图片 Prompt，锁定角色 DNA 并嵌入角色参考图 URL
+      - video_prompt : 中文可灵视频 Prompt
+    cast_roles: [{"name":"...", "role_label":"...", "description":"...", "photo_url":"..."}]
+      主角（逝者）始终从 ancestor_photo_url 传入，无需在 cast_roles 里重复。
+    返回 {"image_prompt": "...", "video_prompt": "...", "_cast_ref": "...（供调用方记录）"}
     """
-    # 提取角色 DNA 描述
+    # ── 提取角色 DNA 描述 ──────────────────────────────────────────────────────
     dna_lines = []
     if character_bible:
         cd = character_bible.get("character_dna", {})
@@ -368,7 +371,7 @@ def build_scene_prompts(
             dna_lines.append(f"习惯动作：{cd['mannerisms']}")
     dna_text = "；".join(dna_lines) if dna_lines else "（未提供角色DNA）"
 
-    # 从 scene_library 匹配场景说明（优先用 scene_ref，再 fallback 到 scene_id）
+    # ── 从 scene_library 匹配场景说明 ─────────────────────────────────────────
     scene_id = scene.get("scene_id", "")
     scene_ref = scene.get("scene_ref") or scene_id
     scene_lib_desc = ""
@@ -380,36 +383,56 @@ def build_scene_prompts(
         if matched:
             scene_lib_desc = matched.get("visual_descriptor") or matched.get("description", "")
 
+    # ── 构造电影角色表字符串 ──────────────────────────────────────────────────
+    cast_lines = []
+    if cast_roles:
+        for cr in cast_roles:
+            _name = cr.get("name", "").strip()
+            _rl   = cr.get("role_label", "").strip()
+            _desc = cr.get("description", "").strip()
+            _url  = cr.get("photo_url", "")
+            if not _name:
+                continue
+            parts = []
+            if _rl:
+                parts.append(_rl)
+            if _desc:
+                parts.append(_desc)
+            if _url:
+                parts.append(f"参考图：{_url}")
+            cast_lines.append(f"  · {_name}（{'，'.join(parts) if parts else '配角'}）")
+    cast_text = "\n".join(cast_lines) if cast_lines else "（无配角）"
+
     system_prompt = (
         "你是专业的追思影像 Prompt 工程师，擅长将中文分镜描述转化为高质量 AI 生成 Prompt。\n\n"
-        "任务：根据提供的分镜信息和角色DNA，同时输出两条 Prompt：\n\n"
+        "任务：根据提供的分镜信息、角色DNA和电影角色表，同时输出两条 Prompt：\n\n"
         "1. image_prompt（英文）：\n"
-        "   - 必须将角色DNA翻译并嵌入，精准锁定外貌（例如：elderly Chinese man, 75 years old, silver-white hair combed back neatly, silver rectangular glasses...）\n"
-        "   - 禁止出现任何与DNA不符的外貌描述（如：American, Western, blonde, etc.）\n"
+        "   - 必须将主角角色DNA翻译并嵌入，精准锁定外貌\n"
+        "   - 若场景中有配角出现，在 prompt 中用格式 [角色名(称谓,参考图URL)] 标注每个配角\n"
+        "   - 禁止出现与DNA不符的外貌描述（如：American, Western, blonde等）\n"
         "   - 包含场景光线、构图、情绪基调\n"
         "   - 风格后缀：photorealistic, cinematic still, 8K, warm golden hour lighting\n\n"
         "2. video_prompt（中文）：\n"
         "   - 镜头运动（推镜/拉镜/横移/固定等）\n"
-        "   - 人物动作与表情细节\n"
-        "   - 环境光线变化\n"
-        "   - 情感基调与节奏\n"
-        "   - 时长约5-6秒的画面感\n\n"
+        "   - 人物动作与表情细节（涉及多角色时逐一描述）\n"
+        "   - 环境光线变化、情感基调、时长约5-6秒的画面感\n\n"
         "严格按以下 JSON 返回，不要包含任何其他文字：\n"
         '{"image_prompt": "...", "video_prompt": "..."}'
     )
 
     user_payload = {
         "scene": scene,
-        "character_dna（必须锚定）": dna_text,
-        "scene_environment_descriptor（必须融入背景）": scene_lib_desc or "（未提供场景描述）",
+        "主角角色DNA（必须锚定）": dna_text,
+        "场景环境描述（融入背景）": scene_lib_desc or "（未提供场景描述）",
+        "电影配角表（如场景涉及多人，需在prompt中标注）": cast_text,
     }
 
     result = call_storyboard(system_prompt, json.dumps(user_payload, ensure_ascii=False))
     if result.get("error") or not result.get("image_prompt"):
-        # 降级：使用原始 mj_prompt
         fallback_img = scene.get("mj_prompt") or scene.get("description") or ""
         fallback_vid = scene.get("description") or ""
         return {"image_prompt": fallback_img, "video_prompt": fallback_vid, "_fallback": True}
+    result["_cast_ref"] = cast_text
     return result
 
 
