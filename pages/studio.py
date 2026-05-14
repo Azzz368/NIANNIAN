@@ -136,127 +136,34 @@ with nav2:
 
 st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
-# ─── 🎭 电影角色管理 ─────────────────────────────────────────────────────────
-import uuid as _uuid
+# ─── 角色摘要（只读，编辑请返回首页 Step 2）────────────────────────────────────
+_anc_b64  = st.session_state.get("ancestor_photo_b64")
+_dec_name = str(st.session_state.get("form_data", {}).get("deceased_name", "逝者"))
+_cast_ro  = st.session_state.get("cast_roles", [])
 
-# 主角：始终从 ancestor_photo_b64 自动同步（不存入 cast_roles，单独处理）
-_anc_b64    = st.session_state.get("ancestor_photo_b64")
-_anc_name   = st.session_state.get("ancestor_photo_filename", "")
-_dec_name   = str(st.session_state.get("form_data", {}).get("deceased_name", "逝者"))
-
-st.markdown(
-    "<div class='step-row' style='margin-top:18px;margin-bottom:10px;'>"
-    "<span style='font-size:1.1rem;'>🎭</span>"
-    "<div><div class='step-name' style='font-size:1rem;'>电影角色</div>"
-    "<div class='step-desc'>主角自动关联逝者照片，可继续添加配角</div></div></div>",
-    unsafe_allow_html=True,
-)
-
-# ── 主角卡片（固定，不可删除）────────────────────────────────────────────────
-with st.container():
-    _pc1, _pc2, _pc3 = st.columns([1, 5, 2])
-    with _pc1:
+with st.expander(
+    f"🎭 电影角色 · 主角：{_dec_name}"
+    + (f"  +  {len(_cast_ro)} 位配角" if _cast_ro else "  （无配角）"),
+    expanded=False,
+):
+    _rc1, _rc2 = st.columns([1, 6])
+    with _rc1:
         if _anc_b64:
-            st.image("data:image/jpeg;base64," + _anc_b64, width=64)
-        else:
-            st.markdown(
-                "<div style='width:64px;height:64px;border-radius:8px;background:#F3F4F6;"
-                "display:flex;align-items:center;justify-content:center;"
-                "font-size:1.6rem;'>👤</div>",
-                unsafe_allow_html=True,
-            )
-    with _pc2:
+            st.image("data:image/jpeg;base64," + _anc_b64, width=56)
+    with _rc2:
         st.markdown(
-            f"<div style='padding:6px 0;'>"
-            f"<span style='font-size:.82rem;font-weight:700;color:#9C7A45;'>主角</span>"
-            f"<span style='font-size:.88rem;font-weight:600;color:#1E1A14;margin-left:8px;'>{_dec_name}</span><br>"
-            f"<span style='font-size:.75rem;color:#6B7280;'>"
-            + ("✅ 参考照片已载入，分镜生成将自动锚定人物形象" if _anc_b64 else "⚠️ 请在首页上传逝者照片以锚定主角形象")
-            + "</span></div>",
+            f"<span style='font-size:.78rem;font-weight:700;color:#9C7A45;"
+            f"background:#FEF3C7;padding:2px 8px;border-radius:999px;'>主角</span>"
+            f"&nbsp;<b>{_dec_name}</b>&nbsp;"
+            + ("✅" if _anc_b64 else "⚠️ 未上传参考照片"),
             unsafe_allow_html=True,
         )
-    with _pc3:
-        if not _anc_b64:
-            _new_anc = st.file_uploader("上传主角照片", type=["jpg","jpeg","png","webp"],
-                                         key="cast_anc_upload", label_visibility="collapsed")
-            if _new_anc:
-                import base64 as _b64u
-                st.session_state["ancestor_photo_b64"] = _b64u.b64encode(_new_anc.read()).decode()
-                st.session_state["ancestor_photo_filename"] = _new_anc.name
-                st.rerun()
-        else:
-            if st.button("移除照片", key="del_anc_cast", use_container_width=True):
-                st.session_state.pop("ancestor_photo_b64", None)
-                st.session_state.pop("ancestor_photo_filename", None)
-                st.rerun()
-
-st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-
-# ── 配角列表 ──────────────────────────────────────────────────────────────────
-_cast: list = st.session_state["cast_roles"]
-_to_delete = None
-
-for _ci, _cr in enumerate(_cast):
-    _cid = _cr["id"]
-    with st.container():
-        st.markdown(
-            f"<div style='background:#FAF7F2;border:1px solid rgba(180,155,115,.18);"
-            f"border-radius:10px;padding:12px 16px;margin-bottom:8px;'>",
-            unsafe_allow_html=True,
-        )
-        _col_photo, _col_fields, _col_del = st.columns([1, 5, 1])
-        with _col_photo:
-            if _cr.get("photo_b64"):
-                st.image("data:image/jpeg;base64," + _cr["photo_b64"], width=60)
-            else:
-                _up = st.file_uploader("📷", type=["jpg","jpeg","png","webp"],
-                                       key=f"cast_photo_{_cid}", label_visibility="collapsed")
-                if _up:
-                    import base64 as _b64u2
-                    _cast[_ci]["photo_b64"] = _b64u2.b64encode(_up.read()).decode()
-                    st.session_state["cast_roles"] = _cast
-                    st.rerun()
-        with _col_fields:
-            _cc1, _cc2 = st.columns(2)
-            with _cc1:
-                _new_name = st.text_input("角色名", value=_cr.get("name",""), key=f"cast_name_{_cid}",
-                                           label_visibility="collapsed", placeholder="角色名（如：二丫）")
-                _cast[_ci]["name"] = _new_name
-            with _cc2:
-                _new_rl = st.text_input("称谓/关系", value=_cr.get("role_label",""), key=f"cast_rl_{_cid}",
-                                         label_visibility="collapsed", placeholder="称谓/关系（如：女儿）")
-                _cast[_ci]["role_label"] = _new_rl
-            _new_desc = st.text_input("外貌/特征描述（可选）", value=_cr.get("description",""),
-                                       key=f"cast_desc_{_cid}", label_visibility="collapsed",
-                                       placeholder="外貌特征（如：约40岁，短发，温柔）")
-            _cast[_ci]["description"] = _new_desc
-        with _col_del:
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"cast_del_{_cid}", help="删除此角色"):
-                _to_delete = _cid
-            if _cr.get("photo_b64"):
-                if st.button("移除图", key=f"cast_rmphoto_{_cid}", use_container_width=True):
-                    _cast[_ci]["photo_b64"] = None
-                    st.session_state["cast_roles"] = _cast
-                    st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-if _to_delete:
-    st.session_state["cast_roles"] = [c for c in _cast if c["id"] != _to_delete]
-    st.rerun()
-
-# ── 添加角色按钮 ──────────────────────────────────────────────────────────────
-if st.button("＋ 添加电影角色", key="cast_add_btn"):
-    st.session_state["cast_roles"].append({
-        "id": str(_uuid.uuid4())[:8],
-        "name": "",
-        "role_label": "",
-        "description": "",
-        "photo_b64": None,
-    })
-    st.rerun()
-
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+    for _cr in _cast_ro:
+        _n = _cr.get("name") or "（未填）"
+        _rl = _cr.get("role_label","")
+        _has_photo = "📷" if _cr.get("photo_b64") else ""
+        st.markdown(f"&nbsp;&nbsp;· **{_n}**（{_rl}）{_has_photo}", unsafe_allow_html=True)
+    st.caption("如需修改角色信息，请返回首页 Step 2 编辑。")
 
 
 

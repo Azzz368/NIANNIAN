@@ -340,6 +340,7 @@ def _init():
         "phase": "form", "form_step": 1, "form_data": {},
         "intake_assets": [], "chat_history": [],
         "ai_thinking": False, "chat_ready": False,
+        "cast_roles": [],   # [{id, name, role_label, description, photo_b64, photo_url}]
     }.items():
         st.session_state.setdefault(k, v)
 
@@ -455,17 +456,99 @@ def render_step2():
         label_visibility="collapsed")
     if mem: save("family_memory_text", mem)
     st.markdown("</div>", unsafe_allow_html=True)
+    # ── 🎭 电影角色管理 ────────────────────────────────────────────────────────
+    import uuid as _uuid_app
     st.markdown("<div class='nn-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='nn-section-label'>主要致辞家属（可选）</div>", unsafe_allow_html=True)
-    c1,c2 = st.columns(2)
-    with c1:
-        sn = st.text_input("家属姓名", value=get("speaker_name"), placeholder="例如：张明辉")
-        if sn: save("speaker_name", sn)
-    with c2:
-        sr = st.text_input("与逝者关系", value=get("speaker_relation"), placeholder="例如：儿子")
-        if sr: save("speaker_relation", sr)
-    ss = st.text_input("致辞风格偏好（可选）", value=get("speaker_style"), placeholder="例如：朴实感恩、温和真诚")
-    if ss: save("speaker_style", ss)
+    st.markdown("<div class='nn-section-label'>🎭 电影角色</div>", unsafe_allow_html=True)
+    st.caption("主角自动关联逝者，可继续添加出现在影片中的家属/重要人物作为配角")
+
+    # ── 主角卡片（固定）────────────────────────────────────────────────────────
+    _app_anc_b64  = st.session_state.get("ancestor_photo_b64")
+    _app_dec_name = get("deceased_name") or "逝者"
+    _mc1, _mc2, _mc3 = st.columns([1, 5, 2])
+    with _mc1:
+        if _app_anc_b64:
+            st.image("data:image/jpeg;base64," + _app_anc_b64, width=56)
+        else:
+            st.markdown(
+                "<div style='width:56px;height:56px;border-radius:8px;background:#F3F4F6;"
+                "display:flex;align-items:center;justify-content:center;font-size:1.4rem;'>👤</div>",
+                unsafe_allow_html=True,
+            )
+    with _mc2:
+        st.markdown(
+            f"<div style='padding:4px 0;'>"
+            f"<span style='font-size:.78rem;font-weight:700;color:#9C7A45;background:#FEF3C7;"
+            f"padding:2px 8px;border-radius:999px;margin-right:6px;'>主角</span>"
+            f"<span style='font-size:.88rem;font-weight:600;'>{_app_dec_name}</span><br>"
+            f"<span style='font-size:.74rem;color:#6B7280;'>"
+            + ("✅ 参考照片已上传" if _app_anc_b64 else "⚠️ 可在下方照片区上传逝者照片")
+            + "</span></div>",
+            unsafe_allow_html=True,
+        )
+    with _mc3:
+        if _app_anc_b64:
+            if st.button("移除照片", key="app_del_anc", use_container_width=True):
+                st.session_state.pop("ancestor_photo_b64", None)
+                st.session_state.pop("ancestor_photo_filename", None)
+                st.rerun()
+
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+    # ── 配角列表 ──────────────────────────────────────────────────────────────
+    _app_cast: list = st.session_state["cast_roles"]
+    _app_del_id = None
+    for _ci, _cr in enumerate(_app_cast):
+        _cid = _cr["id"]
+        _cc1, _cc2, _cc3 = st.columns([1, 5, 1])
+        with _cc1:
+            if _cr.get("photo_b64"):
+                st.image("data:image/jpeg;base64," + _cr["photo_b64"], width=52)
+            else:
+                _cup = st.file_uploader("📷", type=["jpg","jpeg","png","webp"],
+                                        key=f"app_cast_photo_{_cid}", label_visibility="collapsed")
+                if _cup:
+                    import base64 as _b64_app
+                    _app_cast[_ci]["photo_b64"] = _b64_app.b64encode(_cup.read()).decode()
+                    _app_cast[_ci].pop("photo_url", None)
+                    st.session_state["cast_roles"] = _app_cast
+                    st.rerun()
+        with _cc2:
+            _fn1, _fn2 = st.columns(2)
+            with _fn1:
+                _nn = st.text_input("角色名", value=_cr.get("name",""), key=f"app_cast_name_{_cid}",
+                                    label_visibility="collapsed", placeholder="姓名（如：二丫）")
+                _app_cast[_ci]["name"] = _nn
+            with _fn2:
+                _nrl = st.text_input("称谓/关系", value=_cr.get("role_label",""), key=f"app_cast_rl_{_cid}",
+                                     label_visibility="collapsed", placeholder="称谓（如：女儿）")
+                _app_cast[_ci]["role_label"] = _nrl
+            _ndesc = st.text_input("外貌特征（可选）", value=_cr.get("description",""),
+                                   key=f"app_cast_desc_{_cid}", label_visibility="collapsed",
+                                   placeholder="外貌特征（如：约40岁，短发，温柔）")
+            _app_cast[_ci]["description"] = _ndesc
+        with _cc3:
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+            if st.button("🗑️", key=f"app_cast_del_{_cid}", help="删除此角色"):
+                _app_del_id = _cid
+            if _cr.get("photo_b64"):
+                if st.button("移除图", key=f"app_cast_rmphoto_{_cid}", use_container_width=True):
+                    _app_cast[_ci]["photo_b64"] = None
+                    _app_cast[_ci].pop("photo_url", None)
+                    st.session_state["cast_roles"] = _app_cast
+                    st.rerun()
+        st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
+
+    if _app_del_id:
+        st.session_state["cast_roles"] = [c for c in _app_cast if c["id"] != _app_del_id]
+        st.rerun()
+
+    if st.button("＋ 添加配角", key="app_cast_add"):
+        st.session_state["cast_roles"].append({
+            "id": str(_uuid_app.uuid4())[:8],
+            "name": "", "role_label": "", "description": "", "photo_b64": None,
+        })
+        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<div class='nn-card'>", unsafe_allow_html=True)
     st.markdown("<div class='nn-section-label'>影像风格</div>", unsafe_allow_html=True)
