@@ -385,7 +385,7 @@ def render_step1():
             "<div class='nn-hero-sub'>我们会一步一步引导您，把对他/她/它最珍贵的记忆整理成一部专属追思影像。</div>"
             "</div>", unsafe_allow_html=True)
     # ── 测试快捷入口 ──────────────────────────────────────────
-    with st.expander("🧪 测试模式：一键填入陈文斌示例数据", expanded=False):
+    with st.expander(" 测试模式：一键填入陈文斌示例数据", expanded=False):
         st.caption("仅供开发测试用，点击按钮后所有字段将自动填入示例数据。")
         if st.button("填入全部测试数据（陈文斌）", key="fill_test_all"):
             st.session_state["form_data"] = dict(_TEST_DATA)
@@ -457,10 +457,10 @@ def render_step2():
         label_visibility="collapsed")
     if mem: save("family_memory_text", mem)
     st.markdown("</div>", unsafe_allow_html=True)
-    # ── 🎭 电影角色管理 ────────────────────────────────────────────────────────
+    # ──  电影角色管理 ────────────────────────────────────────────────────────
     import uuid as _uuid_app
     st.markdown("<div class='nn-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='nn-section-label'>🎭 电影角色</div>", unsafe_allow_html=True)
+    st.markdown("<div class='nn-section-label'> 电影角色</div>", unsafe_allow_html=True)
     st.caption("主角自动关联逝者，可继续添加出现在影片中的家属/重要人物作为配角")
 
     # ── 主角卡片（固定）────────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ def render_step2():
         else:
             st.markdown(
                 "<div style='width:56px;height:56px;border-radius:8px;background:#F3F4F6;"
-                "display:flex;align-items:center;justify-content:center;font-size:1.4rem;'>👤</div>",
+                "display:flex;align-items:center;justify-content:center;font-size:1.4rem;'></div>",
                 unsafe_allow_html=True,
             )
     with _mc2:
@@ -483,7 +483,7 @@ def render_step2():
             f"padding:2px 8px;border-radius:999px;margin-right:6px;'>主角</span>"
             f"<span style='font-size:.88rem;font-weight:600;'>{_app_dec_name}</span><br>"
             f"<span style='font-size:.74rem;color:#6B7280;'>"
-            + ("✅ 参考照片已上传" if _app_anc_b64 else "⚠️ 可在下方照片区上传逝者照片")
+            + (" 参考照片已上传" if _app_anc_b64 else " 可在下方照片区上传逝者照片")
             + "</span></div>",
             unsafe_allow_html=True,
         )
@@ -506,7 +506,7 @@ def render_step2():
             if _cr.get("photo_b64"):
                 st.image("data:image/jpeg;base64," + _cr["photo_b64"], width=52)
             else:
-                _cup = st.file_uploader("📷", type=["jpg","jpeg","png","webp"],
+                _cup = st.file_uploader("", type=["jpg","jpeg","png","webp"],
                                         key=f"app_cast_photo_{_cid}", label_visibility="collapsed")
                 if _cup:
                     import base64 as _b64_app
@@ -530,7 +530,7 @@ def render_step2():
             _app_cast[_ci]["description"] = _ndesc
         with _cc3:
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"app_cast_del_{_cid}", help="删除此角色"):
+            if st.button("", key=f"app_cast_del_{_cid}", help="删除此角色"):
                 _app_del_id = _cid
             if _cr.get("photo_b64"):
                 if st.button("移除图", key=f"app_cast_rmphoto_{_cid}", use_container_width=True):
@@ -570,7 +570,7 @@ def render_step2():
         st.markdown(
             "<div style='display:flex;align-items:center;gap:10px;padding:10px 14px;"
             "background:#D1FAE5;border:1px solid #6EE7B7;border-radius:10px;margin-bottom:12px;'>"
-            "<span style='font-size:1.1rem;'>✓</span>"
+            "<span style='font-size:1.1rem;'></span>"
             "<span style='font-size:.84rem;color:#065F46;font-weight:600;'>"
             "已识别逝者人像参考照片，分镜生成将锁定此形象</span></div>",
             unsafe_allow_html=True,
@@ -606,15 +606,15 @@ def render_step2():
 
     # ── 不同时期照片上传（可展开）────────────────────────────────────────────
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    with st.expander("📸 上传不同时期的照片（婴儿 / 童年 / 少年 / 青年 / 中年 / 老年）", expanded=False):
+    with st.expander(" 上传不同时期的照片（婴儿 / 童年 / 少年 / 青年 / 中年 / 老年）", expanded=False):
         st.caption("为各人生阶段上传代表性照片，AI 将在分镜中更准确地呈现不同时期的样貌。")
         _PERIODS = [
-            ("baby",    "👶 婴儿时期",  "0-3岁"),
-            ("child",   "🧒 童年时期",  "4-12岁"),
-            ("teen",    "🧑 少年时期",  "13-18岁"),
-            ("young",   "🧑‍🎓 青年时期", "19-35岁"),
-            ("middle",  "🧑‍💼 中年时期", "36-60岁"),
-            ("elder",   "👴 老年时期",  "60岁以上"),
+            ("baby",    " 婴儿时期",  "0-3岁"),
+            ("child",   " 童年时期",  "4-12岁"),
+            ("teen",    " 少年时期",  "13-18岁"),
+            ("young",   " 青年时期", "19-35岁"),
+            ("middle",  " 中年时期", "36-60岁"),
+            ("elder",   " 老年时期",  "60岁以上"),
         ]
         import base64 as _b64_period
         # 初始化时期照片存储

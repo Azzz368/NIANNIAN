@@ -272,7 +272,7 @@ if phase == 'done':
     st.markdown(
         "<div style='background:var(--surf);border:1px solid var(--border);border-radius:20px;"
         "padding:28px 32px;text-align:center;box-shadow:0 2px 16px rgba(0,0,0,.05);'>"
-        "<div style='font-size:1.5rem;margin-bottom:8px;'>✅</div>"
+        "<div style='font-size:1.5rem;margin-bottom:8px;'></div>"
         "<div style='font-family:\"Cormorant Garamond\",serif;font-size:1.4rem;font-weight:600;"
         "color:var(--ink);margin-bottom:10px;'>影像方案已确认</div>"
         "<div style='font-size:.9rem;color:var(--muted-l);line-height:1.7;'>"

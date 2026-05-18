@@ -142,7 +142,7 @@ _dec_name = str(st.session_state.get("form_data", {}).get("deceased_name", "逝�
 _cast_ro  = st.session_state.get("cast_roles", [])
 
 with st.expander(
-    f"🎭 电影角色 · 主角：{_dec_name}"
+    f" 电影角色 · 主角：{_dec_name}"
     + (f"  +  {len(_cast_ro)} 位配角" if _cast_ro else "  （无配角）"),
     expanded=False,
 ):
@@ -155,13 +155,13 @@ with st.expander(
             f"<span style='font-size:.78rem;font-weight:700;color:#9C7A45;"
             f"background:#FEF3C7;padding:2px 8px;border-radius:999px;'>主角</span>"
             f"&nbsp;<b>{_dec_name}</b>&nbsp;"
-            + ("✅" if _anc_b64 else "⚠️ 未上传参考照片"),
+            + ("" if _anc_b64 else " 未上传参考照片"),
             unsafe_allow_html=True,
         )
     for _cr in _cast_ro:
         _n = _cr.get("name") or "（未填）"
         _rl = _cr.get("role_label","")
-        _has_photo = "📷" if _cr.get("photo_b64") else ""
+        _has_photo = "" if _cr.get("photo_b64") else ""
         st.markdown(f"&nbsp;&nbsp;· **{_n}**（{_rl}）{_has_photo}", unsafe_allow_html=True)
     st.caption("如需修改角色信息，请返回首页 Step 2 编辑。")
 
@@ -170,7 +170,7 @@ with st.expander(
 # ─── 图床上传连通性测试（开发调试用）──────────────────────────────────────────
 import os as _os
 _imgbb_key = _os.getenv("IMGBB_API_KEY", "")
-with st.expander("🔧 调试：测试图床上传连通性", expanded=False):
+with st.expander(" 调试：测试图床上传连通性", expanded=False):
     st.caption("依次测试 tmpfiles.org → litterbox，确认哪个可用")
     if st.button("立即测试图床上传", key="test_imgbb"):
         import requests as _rq, base64 as _b64
@@ -183,25 +183,25 @@ with st.expander("🔧 调试：测试图床上传连通性", expanded=False):
                            files={"file": ("test.png", _test_bytes, "image/png")}, timeout=15)
             if _r2.status_code == 200:
                 _u = _r2.json().get("data", {}).get("url", "")
-                st.success(f"✅ tmpfiles.org 成功：{_u}")
+                st.success(f" tmpfiles.org 成功：{_u}")
             else:
-                st.error(f"❌ tmpfiles.org 失败 status={_r2.status_code}：{_r2.text[:200]}")
+                st.error(f" tmpfiles.org 失败 status={_r2.status_code}：{_r2.text[:200]}")
         except Exception as _e2:
-            st.error(f"❌ tmpfiles.org 异常：{_e2}")
+            st.error(f" tmpfiles.org 异常：{_e2}")
         # 测试 litterbox
         try:
             _r3 = _rq.post("https://litterbox.catbox.moe/resources/internals/api.php",
                            data={"reqtype": "fileupload", "time": "1h"},
                            files={"fileToUpload": ("test.png", _test_bytes, "image/png")}, timeout=15)
             if _r3.status_code == 200 and _r3.text.strip().startswith("https://"):
-                st.success(f"✅ litterbox 成功：{_r3.text.strip()}")
+                st.success(f" litterbox 成功：{_r3.text.strip()}")
             else:
-                st.error(f"❌ litterbox 失败 status={_r3.status_code}：{_r3.text[:200]}")
+                st.error(f" litterbox 失败 status={_r3.status_code}：{_r3.text[:200]}")
         except Exception as _e3:
-            st.error(f"❌ litterbox 异常：{_e3}")
+            st.error(f" litterbox 异常：{_e3}")
 
 # ─── 首帧图上传 + 可灵提交全流程调试台 ────────────────────────────────────────
-with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", expanded=False):
+with st.expander(" 调试：首帧图上传→可灵提交全流程追踪", expanded=False):
     st.caption("选择一张已生成的分镜图片，追踪：上传图床 → 提交可灵 → 获取 task_id 的每一步")
     _dbg_imgs = {}
     for _sc in st.session_state.get("studio_scenes", []):
@@ -216,7 +216,7 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
         _dbg_prompt = st.text_input("视频 Prompt（可修改）",
                                     value="cinematic slow motion, warm nostalgic atmosphere",
                                     key="dbg_vid_prompt")
-        if st.button("🚀 开始全流程追踪", key="dbg_run_trace", type="primary"):
+        if st.button(" 开始全流程追踪", key="dbg_run_trace", type="primary"):
             import requests as _rq2, base64 as _b64_2
             from llm_client import _kling_jwt as _kjwt, _KLING_OFFICIAL_BASE as _KBASE, _upload_image_to_public as _upl
 
@@ -229,29 +229,29 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
             import os as _os
             _kid = _os.getenv("KLING_ACCESS_KEY_ID", "")
             _ksec = _os.getenv("KLING_ACCESS_KEY_SECRET", "")
-            st.caption(f"读到的 KEY_ID：`{_kid[:6]}...{_kid[-4:]}` （共{len(_kid)}字符）| SECRET：`{'已配置' if _ksec else '❌ 未配置'}`（共{len(_ksec)}字符）")
+            st.caption(f"读到的 KEY_ID：`{_kid[:6]}...{_kid[-4:]}` （共{len(_kid)}字符）| SECRET：`{'已配置' if _ksec else ' 未配置'}`（共{len(_ksec)}字符）")
             try:
                 _tok = _kjwt()
-                st.success(f"✅ JWT 生成成功（前30字符）：`{_tok[:30]}...`")
+                st.success(f" JWT 生成成功（前30字符）：`{_tok[:30]}...`")
             except Exception as _je:
-                st.error(f"❌ JWT 生成失败：{_je}\n\n请检查 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET 是否已在 Secrets 中配置")
+                st.error(f" JWT 生成失败：{_je}\n\n请检查 KLING_ACCESS_KEY_ID / KLING_ACCESS_KEY_SECRET 是否已在 Secrets 中配置")
                 st.stop()
 
             # ── Step 1.5: 上传首帧图到图床 ────────────────────────────────────
             st.markdown("**Step 1.5 · 上传首帧图到图床（获取 HTTPS URL）**")
             _s15 = st.empty()
-            _s15.info("⏳ 上传中...")
+            _s15.info(" 上传中...")
             _pub_url = _upl(_dbg_img_bytes, "png")
             if _pub_url:
-                _s15.success(f"✅ 上传成功：`{_pub_url}`")
+                _s15.success(f" 上传成功：`{_pub_url}`")
             else:
-                _s15.error("❌ 图床上传失败，无法继续")
+                _s15.error(" 图床上传失败，无法继续")
                 st.stop()
 
             # ── Step 2: 提交可灵官方 API ──────────────────────────────────────
             st.markdown("**Step 2 · 提交可灵官方 API（kling-v3 首帧模式）**")
             _s2 = st.empty()
-            _s2.info("⏳ 正在提交...")
+            _s2.info(" 正在提交...")
             _submit_url = f"{_KBASE}/v1/videos/image2video"
             _body = {
                 "model_name": "kling-v3",
@@ -281,23 +281,23 @@ with st.expander("🎬 调试：首帧图上传→可灵提交全流程追踪", 
                 except Exception:
                     _kdata = None
                 if _kdata is None:
-                    _s2.error(f"❌ 响应不是 JSON（status={_kr.status_code}）")
+                    _s2.error(f" 响应不是 JSON（status={_kr.status_code}）")
                     st.code(_raw_text[:500], language="text")
                 elif _kdata.get("code") == 0:
                     _task_id = _kdata.get("data", {}).get("task_id", "")
-                    _s2.success(f"✅ 提交成功！task_id：`{_task_id}`")
+                    _s2.success(f" 提交成功！task_id：`{_task_id}`")
                     st.markdown("**Step 3 · 完整 API 响应**")
                     st.json(_kdata)
                 else:
-                    _s2.error(f"❌ 提交失败 code={_kdata.get('code')}：{_kdata.get('message','')}")
+                    _s2.error(f" 提交失败 code={_kdata.get('code')}：{_kdata.get('message','')}")
                     st.json(_kdata)
             except Exception as _ke:
-                _s2.error(f"❌ 可灵请求异常：{_ke}")
+                _s2.error(f" 可灵请求异常：{_ke}")
                 import traceback as _tb
                 st.code(_tb.format_exc(), language="text")
 
 # ─── 逝者参考图 → 分镜图生成 全流程调试台 ──────────────────────────────────────
-with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程追踪", expanded=False):
+with st.expander(" 调试：逝者参考图 → 分镜图生成全流程追踪", expanded=False):
     st.caption("追踪：读取逝者参考图 → 上传图床获取 URL → 调用 gemini-3-pro-image-preview → 解析图片结果")
 
     import base64 as _b64_ref, os as _os_ref, requests as _rq_ref
@@ -309,10 +309,10 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
 
     if _ref_b64_dbg:
         _ref_bytes_preview = _b64_ref.b64decode(_ref_b64_dbg)
-        st.success(f"✅ 找到逝者参考图（{len(_ref_bytes_preview)//1024} KB）")
+        st.success(f" 找到逝者参考图（{len(_ref_bytes_preview)//1024} KB）")
         st.image(_ref_bytes_preview, caption="逝者参考图预览", width=180)
     else:
-        st.warning("⚠️ 当前 session 中未找到逝者参考图，请先在上方上传逝者照片后再测试。")
+        st.warning(" 当前 session 中未找到逝者参考图，请先在上方上传逝者照片后再测试。")
 
     _ref_prompt_dbg = st.text_input(
         "测试用分镜 Prompt",
@@ -320,9 +320,9 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
         key="dbg_ref_prompt",
     )
 
-    if st.button("🚀 开始参考图生图追踪", key="dbg_ref_run", type="primary"):
+    if st.button(" 开始参考图生图追踪", key="dbg_ref_run", type="primary"):
         if not _ref_b64_dbg:
-            st.error("❌ 没有参考图，无法测试。请先上传逝者照片。")
+            st.error(" 没有参考图，无法测试。请先上传逝者照片。")
         else:
             from llm_client import _upload_image_to_public as _upl_ref, IMAGE_REF_MODEL as _ref_model, PRIMARY_CLIENT as _ref_client
 
@@ -338,12 +338,12 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
             # ── Step 2: 上传参考图到图床 ─────────────────────────────────────
             st.markdown("**Step 2 · 上传参考图到图床**")
             _s_upl = st.empty()
-            _s_upl.info("⏳ 上传中...")
+            _s_upl.info(" 上传中...")
             _pub_ref_url = _upl_ref(_ref_img_bytes, "png")
             if _pub_ref_url:
-                _s_upl.success(f"✅ 上传成功：`{_pub_ref_url}`")
+                _s_upl.success(f" 上传成功：`{_pub_ref_url}`")
             else:
-                _s_upl.error("❌ 图床上传失败，无法继续")
+                _s_upl.error(" 图床上传失败，无法继续")
                 st.stop()
 
             # ── Step 3: 构造请求体并调用 gemini ─────────────────────────────
@@ -366,16 +366,16 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
             st.code(__import__("json").dumps(_req_body_preview, ensure_ascii=False, indent=2), language="json")
 
             _s3 = st.empty()
-            _s3.info("⏳ 请求中，gemini 生图通常需要 10-30 秒...")
+            _s3.info(" 请求中，gemini 生图通常需要 10-30 秒...")
             try:
                 _ref_resp = _ref_client.chat.completions.create(
                     model=_ref_model,
                     messages=_req_body_preview["messages"],
                     stream=False,
                 )
-                _s3.success("✅ API 响应已收到")
+                _s3.success(" API 响应已收到")
             except Exception as _ref_exc:
-                _s3.error(f"❌ API 调用失败：{_ref_exc}")
+                _s3.error(f" API 调用失败：{_ref_exc}")
                 import traceback as _tb_ref
                 st.code(_tb_ref.format_exc(), language="text")
                 st.stop()
@@ -390,7 +390,7 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
                 st.caption(f"content 列表长度：{len(_raw_content)}，各 type：{[p.get('type','?') if isinstance(p,dict) else type(p).__name__ for p in _raw_content]}")
 
             # 展示完整 model_dump（便于诊断 302.ai 非标准字段）
-            with st.expander("🔬 原始响应 model_dump（debug）"):
+            with st.expander(" 原始响应 model_dump（debug）"):
                 import json as _dbg_json
                 try:
                     _dump = _ref_resp.model_dump() if hasattr(_ref_resp, "model_dump") else {}
@@ -404,10 +404,10 @@ with st.expander("🖼️ 调试：逝者参考图 → 分镜图生成全流程�
 
             _gen_b64_dbg, _gen_err_dbg = _parse_gemini_image_resp(_ref_resp, "[调试台]")
             if _gen_b64_dbg:
-                st.success(f"✅ 解析成功（base64 长度={len(_gen_b64_dbg)}）")
+                st.success(f" 解析成功（base64 长度={len(_gen_b64_dbg)}）")
                 st.image(_b64_ref.b64decode(_gen_b64_dbg), caption="生成图片预览", width="stretch")
             else:
-                st.error(f"❌ 解析失败：{_gen_err_dbg}")
+                st.error(f" 解析失败：{_gen_err_dbg}")
                 st.text_area("原始 content", value=str(_raw_content)[:500], height=120)
 
 # ─── MV04 分镜故事板 ──────────────────────────────────────────────────────────
@@ -543,7 +543,7 @@ if phase == "done":
     # 重新生成按钮（右对齐）
     _regen_col, _ = st.columns([2, 5])
     with _regen_col:
-        if st.button("🔄 重新生成分镜故事板", use_container_width=True, key="regen_storyboard"):
+        if st.button(" 重新生成分镜故事板", use_container_width=True, key="regen_storyboard"):
             pipeline_runner.save_output("MV04", {})  # 清除缓存
             st.session_state["studio_scenes"] = []
             st.session_state["studio_mv04"] = {}
@@ -656,7 +656,7 @@ if phase == "done":
                             with _sel_col:
                                 selected = st.session_state["studio_selected_clips"].get(sid, {})
                                 already  = selected.get("url") == vr["url"]
-                                btn_lbl  = "已选用 ✓" if already else "选用此片段"
+                                btn_lbl  = "已选用 " if already else "选用此片段"
                                 btn_type = "primary" if already else "secondary"
                                 if st.button(btn_lbl, key=f"sel_{vid_key}", type=btn_type, use_container_width=True):
                                     if already:
@@ -799,9 +799,9 @@ if phase == "done":
                                 if vr2.get("error"):
                                     _err_msg = vr2["error"]
                                     if "KLING_ACCESS_KEY" in _err_msg or "JWT" in _err_msg:
-                                        st.error(f"❌ 可灵官方 API 鉴权失败：{_err_msg}\n\n请在 Streamlit Secrets 中填写 KLING_ACCESS_KEY_ID 和 KLING_ACCESS_KEY_SECRET")
+                                        st.error(f" 可灵官方 API 鉴权失败：{_err_msg}\n\n请在 Streamlit Secrets 中填写 KLING_ACCESS_KEY_ID 和 KLING_ACCESS_KEY_SECRET")
                                     else:
-                                        st.error(f"❌ 视频提交失败：{_err_msg}")
+                                        st.error(f" 视频提交失败：{_err_msg}")
                                 else:
                                     st.session_state["studio_scene_videos"][vid_key] = vr2
                                     st.rerun()
@@ -830,7 +830,7 @@ if phase == "done":
                                 st.session_state["studio_scene_vidprompts"][sid] = \
                                     pm.get("video_prompt") or desc
                                 if _ancestor_b64:
-                                    st.success("✅ 已使用逝者参考照片生成，形象已锁定")
+                                    st.success(" 已使用逝者参考照片生成，形象已锁定")
                                 st.rerun()
                             else:
                                 st.error(f"图片生成失败：{err}")
@@ -919,7 +919,7 @@ for sc in all_scenes:
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown(
-    "<div class='step-row'><span class='step-dot' style='background:#6B5B3E;'>✂</span>"
+    "<div class='step-row'><span class='step-dot' style='background:#6B5B3E;'></span>"
     "<div><div class='step-name'>一键剪辑合成</div>"
     "<div class='step-desc'>将各分镜选用片段按顺序拼接，导出最终成片</div></div></div>",
     unsafe_allow_html=True,
