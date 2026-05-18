@@ -631,22 +631,42 @@ if phase == "done":
                         if vr and vr.get("url"):
                             # 视频已完成
                             st.video(vr["url"])
-                            # ── 选用按钮 ──────────────────────────────────────
-                            selected = st.session_state["studio_selected_clips"].get(sid, {})
-                            already  = selected.get("url") == vr["url"]
-                            btn_lbl  = "已选用 ✓" if already else "选用此片段"
-                            btn_type = "primary" if already else "secondary"
-                            if st.button(btn_lbl, key=f"sel_{vid_key}", type=btn_type, use_container_width=True):
-                                if already:
-                                    # 取消选用
-                                    st.session_state["studio_selected_clips"].pop(sid, None)
-                                else:
-                                    # 选用此片段
-                                    st.session_state["studio_selected_clips"][sid] = {
-                                        "url": vr["url"],
-                                        "label": f"{sid} · 版本{j+1}",
-                                    }
-                                st.rerun()
+                            # ── 下载 + 选用按钮 ───────────────────────────────
+                            _dl_col, _sel_col = st.columns(2)
+                            with _dl_col:
+                                try:
+                                    import requests as _rq_dl
+                                    _vid_bytes = _rq_dl.get(vr["url"], timeout=30).content
+                                    st.download_button(
+                                        label="⬇ 下载视频",
+                                        data=_vid_bytes,
+                                        file_name=f"{sid}_v{j+1}.mp4",
+                                        mime="video/mp4",
+                                        key=f"dl_{vid_key}",
+                                        use_container_width=True,
+                                    )
+                                except Exception:
+                                    st.markdown(
+                                        f"<a href='{vr['url']}' target='_blank' "
+                                        f"style='display:block;text-align:center;padding:8px;font-size:.82rem;"
+                                        f"background:#FAF7F2;border:1px solid rgba(180,155,115,.18);"
+                                        f"border-radius:999px;color:#4A4035;text-decoration:none;'>⬇ 下载视频</a>",
+                                        unsafe_allow_html=True,
+                                    )
+                            with _sel_col:
+                                selected = st.session_state["studio_selected_clips"].get(sid, {})
+                                already  = selected.get("url") == vr["url"]
+                                btn_lbl  = "已选用 ✓" if already else "选用此片段"
+                                btn_type = "primary" if already else "secondary"
+                                if st.button(btn_lbl, key=f"sel_{vid_key}", type=btn_type, use_container_width=True):
+                                    if already:
+                                        st.session_state["studio_selected_clips"].pop(sid, None)
+                                    else:
+                                        st.session_state["studio_selected_clips"][sid] = {
+                                            "url": vr["url"],
+                                            "label": f"{sid} · 版本{j+1}",
+                                        }
+                                    st.rerun()
                         elif vr and vr.get("task_id") and not vr.get("url"):
                             # 视频排队/生成中
                             cur_status = vr.get("status", 5)

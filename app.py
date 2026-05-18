@@ -603,6 +603,72 @@ def render_step2():
             st.session_state["intake_assets"].append({"asset_id":f"{atp}_{n:02d}","type":atp,"filename":f.name,"description":desc,"time_period":""})
             added += 1
         if added: st.success(f"已上传 {added} 个文件。")
+
+    # ── 不同时期照片上传（可展开）────────────────────────────────────────────
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    with st.expander("📸 上传不同时期的照片（婴儿 / 童年 / 少年 / 青年 / 中年 / 老年）", expanded=False):
+        st.caption("为各人生阶段上传代表性照片，AI 将在分镜中更准确地呈现不同时期的样貌。")
+        _PERIODS = [
+            ("baby",    "👶 婴儿时期",  "0-3岁"),
+            ("child",   "🧒 童年时期",  "4-12岁"),
+            ("teen",    "🧑 少年时期",  "13-18岁"),
+            ("young",   "🧑‍🎓 青年时期", "19-35岁"),
+            ("middle",  "🧑‍💼 中年时期", "36-60岁"),
+            ("elder",   "👴 老年时期",  "60岁以上"),
+        ]
+        import base64 as _b64_period
+        # 初始化时期照片存储
+        st.session_state.setdefault("period_photos", {})
+
+        _cols_per_row = 3
+        for _row_start in range(0, len(_PERIODS), _cols_per_row):
+            _row_items = _PERIODS[_row_start:_row_start + _cols_per_row]
+            _pcols = st.columns(_cols_per_row)
+            for _pi, (_pid, _plabel, _prange) in enumerate(_row_items):
+                with _pcols[_pi]:
+                    st.markdown(
+                        f"<div style='font-size:.82rem;font-weight:700;color:var(--gold);"
+                        f"margin-bottom:4px;'>{_plabel}</div>"
+                        f"<div style='font-size:.72rem;color:var(--muted-l);margin-bottom:6px;'>{_prange}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    # 已上传则预览
+                    if st.session_state["period_photos"].get(_pid):
+                        _pdata = st.session_state["period_photos"][_pid]
+                        st.image("data:image/jpeg;base64," + _pdata["b64"], use_container_width=True)
+                        st.caption(_pdata.get("filename", ""))
+                        if st.button("移除", key=f"rm_period_{_pid}", use_container_width=True):
+                            st.session_state["period_photos"].pop(_pid, None)
+                            st.rerun()
+                    else:
+                        _pup = st.file_uploader(
+                            f"上传{_plabel}",
+                            type=["png","jpg","jpeg","webp"],
+                            key=f"period_up_{_pid}",
+                            label_visibility="collapsed",
+                        )
+                        if _pup:
+                            _pb = _pup.getvalue()
+                            _pb64 = _b64_period.b64encode(_pb).decode()
+                            st.session_state["period_photos"][_pid] = {
+                                "b64": _pb64,
+                                "filename": _pup.name,
+                            }
+                            # 老年时期照片自动设为主参考图（如果还没有的话）
+                            if _pid == "elder" and not st.session_state.get("ancestor_photo_b64"):
+                                st.session_state["ancestor_photo_b64"] = _pb64
+                                st.session_state["ancestor_photo_filename"] = _pup.name
+                            # 将时期照片也加入素材列表
+                            _period_label_map = dict((_p, _l) for _p, _l, _ in _PERIODS)
+                            _n_asset = len(st.session_state["intake_assets"]) + 1
+                            st.session_state["intake_assets"].append({
+                                "asset_id": f"image_{_n_asset:02d}",
+                                "type": "image",
+                                "filename": _pup.name,
+                                "description": f"{_period_label_map.get(_pid, _pid)}照片",
+                                "time_period": _pid,
+                            })
+                            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     col_back,col_next = st.columns(2)
