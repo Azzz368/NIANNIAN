@@ -429,10 +429,61 @@ def _resolve_cast_urls() -> list:
                 pass
     return cast
 
+
+def _build_storyboard_payload_from_form(form_data: dict) -> dict:
+    """从用户 form_data 构建分镜生成的 payload，确保 LLM 使用真实用户数据而非缓存样本。"""
+    deceased_name   = form_data.get("deceased_name", "逝者")
+    gender          = form_data.get("deceased_gender", "男")
+    birth_date      = form_data.get("birth_date", "")
+    death_date      = form_data.get("death_date", "")
+    occupation      = form_data.get("occupation", "")
+    memory_text     = form_data.get("family_memory_text", "")
+    last_wishes     = form_data.get("last_wishes", "")
+    style_pref      = form_data.get("style_preference", "warm_nostalgia")
+    speaker_name    = form_data.get("speaker_name", "")
+    speaker_rel     = form_data.get("speaker_relation", "")
+    speaker_style   = form_data.get("speaker_style", "")
+    duration_sec    = int(form_data.get("total_duration_sec", 300))
+
+    return {
+        "deceased_name": deceased_name,
+        "deceased_gender": gender,
+        "birth_date": birth_date,
+        "death_date": death_date,
+        "occupation": occupation,
+        "family_memory_text": memory_text,
+        "last_wishes": last_wishes,
+        "style_preference": style_pref,
+        "speaker_name": speaker_name,
+        "speaker_relation": speaker_rel,
+        "speaker_style": speaker_style,
+        "target_duration_sec": duration_sec,
+        "instruction": (
+            f"请严格根据以上真实用户信息为【{deceased_name}】生成 3-5 个定制化分镜画面，"
+            f"每个分镜的场景描述、旁白口播必须完全来源于此人的真实生平故事和家庭回忆，"
+            f"禁止使用任何与此人无关的通用示例场景（如钓鱼、刨木头等与此人无关的情节）。"
+        ),
+    }
+
+
+def _run_storyboard_with_form_data() -> dict:
+    """读取 form_data，直接调用分镜 LLM 生成定制化故事板，并写入 mv04.json。"""
+    from llm_client import call_skill
+    form_data = st.session_state.get("form_data", {})
+    payload = _build_storyboard_payload_from_form(form_data)
+    prompt = pipeline_runner.get_skill_prompt("MV04")
+    result = call_skill("MV04", prompt, payload)
+    if not result.get("error"):
+        result = pipeline_runner.normalize_storyboard_output(result)
+        pipeline_runner.save_output("MV04", result)
+        gate_manager.approve("MV04")
+    return result
+
+
 st.markdown(
     "<div class='step-row'><span class='step-dot'>4</span>"
     "<div><div class='step-name'>分镜故事板</div>"
-    "<div class='step-desc'>工业级分镜 · Prompt 引擎</div></div></div>",
+    "<div class='step-desc'>定制化分镜 · 基于真实用户信息生成</div></div></div>",
     unsafe_allow_html=True,
 )
 
@@ -440,12 +491,23 @@ phase = st.session_state["studio_phase"]
 
 if phase == "idle":
     cached = pipeline_runner.read_output("MV04")
-    if cached and cached.get("scenes"):
+    current_name = str(st.session_state.get("form_data", {}).get("deceased_name", "")).strip()
+    # 获取缓存中的人物名称（支持多种 JSON 结构）
+    cached_name = ""
+    if cached:
+        cached_name = (
+            cached.get("character_bible", {}).get("display_name", "")
+            or cached.get("deceased_name", "")
+            or cached.get("character_bible", {}).get("character_id", "")
+        )
+    # 只有缓存存在且人物名称与当前用户一致时才使用缓存
+    if cached and cached.get("scenes") and current_name and current_name in cached_name:
         st.session_state["studio_scenes"] = _scenes_to_list(cached.get("scenes", []))
         st.session_state["studio_mv04"] = cached
         st.session_state["studio_phase"] = "done"
         st.rerun()
     else:
+        # 缓存不存在或人物不匹配 → 强制根据当前用户重新生成
         st.session_state["studio_phase"] = "running"
         st.rerun()
 
@@ -453,9 +515,9 @@ if phase == "running":
     ph = st.empty()
     ph.markdown(_THINKING_HTML, unsafe_allow_html=True)
     try:
-        pipeline_runner.run_step("MV04")
-        gate_manager.approve("MV04")
-        mv04_out = pipeline_runner.read_output("MV04") or {}
+        mv04_out = _run_storyboard_with_form_data()
+        if mv04_out.get("error"):
+            raise RuntimeError(mv04_out.get("message", "分镜生成失败"))
         st.session_state["studio_scenes"] = _scenes_to_list(mv04_out.get("scenes", []))
         st.session_state["studio_mv04"] = mv04_out
         st.session_state["studio_phase"] = "done"
@@ -477,6 +539,17 @@ if phase == "done":
     mv04_out: dict = st.session_state["studio_mv04"]
     character_bible = mv04_out.get("character_bible", {}) if isinstance(mv04_out, dict) else {}
     scene_library   = mv04_out.get("scene_library",   []) if isinstance(mv04_out, dict) else []
+
+    # 重新生成按钮（右对齐）
+    _regen_col, _ = st.columns([2, 5])
+    with _regen_col:
+        if st.button("🔄 重新生成分镜故事板", use_container_width=True, key="regen_storyboard"):
+            pipeline_runner.save_output("MV04", {})  # 清除缓存
+            st.session_state["studio_scenes"] = []
+            st.session_state["studio_mv04"] = {}
+            st.session_state["studio_scene_images"] = {}
+            st.session_state["studio_phase"] = "running"
+            st.rerun()
 
     if not scenes:
         st.warning("分镜数据为空，请重新生成。")
