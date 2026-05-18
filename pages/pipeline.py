@@ -1,7 +1,18 @@
 # NianNian Memorial Studio – 前期确认台（MV01-MV03 AI 对话式）
 import json
 from pathlib import Path
-from typing import Dict
+_SUMMARY_SYS = (
+    '你是念念追思影像制作助手，帮家属用最温柔口语化的中文描述影像制作进展。'
+    '收到 JSON 数据后，用 80-120 字的自然语言、分段，告诉家属：我们了解了哪些信息，'
+    '影像会呈现什么样的感觉。不要出现任何技术词汇、字段名、JSON。语气温暖贴心。'
+    '只输出一段话，不要分点、不要标题。'
+)
+_BIBLE_SYS = (
+    '你是念念追思影像制作助手。根据影像三要素 JSON，用最温柔自然的中文，'
+    '用 80-120 字告诉家属：我们为这部影像确定了什么样的基调、主角形象和画面氛围。'
+    '不要出现任何 JSON、字段名或技术词汇。语气温暖，像在讲述一个美好的计划。'
+    '必须使用 JSON 中真实的人物姓名，不得使用任何示例名称。只输出一段话，不要分点。'
+)g import Dict
 import streamlit as st
 import gate_manager
 import pipeline_runner
@@ -93,13 +104,15 @@ _THINK_HTML = (
 
 _SUMMARY_SYS = (
     '你是念念追思影像制作助手，帮家属用最温柔口语化的中文描述影像制作进展。'
-    '收到 JSON 数据后，用 100-150 字的自然语言、分段，告诉家属：我们了解了哪些信息，'
+    '收到 JSON 数据后，用 80-120 字的自然语言告诉家属：我们了解了哪些信息，'
     '影像会呈现什么样的感觉。不要出现任何技术词汇、字段名、JSON。语气温暖贴心。'
+    '只输出一段话，不要分点、不要标题。'
 )
 _BIBLE_SYS = (
     '你是念念追思影像制作助手。根据影像三要素 JSON，用最温柔自然的中文，'
     '用 80-120 字告诉家属：我们为这部影像确定了什么样的基调、主角形象和画面氛围。'
     '不要出现任何 JSON、字段名或技术词汇。语气温暖，像在讲述一个美好的计划。'
+    '必须使用 JSON 中真实的人物姓名，绝对不得使用任何无关的示例名称。只输出一段话，不要分点。'
 )
 
 
@@ -145,6 +158,10 @@ def run_pipeline():
             pass
     if not mv01_input:
         mv01_input = pipeline_runner.read_output('MV01') or {}
+    # 优先用 form_data 补全 mv01_input（确保使用当前用户数据）
+    form_data = st.session_state.get('form_data', {})
+    if not mv01_input and form_data:
+        mv01_input = form_data
 
     if not mv01_input:
         chat.append({'role': 'ai', 'content': '暂时没有找到您填写的信息，请返回首页重新填写。'})
@@ -153,27 +170,48 @@ def run_pipeline():
 
     pipeline_runner.save_output('MV01', mv01_input)
     gate_manager.approve('MV01')
-    chat.append({'role': 'ai', 'content': _safe_summary('MV01', mv01_input, _SUMMARY_SYS)})
 
-    # ── MV02 修改建议 ──
+    # ── MV02 修改建议（静默运行，不产生独立气泡）──
     try:
         pipeline_runner.run_step('MV02')
         gate_manager.approve('MV02')
-        mv02_out = pipeline_runner.read_output('MV02') or {}
-        chat.append({'role': 'ai', 'content': _safe_summary('MV02', mv02_out, _SUMMARY_SYS)})
     except Exception:
-        chat.append({'role': 'ai', 'content': '信息已核对完毕，所有内容都很完整，我们继续下一步。'})
+        pass
+
+    # ── 气泡①：整体信息摘要（基于 MV01 原始信息）──
+    chat.append({'role': 'ai', 'content': _safe_summary('MV01', mv01_input, _SUMMARY_SYS)})
 
     # ── MV03 三要素锁定 ──
-    try:
-        pipeline_runner.run_step('MV03')
+    # 检查缓存是否与当前用户一致，不一致则强制重新生成
+    current_name = str(form_data.get('deceased_name', '')).strip()
+    mv03_cached = pipeline_runner.read_output('MV03') or {}
+    cached_name = (
+        mv03_cached.get('character_bible', {}).get('display_name', '')
+        or mv03_cached.get('deceased_name', '')
+    )
+    if mv03_cached.get('scenes') and current_name and current_name in cached_name:
+        mv03_out = mv03_cached
         gate_manager.approve('MV03')
-        mv03_out = pipeline_runner.read_output('MV03') or {}
-        # 存储供 MV04 使用，但不在此页展示分镜
-        st.session_state['mv03_output'] = mv03_out
-        chat.append({'role': 'ai', 'content': _safe_summary('MV03', mv03_out, _BIBLE_SYS)})
-    except Exception as e:
-        chat.append({'role': 'ai', 'content': f'影像方案整理时遇到了一些问题，我们已记录，稍后为您重新整理。（{e}）'})
+    else:
+        # 缓存不存在或人物不匹配 → 重新生成
+        try:
+            pipeline_runner.run_step('MV03')
+            gate_manager.approve('MV03')
+            mv03_out = pipeline_runner.read_output('MV03') or {}
+        except Exception as e:
+            mv03_out = {}
+            chat.append({'role': 'ai', 'content': f'影像方案整理时遇到了一些问题，我们已记录，稍后为您重新整理。（{e}）'})
+            st.session_state['pipe_phase'] = 'done'
+            return
+
+    # 存储供 MV04 使用
+    st.session_state['mv03_output'] = mv03_out
+
+    # ── 气泡②：三要素锁定总结（主角形象 + 画面氛围）──
+    # 将当前用户真实姓名注入 payload，防止 LLM 引用旧缓存人名
+    mv03_summary_payload = dict(mv03_out)
+    mv03_summary_payload['_current_deceased_name'] = current_name
+    chat.append({'role': 'ai', 'content': _safe_summary('MV03', mv03_summary_payload, _BIBLE_SYS)})
 
     st.session_state['pipe_phase'] = 'done'
 
