@@ -1,18 +1,7 @@
 # NianNian Memorial Studio – 前期确认台（MV01-MV03 AI 对话式）
 import json
 from pathlib import Path
-_SUMMARY_SYS = (
-    '你是念念追思影像制作助手，帮家属用最温柔口语化的中文描述影像制作进展。'
-    '收到 JSON 数据后，用 80-120 字的自然语言、分段，告诉家属：我们了解了哪些信息，'
-    '影像会呈现什么样的感觉。不要出现任何技术词汇、字段名、JSON。语气温暖贴心。'
-    '只输出一段话，不要分点、不要标题。'
-)
-_BIBLE_SYS = (
-    '你是念念追思影像制作助手。根据影像三要素 JSON，用最温柔自然的中文，'
-    '用 80-120 字告诉家属：我们为这部影像确定了什么样的基调、主角形象和画面氛围。'
-    '不要出现任何 JSON、字段名或技术词汇。语气温暖，像在讲述一个美好的计划。'
-    '必须使用 JSON 中真实的人物姓名，不得使用任何示例名称。只输出一段话，不要分点。'
-)g import Dict
+from typing import Dict
 import streamlit as st
 import gate_manager
 import pipeline_runner
