@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念 · 追思影像建档</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="container">
+
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">念</div>
+      <div>
+        <div class="topbar-name">念念</div>
+        <div class="topbar-sub">NianNian Memorial Studio</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a class="btn btn-ghost" href="index.html">返回主页</a>
+      <div class="topbar-badge">追思影像制作平台</div>
+    </div>
+  </div>
+
+  <!-- 步骤指示 -->
+  <div class="steps-row" id="stepsRow"></div>
+
+  <!-- ============ Step 1 ============ -->
+  <section id="step1">
+    <!-- 测试模式 -->
+    <div class="card" style="padding:14px 22px;">
+      <details>
+        <summary style="cursor:pointer;color:var(--muted-l);font-size:.85rem;">测试模式：一键填入陈文斌示例数据</summary>
+        <div style="margin-top:10px;">
+          <p class="text-muted" style="margin-bottom:10px;">仅供开发测试，点击后所有字段自动填入，并跳至第二步。</p>
+          <button class="btn" id="btnFillTest">填入全部测试数据（陈文斌）</button>
+        </div>
+      </details>
+    </div>
+
+    <!-- 深度搜索入口 -->
+    <div class="ds-entry">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:240px;">
+          <div class="ds-entry-title">AI · 深度搜索</div>
+          <div class="ds-entry-text">若逝者为公众人物或有网络公开资料，可使用 AI 联网搜索自动整理生平信息，并一键填入下方表单。</div>
+        </div>
+        <a class="btn btn-primary" href="deep_search.html">打开 AI 深度搜索</a>
+      </div>
+    </div>
+
+    <div class="step-header">
+      <div class="step-eyebrow">Step 1 · 基本信息</div>
+      <div class="step-title">请告诉我们关于他 / 她 / 它的基本信息</div>
+      <div class="step-desc">您填写的所有内容都只用于制作这部影像。</div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">逝者信息</div>
+      <div class="form-grid">
+        <div class="field"><label>逝者姓名 *</label><input type="text" id="f_deceased_name" placeholder="例如：张建国"></div>
+        <div class="field">
+          <label>性别</label>
+          <div class="radio-row">
+            <label><input type="radio" name="gender" value="男" checked>男</label>
+            <label><input type="radio" name="gender" value="女">女</label>
+            <label><input type="radio" name="gender" value="不便告知">不便告知</label>
+          </div>
+        </div>
+        <div class="field"><label>出生日期</label><input type="text" id="f_birth_date" placeholder="如：1948年10月15日"></div>
+        <div class="field"><label>逝世日期（选填）</label><input type="text" id="f_death_date" placeholder="在世可留空"></div>
+        <div class="field" style="grid-column:1/-1;"><label>职业 / 身份</label><input type="text" id="f_occupation" placeholder="如：退休工程师"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">仪式信息（选填）</div>
+      <div class="form-grid">
+        <div class="field"><label>追思日期</label><input type="text" id="f_ceremony_date" placeholder="在世时可暂时留空"></div>
+        <div class="field"><label>追思地点</label><input type="text" id="f_ceremony_venue" placeholder="如：上海市黄浦区殡仪馆思源厅"></div>
+        <div class="field">
+          <label>影像时长</label>
+          <select id="f_total_duration_sec">
+            <option value="120">2 分钟（精简版）</option>
+            <option value="180">3 分钟（标准版）</option>
+            <option value="300" selected>5 分钟（推荐）</option>
+            <option value="480">8 分钟（完整版）</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="btn-row" style="justify-content:flex-end;">
+      <button class="btn btn-primary" id="btnToStep2">下一步：补充回忆 →</button>
+    </div>
+  </section>
+
+  <!-- ============ Step 2 ============ -->
+  <section id="step2" class="hidden">
+    <div class="step-header">
+      <div class="step-eyebrow">Step 2 · 回忆 &amp; 风格</div>
+      <div class="step-title">把对他 / 她最珍贵的记忆告诉我们</div>
+      <div class="step-desc">写下您想被影像记住的故事、生活习惯、性格特点。</div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">家庭回忆与生平故事 *</div>
+      <div class="field"><textarea id="f_family_memory_text" rows="10" placeholder="可包含：性格、爱好、人生重要节点、令您难忘的小事..."></textarea></div>
+      <div class="text-muted" style="margin-top:6px;">建议 300 字以上，越详细影像越打动人。</div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">心愿 / 寄语（选填）</div>
+      <div class="field"><textarea id="f_last_wishes" rows="3" placeholder="逝者生前的心愿，或您希望影像中表达的情感..."></textarea></div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">发言人信息</div>
+      <div class="form-grid">
+        <div class="field"><label>发言人姓名</label><input type="text" id="f_speaker_name"></div>
+        <div class="field"><label>与逝者关系</label><input type="text" id="f_speaker_relation" placeholder="如：儿子 / 女儿"></div>
+        <div class="field" style="grid-column:1/-1;"><label>发言风格</label><input type="text" id="f_speaker_style" placeholder="深情克制 / 温暖怀念 / 感恩回望"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">照片上传（选填）</div>
+      <label class="upload-zone" for="upload_input">
+        点击或拖拽上传照片 / 视频<br/>
+        <span class="text-muted">支持多文件，可上传不同时期的照片</span>
+      </label>
+      <input type="file" id="upload_input" class="upload-input" multiple accept="image/*,video/*">
+      <div class="upload-list" id="uploadList"></div>
+    </div>
+
+    <div class="btn-row" style="justify-content:space-between;">
+      <button class="btn" id="btnBackTo1">← 上一步</button>
+      <button class="btn btn-primary" id="btnToStep3">下一步：开始与念念 AI 对话 →</button>
+    </div>
+  </section>
+
+  <!-- ============ Step 3 ============ -->
+  <section id="step3" class="hidden">
+    <div class="step-header">
+      <div class="step-eyebrow">Step 3 · 念念 AI 对话</div>
+      <div class="step-title">和念念聊聊，把记忆讲得更完整</div>
+      <div class="step-desc">念念会根据您填写的内容温柔地引导补充，对话满意后即可开始制作影像。</div>
+    </div>
+
+    <div id="chatWrap" class="chat-wrap"></div>
+    <div id="chatThink" class="hidden">
+      <div class="think-row">
+        <div class="think-wrap">
+          <div class="think-orb"></div>
+          <div class="think-ring"></div>
+          <div class="think-ring r2"></div>
+        </div>
+        <div class="think-bubble">
+          <div class="think-dots"><span></span><span></span><span></span></div>
+          <div class="think-label">念念正在思考...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-row" style="gap:10px;">
+        <input type="text" id="chatInput" class="field-input" placeholder="跟念念说说他/她的故事..."
+               style="flex:1;background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:11px 14px;font-size:1rem;font-family:inherit;color:var(--ink);">
+        <button class="btn btn-primary" id="btnSendChat">发送</button>
+      </div>
+    </div>
+
+    <div class="btn-row" style="justify-content:space-between;">
+      <button class="btn" id="btnBackTo2">← 上一步</button>
+      <button class="btn btn-primary" id="btnStartProduce">开始制作影像（运行 MV01）</button>
+    </div>
+
+    <!-- Pipeline 输出 -->
+    <div id="pipelinePanel" class="card hidden" style="margin-top:24px;">
+      <div class="section-label">影像生成进度</div>
+      <div id="pipelineStatus"></div>
+      <pre id="pipelineOutput" style="background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:.78rem;line-height:1.5;color:var(--ink-m);overflow-x:auto;max-height:400px;margin-top:12px;"></pre>
+    </div>
+  </section>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/memorial.js"></script>
+</body>
+</html>

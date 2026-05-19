@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念 · 深度搜索</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="container">
+
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">念</div>
+      <div>
+        <div class="topbar-name">念念 · 深度搜索</div>
+        <div class="topbar-sub">Deep Search Agent · Powered by 302.ai</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <a class="btn btn-ghost" href="memorial.html">返回信息填写</a>
+      <a class="btn btn-ghost" href="index.html">主页</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-label">搜索人物</div>
+    <div class="flex-row" style="gap:10px;align-items:stretch;">
+      <input type="text" id="dsQuery" placeholder="输入姓名，如：钱学森 / 李小龙 / 陈文斌 上海工程师"
+             style="flex:1;background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:11px 14px;font-size:1rem;font-family:inherit;">
+      <button class="btn btn-primary" id="btnDsSearch">开始搜索</button>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label>补充背景信息（选填，提高准确度）</label>
+      <textarea id="dsExtra" rows="2" placeholder="如：1948年生，上海人，国营机床厂工程师"></textarea>
+    </div>
+    <div class="text-muted" style="margin-top:10px;line-height:1.7;">
+      通过 302.ai 调用 <strong>Perplexity Sonar Pro</strong> 联网搜索，无需任何额外 API Key。<br/>
+      适合有公开资料的历史名人或公众人物；普通私人人物建议直接手动填写表单。
+    </div>
+  </div>
+
+  <div id="dsChat" class="chat-wrap"></div>
+  <div id="dsThink" class="hidden">
+    <div class="think-row">
+      <div class="think-wrap">
+        <div class="think-orb"></div>
+        <div class="think-ring"></div>
+        <div class="think-ring r2"></div>
+      </div>
+      <div class="think-bubble">
+        <div class="think-dots"><span></span><span></span><span></span></div>
+        <div class="think-label" id="dsThinkLabel">正在联网搜索...</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="dsPreview" class="hidden"></div>
+
+  <div id="dsActions" class="btn-row hidden">
+    <button class="btn btn-primary" id="btnDsFill">将信息填入表单并继续</button>
+    <button class="btn" id="btnDsRetry">重新搜索</button>
+  </div>
+
+  <div style="text-align:center;margin-top:36px;font-size:.78rem;color:var(--muted-l);line-height:1.8;">
+    深度搜索仅适用于有公开网络资料的人物。<br/>
+    所有搜索内容通过 302.ai 网关处理，不会存储个人隐私数据。
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/deep_search.js"></script>
+</body>
+</html>
