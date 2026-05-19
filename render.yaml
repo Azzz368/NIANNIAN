@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: niannian-memorial
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AI302_API_KEY
+        sync: false          # 在 Render 控制台手动填写，不写进代码
+      - key: AI302_TEXT_MODEL
+        value: claude-sonnet-4-6
+      - key: AI302_TEXT_FALLBACK
+        value: gpt-5.4
+      - key: AI302_AUDIO_MODEL
+        value: whisper-1
+      - key: AI302_VISION_MODEL
+        value: gemini-2.5-flash
+      - key: PYTHON_VERSION
+        value: "3.11"
+    healthCheckPath: /api/health

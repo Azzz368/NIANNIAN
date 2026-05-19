@@ -2,10 +2,13 @@
 import sys
 from pathlib import Path
 
-# 将 backend/ 加入 sys.path，使 routers 可以 `from services import ...`
-_BACKEND = Path(__file__).resolve().parent
-if str(_BACKEND) not in sys.path:
-    sys.path.insert(0, str(_BACKEND))
+_BACKEND = Path(__file__).resolve().parent        # backend/ 的绝对路径
+_ROOT    = _BACKEND.parent                         # 项目根的绝对路径
+
+# 同时注入 backend/ 和项目根，兼容「cd backend; uvicorn main:app」和「uvicorn backend.main:app」
+for _p in (_BACKEND, _ROOT):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

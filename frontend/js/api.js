@@ -1,9 +1,10 @@
 // frontend/js/api.js — 统一 API 调用封装
 const API_BASE = (() => {
-  // 若由后端 /static 托管，则用同源；否则连本地 8000
-  const sameOrigin = window.location.port === '8000' || window.location.protocol === 'file:';
-  if (window.location.port === '8000') return `${window.location.origin}/api`;
-  return 'http://localhost:8000/api';
+  // 生产（Render/任意域名）：直接用同源 /api
+  // 本地开发 file:// 协议：指向本地 8000
+  if (window.location.protocol === 'file:') return 'http://localhost:8000/api';
+  // 其他所有情况（localhost:8000、Render https域名）：同源
+  return `${window.location.origin}/api`;
 })();
 
 async function apiGet(path) {
