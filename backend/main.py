@@ -9,7 +9,7 @@ if str(_BACKEND) not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from routers import assets, chat, intake, pipeline
@@ -40,17 +40,26 @@ _FRONTEND = _BACKEND.parent / "frontend"
 if _FRONTEND.exists():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND)), name="static")
 
+    # 根路径直接跳转到首页（让 http://localhost:8000 = 主程序）
     @app.get("/")
-    def root_index() -> JSONResponse:
-        return JSONResponse({
-            "service": "念念 NianNian Memorial API",
-            "frontend": "/static/index.html",
-            "docs":     "/docs",
-            "health":   "/api/health",
-        })
+    def root_index():
+        return RedirectResponse(url="/static/index.html", status_code=307)
+
+    # 便捷路径：/memorial /deep_search /dialogue → 对应 HTML
+    @app.get("/memorial")
+    def page_memorial():
+        return RedirectResponse(url="/static/memorial.html", status_code=307)
+
+    @app.get("/deep_search")
+    def page_deep_search():
+        return RedirectResponse(url="/static/deep_search.html", status_code=307)
+
+    @app.get("/dialogue")
+    def page_dialogue():
+        return RedirectResponse(url="/static/dialogue.html", status_code=307)
 else:
     @app.get("/")
-    def root_index() -> JSONResponse:
+    def root_no_frontend() -> JSONResponse:
         return JSONResponse({"service": "念念 NianNian Memorial API", "docs": "/docs"})
 
 
