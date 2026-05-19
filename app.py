@@ -391,6 +391,27 @@ def render_step1():
             st.session_state["form_data"] = dict(_TEST_DATA)
             st.session_state["form_step"] = 2   # 直接跳到第二步（数据都填好了）
             st.rerun()
+    # ── 深度搜索入口 ───────────────────────────────────────────
+    st.markdown(
+        "<div style='"
+        "background:linear-gradient(135deg,rgba(156,122,69,.06),rgba(184,147,79,.10));"
+        "border:1px solid rgba(160,120,70,.25);border-radius:16px;"
+        "padding:16px 22px;margin-bottom:18px;"
+        "display:flex;align-items:center;justify-content:space-between;gap:12px;'>"
+        "<div style='flex:1;'>"
+        "<div style='font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;"
+        "color:#9C7A45;margin-bottom:4px;'>AI · 深度搜索</div>"
+        "<div style='font-size:.92rem;color:#4A4035;line-height:1.55;'>"
+        "若逝者为公众人物或有网络公开资料，可使用 AI 联网搜索自动整理生平信息，"
+        "并一键填入下方表单。"
+        "</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if st.button("打开 AI 深度搜索", key="open_deep_search_btn",
+                 help="跳转至深度搜索页面，联网搜索人物资料后可一键回填"):
+        st.switch_page("pages/deep_search.py")
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     # ─────────────────────────────────────────────────────────
     st.markdown(
         "<div class='nn-step-header'>"
