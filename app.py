@@ -413,20 +413,25 @@ def render_step1():
         bd = st.text_input("出生日期", value=get("birth_date"), placeholder="例如：1945年3月8日")
         if bd: save("birth_date", bd)
     with c4:
-        dd = st.text_input("逝世日期", value=get("death_date"), placeholder="例如：2024年11月20日")
-        if dd: save("death_date", dd)
+        dd = st.text_input("逝世日期（选填）", value=get("death_date",""), placeholder="例如：2024年11月20日，在世可留空")
+        if dd:
+            save("death_date", dd)
+        else:
+            save("death_date", "")
     occ = st.text_input("职业 / 主要身份（可选）", value=get("occupation"), placeholder="例如：木工匠人、退休教师")
     if occ: save("occupation", occ)
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("<div class='nn-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='nn-section-label'>追悼会安排</div>", unsafe_allow_html=True)
+    st.markdown("<div class='nn-section-label'>追悼会安排（选填，在世时可暂时留空）</div>", unsafe_allow_html=True)
     c5,c6 = st.columns(2)
     with c5:
-        cd = st.text_input("追悼会日期 *", value=get("ceremony_date"), placeholder="例如：2024年11月25日")
+        cd = st.text_input("追悼会日期（选填）", value=get("ceremony_date",""), placeholder="例如：2024年11月25日")
         if cd: save("ceremony_date", cd)
+        else: save("ceremony_date", "")
     with c6:
-        venue = st.text_input("仪式场所（可选）", value=get("ceremony_venue"), placeholder="例如：XX殡仪馆告别厅")
+        venue = st.text_input("仪式场所（选填）", value=get("ceremony_venue",""), placeholder="例如：XX殡仪馆告别厅")
         if venue: save("ceremony_venue", venue)
+        else: save("ceremony_venue", "")
     dur_vals = list(DURATION_OPTIONS.values())
     dur_cur = DURATION_OPTIONS.get(str(get("total_duration_sec","300")), dur_vals[1])
     dur_sel = st.selectbox("影片时长", dur_vals, index=dur_vals.index(dur_cur))
@@ -689,9 +694,12 @@ def _form_to_text():
     d = st.session_state["form_data"]
     a = st.session_state.get("intake_assets",[])
     lines = [
-        "逝者：{}，{}，生于 {}，逝于 {}，职业：{}。".format(
+        "{}：{}，{}，生于 {}，{}职业：{}。".format(
+            "在世长辈" if not d.get("death_date") else "逝者",
             d.get("deceased_name","未知"),d.get("deceased_gender",""),
-            d.get("birth_date","?"),d.get("death_date","?"),d.get("occupation","未知")),
+            d.get("birth_date","?"),
+            ("逝于 {}，".format(d["death_date"])) if d.get("death_date") else "目前在世，",
+            d.get("occupation","未知")),
         "追悼会：{}，地点：{}，影片时长 {} 分钟。".format(
             d.get("ceremony_date","?"),d.get("ceremony_venue","未知"),
             int(d.get("total_duration_sec",300))//60),
