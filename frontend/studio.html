@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念 · 分镜制作台</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .studio-progress{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 24px;}
+  .studio-pill{display:flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;background:var(--surf2);border:1px solid var(--border);font-size:.85rem;color:var(--muted-l);transition:all .25s;}
+  .studio-pill.active{background:var(--gold);border-color:var(--gold);color:#fff;box-shadow:var(--shadow-sm);}
+  .studio-pill.done{background:rgba(90,154,114,.1);border-color:rgba(90,154,114,.3);color:var(--green);}
+
+  .char-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-top:10px;}
+  .char-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;}
+  .char-name{font-weight:600;color:var(--ink);font-size:.95rem;}
+  .char-meta{font-size:.78rem;color:var(--muted-l);line-height:1.6;margin-top:4px;}
+
+  .scene-row{background:var(--surf);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px;box-shadow:var(--shadow-sm);}
+  .scene-head{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;}
+  .scene-num{font-family:"Cormorant Garamond",serif;font-size:1.8rem;color:var(--gold);font-weight:600;line-height:1;}
+  .scene-id{font-size:.72rem;color:var(--muted-l);letter-spacing:.05em;margin-left:8px;}
+  .scene-meta{font-size:.78rem;color:var(--muted-l);}
+  .scene-desc{font-size:.9rem;line-height:1.75;color:var(--ink);margin:6px 0;}
+  .scene-narr{font-size:.85rem;line-height:1.7;color:var(--ink-m);background:var(--surf2);border-radius:8px;padding:8px 10px;border-left:3px solid var(--gold);margin-top:6px;}
+  .scene-media{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;}
+  .media-slot{flex:1;min-width:200px;background:var(--surf2);border:1px dashed var(--border);border-radius:10px;padding:10px;text-align:center;font-size:.78rem;color:var(--muted-l);}
+  .media-slot img,.media-slot video{max-width:100%;border-radius:8px;display:block;margin:0 auto;}
+  .media-slot.has-media{border-style:solid;border-color:var(--gold);background:var(--surf);}
+  .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:.7rem;font-weight:600;letter-spacing:.04em;}
+  .badge-idle{background:var(--surf3);color:var(--muted-l);}
+  .badge-run{background:var(--gold-dim);color:var(--gold);}
+  .badge-done{background:rgba(90,154,114,.15);color:var(--green);}
+  .badge-err{background:rgba(193,86,86,.15);color:var(--red);}
+  .scene-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">念</div>
+      <div>
+        <div class="topbar-name">念念</div>
+        <div class="topbar-sub">分镜制作台 · Studio</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a class="btn btn-ghost" href="pipeline.html">← 返回方案确认</a>
+      <a class="btn btn-ghost" href="index.html">返回主页</a>
+    </div>
+  </div>
+
+  <!-- 进度 -->
+  <div class="studio-progress">
+    <div class="studio-pill" data-step="MV04"><span>① 分镜生成</span></div>
+    <div class="studio-pill" data-step="MV05"><span>② 画面渲染</span></div>
+    <div class="studio-pill" data-step="MV06"><span>③ 最终合成</span></div>
+  </div>
+
+  <!-- 角色档案 -->
+  <div class="card">
+    <details open>
+      <summary style="cursor:pointer;color:var(--muted-l);font-size:.85rem;">📋 角色档案（主角 + 配角）</summary>
+      <div id="charSummary" style="margin-top:12px;">
+        <div class="text-muted">加载中...</div>
+      </div>
+    </details>
+  </div>
+
+  <!-- MV04 分镜生成区 -->
+  <section id="phaseGenScenes">
+    <div class="step-header">
+      <div class="step-eyebrow">第一步</div>
+      <div class="step-title">生成影像分镜</div>
+      <div class="step-desc">念念将根据您填写的内容生成完整的故事分镜。</div>
+    </div>
+    <div id="genThink" class="hidden">
+      <div class="think-row">
+        <div class="think-wrap"><div class="think-orb"></div><div class="think-ring"></div><div class="think-ring r2"></div></div>
+        <div class="think-bubble"><div class="think-dots"><span></span><span></span><span></span></div><div class="think-label" id="genThinkLabel">念念正在编排分镜...</div></div>
+      </div>
+    </div>
+    <div class="btn-row" style="justify-content:flex-end;">
+      <button class="btn btn-primary" id="btnGenScenes">生成分镜 →</button>
+    </div>
+  </section>
+
+  <!-- 分镜展示 -->
+  <section id="phaseScenes" class="hidden">
+    <div class="step-header" style="margin-top:20px;">
+      <div class="step-eyebrow">第二步</div>
+      <div class="step-title">逐镜生成画面 &amp; 短视频</div>
+      <div class="step-desc">点击每个分镜下方的按钮，AI 会为该画面生成图片和动画。</div>
+    </div>
+    <div id="sceneList"></div>
+
+    <div class="btn-row" style="justify-content:space-between;margin-top:24px;">
+      <a class="btn" href="pipeline.html">← 返回方案确认</a>
+      <button class="btn btn-primary" id="btnFinalCut">合成最终影像 →</button>
+    </div>
+  </section>
+
+  <!-- 最终合成 -->
+  <section id="phaseFinal" class="hidden">
+    <div class="card" style="margin-top:18px;border:1px solid rgba(90,154,114,.3);background:rgba(90,154,114,.05);">
+      <div class="section-label" style="color:var(--green);">✓ 最终影像合成完成</div>
+      <div id="finalOutput" style="margin-top:10px;"></div>
+    </div>
+  </section>
+
+  <!-- 错误 -->
+  <section id="phaseError" class="hidden">
+    <div class="card" style="border:1px solid var(--red);background:rgba(193,86,86,.05);">
+      <div class="section-label" style="color:var(--red);">出错了</div>
+      <pre id="errorOutput" style="background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:.78rem;line-height:1.5;color:var(--ink-m);overflow-x:auto;max-height:400px;margin-top:12px;white-space:pre-wrap;"></pre>
+    </div>
+  </section>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/studio.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # backend/routers/pipeline.py
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 from services import service_manager as sm
 from services import session_store
@@ -41,3 +41,46 @@ def output(sid: str, step: str) -> Dict[str, Any]:
     if out is None:
         raise HTTPException(404, "output not ready")
     return {"step": step, "result": out}
+
+
+@router.post("/preview/{sid}")
+def preview(sid: str) -> Dict[str, Any]:
+    """大白话讲解即将进行的影像制作流程"""
+    try:
+        s = session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    text = sm.memorial_preview(s["form_data"], s["mv_outputs"].get("MV01"))
+    return {"text": text}
+
+
+@router.post("/run-all/{sid}")
+def run_all(sid: str) -> Dict[str, Any]:
+    """串行运行 MV01→MV02→MV03，返回两段大白话气泡 + 分镜列表"""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return sm.run_pipeline_chain(sid)
+
+
+@router.post("/scene/image/{sid}/{idx}")
+def scene_image(sid: str, idx: int) -> Dict[str, Any]:
+    """为单个分镜生成首帧图片（返回 data URL）"""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return sm.gen_scene_image(sid, idx)
+
+
+@router.post("/scene/video/{sid}/{idx}")
+def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+    """为单个分镜生成短视频（image_url 可为 data URL 或 https URL）"""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    image_url = (payload or {}).get("image_url", "")
+    return sm.gen_scene_video(sid, idx, image_url)
+

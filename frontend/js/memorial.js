@@ -181,23 +181,13 @@ async function sendChat() {
 
 // ───── Pipeline ─────
 async function startProduce() {
-  document.getElementById('pipelinePanel').classList.remove('hidden');
-  const statusEl = document.getElementById('pipelineStatus');
-  const outEl = document.getElementById('pipelineOutput');
-  statusEl.innerHTML = `<div class="think-label">正在运行 MV01（结构化访谈解析）...</div>`;
-  outEl.textContent = '';
-  try {
-    const res = await apiPost(`/pipeline/run/MV01/${getSessionId()}`, {});
-    if (res.error) {
-      statusEl.innerHTML = `<div style="color:var(--red);">MV01 失败：${esc(res.message)}</div>`;
-      return;
-    }
-    statusEl.innerHTML = `<div style="color:var(--green);font-weight:600;">✓ MV01 完成（耗时 ${res.duration_sec}s）</div>
-      <div class="text-muted" style="margin-top:6px;">后续 MV02-MV06 可继续在内部工具中触发</div>`;
-    outEl.textContent = JSON.stringify(res.result, null, 2);
-  } catch (e) {
-    statusEl.innerHTML = `<div style="color:var(--red);">请求失败：${esc(e.message)}</div>`;
+  const sid = getSessionId();
+  if (!sid) { toast('请先填写信息'); return; }
+  if (state.chatHistory.length < 2) {
+    if (!confirm('您还没有和念念充分对话，确定要直接开始制作吗？')) return;
   }
+  // 跳转到前期确认台
+  window.location.href = 'pipeline.html';
 }
 
 // ───── 文件上传 ─────

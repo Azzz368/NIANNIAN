@@ -61,6 +61,14 @@ if _FRONTEND.exists():
     @app.get("/dialogue")
     def page_dialogue():
         return RedirectResponse(url="/static/dialogue.html", status_code=307)
+
+    @app.get("/pipeline")
+    def page_pipeline():
+        return RedirectResponse(url="/static/pipeline.html", status_code=307)
+
+    @app.get("/studio")
+    def page_studio():
+        return RedirectResponse(url="/static/studio.html", status_code=307)
 else:
     @app.get("/")
     def root_no_frontend() -> JSONResponse:

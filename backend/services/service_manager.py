@@ -19,6 +19,9 @@ from llm_client import (  # type: ignore
     call_structured,
     describe_image,
     transcribe_audio,
+    build_scene_prompts,
+    generate_image_302,
+    generate_video_302ai_i2v,
 )
 from skill_loader import load_skill  # type: ignore
 
@@ -445,3 +448,206 @@ def _form_summary_for_ai(form_data: Dict[str, Any]) -> str:
     if mem:  parts.append(f"家庭回忆：{mem[:300]}")
     if wish: parts.append(f"心愿/寄语：{wish[:150]}")
     return "\n".join(parts) if parts else "（家属尚未填写详细信息）"
+
+
+# ── 影像预告（preview）：用大白话讲解流程 ──────────────────────────────────
+_PREVIEW_SYS = (
+    "你是一位亲切的追思影像讲解员，帮助家属提前了解即将制作的影片内容。"
+    "请根据下面提供的逝者信息，用最通俗的大白话（就像面对面和家里老人讲话一样），"
+    "把这部追思影像的大致流程讲清楚：先是什么，然后是什么，最后是什么。"
+    "语气温柔、耐心，像邻居奶奶聊天一样自然。\n"
+    "格式要求：\n"
+    "- 用三段结构，每段 2-4 句话\n"
+    "- 不要用专业词汇，不要说'分镜'、'AI生成'、'模型'这类词\n"
+    "- 每段开头加上序号表情：①②③\n"
+    "- 总长度控制在 150-220 字"
+)
+
+
+def memorial_preview(form_data: Dict[str, Any], mv01_result: Optional[Dict[str, Any]] = None) -> str:
+    """根据表单 + MV01 输出生成大白话流程讲解"""
+    import json as _json
+    if mv01_result:
+        info = _json.dumps(mv01_result, ensure_ascii=False, indent=2)
+    else:
+        info = _form_summary_for_ai(form_data)
+    prompt = f"以下是逝者和家属的信息：\n\n{info}\n\n请用大白话帮家属讲讲这部影片的流程。"
+    try:
+        return call_memorial_chat(_PREVIEW_SYS, [{"role": "user", "content": prompt}])
+    except Exception as e:
+        return f"① 我们会先用您填写的内容整理出一份完整的故事大纲。\n② 接着会确定影像的整体氛围、主角的样子，让画面更贴近 TA。\n③ 最后会一帧一帧把回忆做成可以播放的影片。\n\n（系统提示：预览生成遇到问题：{e}）"
+
+
+# ── MV 步骤后大白话总结 ───────────────────────────────────────────────────
+_MV01_SUMMARY_SYS = (
+    "你是念念追思影像制作助手，帮家属用最温柔口语化的中文描述影像制作进展。"
+    "收到 JSON 数据后，用 80-120 字的自然语言告诉家属：我们了解了哪些信息，"
+    "影像会呈现什么样的感觉。不要出现任何技术词汇、字段名、JSON。语气温暖贴心。"
+    "只输出一段话，不要分点、不要标题。"
+)
+_MV03_SUMMARY_SYS = (
+    "你是念念追思影像制作助手。根据影像三要素 JSON，用最温柔自然的中文，"
+    "用 80-120 字告诉家属：我们为这部影像确定了什么样的基调、主角形象和画面氛围。"
+    "不要出现任何 JSON、字段名或技术词汇。语气温暖，像在讲述一个美好的计划。"
+    "必须使用 JSON 中真实的人物姓名，绝对不得使用任何无关的示例名称。只输出一段话，不要分点。"
+)
+
+
+def _safe_mv_summary(sys_prompt: str, payload: Dict[str, Any], fallback: str) -> str:
+    import json as _json
+    try:
+        return call_freeform(sys_prompt, _json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        return fallback
+
+
+def run_pipeline_chain(sid: str) -> Dict[str, Any]:
+    """串行执行 MV01 → MV02 → MV03，并附带两段大白话总结气泡。
+    复刻 archive/streamlit/pages/pipeline.py 的 run_pipeline() 逻辑。"""
+    s = session_store.require(sid)
+    bubbles: List[Dict[str, str]] = []   # [{role:'ai', content}]
+    errors: List[Dict[str, str]] = []
+
+    # ── MV01（若已运行就直接读取）───────────────────────────────
+    mv01_out = s["mv_outputs"].get("MV01")
+    if not mv01_out:
+        r = run_pipeline_step(sid, "MV01")
+        if r.get("error"):
+            errors.append({"step": "MV01", "message": r.get("message", "未知错误")})
+            return {"ok": False, "bubbles": bubbles, "errors": errors,
+                    "scenes": [], "mv03": {}}
+        mv01_out = r["result"]
+
+    # 气泡①：MV01 摘要
+    bubbles.append({
+        "role": "ai",
+        "content": _safe_mv_summary(_MV01_SUMMARY_SYS, mv01_out,
+                                    "我们已经把您讲述的内容整理好了，影像将围绕这些珍贵的记忆展开。"),
+    })
+
+    # ── MV02 静默运行 ────────────────────────────────────────
+    if not s["mv_outputs"].get("MV02"):
+        run_pipeline_step(sid, "MV02")
+
+    # ── MV03 三要素锁定 ──────────────────────────────────────
+    mv03_out = s["mv_outputs"].get("MV03")
+    if not mv03_out:
+        r = run_pipeline_step(sid, "MV03")
+        if r.get("error"):
+            errors.append({"step": "MV03", "message": r.get("message", "未知错误")})
+            return {"ok": False, "bubbles": bubbles, "errors": errors,
+                    "scenes": [], "mv03": {}}
+        mv03_out = r["result"]
+
+    # 气泡②：MV03 三要素总结（注入真实姓名防止 LLM 误用）
+    summary_payload = dict(mv03_out) if isinstance(mv03_out, dict) else {"raw": mv03_out}
+    summary_payload["_current_deceased_name"] = s["form_data"].get("deceased_name", "")
+    bubbles.append({
+        "role": "ai",
+        "content": _safe_mv_summary(_MV03_SUMMARY_SYS, summary_payload,
+                                    "影像的基调、主角形象和画面氛围都已确定，接下来就可以进入分镜制作。"),
+    })
+
+    # 收集分镜（若 MV03 输出包含）
+    scenes: List[Dict[str, Any]] = []
+    if isinstance(mv03_out, dict):
+        sc = mv03_out.get("scenes")
+        if isinstance(sc, list):
+            scenes = [x for x in sc if isinstance(x, dict)]
+        elif isinstance(sc, dict):
+            scenes = [sc[k] for k in sorted(sc.keys()) if isinstance(sc[k], dict)]
+
+    return {
+        "ok": True,
+        "bubbles":  bubbles,
+        "errors":   errors,
+        "scenes":   scenes,
+        "mv03":     mv03_out,
+    }
+
+
+# ── 分镜场景：单镜图片/视频生成 ─────────────────────────────────────────
+def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
+    if not isinstance(mv04_out, dict):
+        return []
+    sc = mv04_out.get("scenes")
+    if isinstance(sc, list):
+        return [x for x in sc if isinstance(x, dict)]
+    if isinstance(sc, dict):
+        return [sc[k] for k in sorted(sc.keys()) if isinstance(sc[k], dict)]
+    sb = mv04_out.get("storyboard")
+    if isinstance(sb, list):
+        return [x for x in sb if isinstance(x, dict)]
+    return []
+
+
+def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
+    """为单个分镜生成图片。返回 {url: data-url} 或 {error, message}"""
+    s = session_store.require(sid)
+    mv04 = s["mv_outputs"].get("MV04")
+    mv03 = s["mv_outputs"].get("MV03")
+    scenes = _get_scenes_from_mv04(mv04)
+    if scene_idx < 0 or scene_idx >= len(scenes):
+        return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
+    scene = scenes[scene_idx]
+
+    # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
+    try:
+        prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None)
+        image_prompt = prompts.get("image_prompt") or scene.get("prompt_start") or scene.get("description") or ""
+    except Exception:
+        image_prompt = scene.get("prompt_start") or scene.get("description") or scene.get("visual") or str(scene)
+
+    if not image_prompt:
+        return {"error": True, "message": "无法构造图片 prompt"}
+
+    b64, err = generate_image_302(image_prompt)
+    if not b64:
+        return {"error": True, "message": err or "图片生成失败"}
+
+    data_url = f"data:image/png;base64,{b64}"
+    # 缓存到 scene
+    scene["_image_data_url"] = data_url
+    scene["_image_prompt"]   = image_prompt
+    return {"url": data_url}
+
+
+def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, Any]:
+    """为单个分镜生成视频。image_url 可为 data URL 或 https URL。"""
+    s = session_store.require(sid)
+    mv04 = s["mv_outputs"].get("MV04")
+    mv03 = s["mv_outputs"].get("MV03")
+    scenes = _get_scenes_from_mv04(mv04)
+    if scene_idx < 0 or scene_idx >= len(scenes):
+        return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
+    scene = scenes[scene_idx]
+
+    image_url = image_url or scene.get("_image_data_url", "")
+    if not image_url:
+        return {"error": True, "message": "请先生成首帧图片"}
+
+    # 视频 prompt
+    try:
+        prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None)
+        video_prompt = prompts.get("video_prompt") or scene.get("prompt_video") or scene.get("description") or ""
+    except Exception:
+        video_prompt = scene.get("prompt_video") or scene.get("description") or ""
+
+    if not video_prompt:
+        video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
+
+    # 调用 302.ai i2v（同步轮询直到完成或超时）
+    res = generate_video_302ai_i2v(
+        prompt=video_prompt,
+        image_b64_or_url=image_url,
+        duration=5,
+        poll=True,
+        max_wait=600,
+    )
+    if res.get("error"):
+        return {"error": True, "message": res.get("error")}
+    url = res.get("url")
+    if not url:
+        return {"error": True, "message": f"视频未返回 URL：{res}"}
+    scene["_video_url"] = url
+    return {"url": url}

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念 · 前期确认台</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .pipe-progress{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 24px;}
+  .pipe-pill{display:flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;background:var(--surf2);border:1px solid var(--border);font-size:.85rem;color:var(--muted-l);transition:all .25s;}
+  .pipe-pill.active{background:var(--gold);border-color:var(--gold);color:#fff;box-shadow:var(--shadow-sm);}
+  .pipe-pill.done{background:rgba(90,154,114,.1);border-color:rgba(90,154,114,.3);color:var(--green);}
+  .pipe-pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.7;}
+  .scene-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:14px;}
+  .scene-card{background:var(--surf);border:1px solid var(--border);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow-sm);}
+  .scene-num{font-family:"Cormorant Garamond",serif;font-size:1.4rem;color:var(--gold);font-weight:600;}
+  .scene-id{font-size:.7rem;color:var(--muted-l);letter-spacing:.05em;}
+  .scene-meta{font-size:.75rem;color:var(--muted-l);margin:4px 0 8px;}
+  .scene-desc{font-size:.88rem;line-height:1.7;color:var(--ink);}
+  .scene-narr{margin-top:8px;font-size:.82rem;line-height:1.7;color:var(--ink-m);background:var(--surf2);border-radius:8px;padding:8px 10px;border-left:3px solid var(--gold);}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">念</div>
+      <div>
+        <div class="topbar-name">念念</div>
+        <div class="topbar-sub">前期确认台 · Pipeline</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a class="btn btn-ghost" href="memorial.html">← 返回访谈</a>
+      <a class="btn btn-ghost" href="index.html">返回主页</a>
+    </div>
+  </div>
+
+  <!-- 进度 -->
+  <div class="pipe-progress" id="pipeProgress">
+    <div class="pipe-pill" data-step="MV01"><span class="dot"></span><span>① 访谈整理</span></div>
+    <div class="pipe-pill" data-step="MV02"><span class="dot"></span><span>② AI 核对</span></div>
+    <div class="pipe-pill" data-step="MV03"><span class="dot"></span><span>③ 方案确认</span></div>
+  </div>
+
+  <!-- Preview 阶段（大白话讲流程） -->
+  <section id="phasePreview">
+    <div class="step-header">
+      <div class="step-eyebrow">前期确认 · 第一步</div>
+      <div class="step-title">念念为您讲讲接下来的流程</div>
+      <div class="step-desc">读完后点击下方按钮，正式开始影像方案制作。</div>
+    </div>
+    <div id="previewChat" class="chat-wrap"></div>
+    <div id="previewThink" class="hidden">
+      <div class="think-row">
+        <div class="think-wrap"><div class="think-orb"></div><div class="think-ring"></div><div class="think-ring r2"></div></div>
+        <div class="think-bubble"><div class="think-dots"><span></span><span></span><span></span></div><div class="think-label">念念正在准备讲解...</div></div>
+      </div>
+    </div>
+    <div class="btn-row" style="justify-content:flex-end;">
+      <button class="btn btn-primary" id="btnStartPipeline">好的，就按这个来！开始制作 →</button>
+    </div>
+  </section>
+
+  <!-- Pipeline 运行阶段 -->
+  <section id="phasePipeline" class="hidden">
+    <div class="step-header">
+      <div class="step-eyebrow">前期确认 · 进行中</div>
+      <div class="step-title">念念正在为您整理影像方案</div>
+      <div class="step-desc">三个环节会依次完成，整个过程约 1-2 分钟。</div>
+    </div>
+    <div id="pipelineChat" class="chat-wrap"></div>
+    <div id="pipelineThink" class="hidden">
+      <div class="think-row">
+        <div class="think-wrap"><div class="think-orb"></div><div class="think-ring"></div><div class="think-ring r2"></div></div>
+        <div class="think-bubble"><div class="think-dots"><span></span><span></span><span></span></div><div class="think-label" id="pipelineThinkLabel">念念正在思考...</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 完成 / 进入下一步 -->
+  <section id="phaseDone" class="hidden">
+    <div class="card" style="border:1px solid rgba(90,154,114,.3);background:rgba(90,154,114,.05);">
+      <div class="section-label" style="color:var(--green);">✓ 影像方案已确认</div>
+      <p class="text-muted" style="margin:6px 0 0;">基础信息、人物档案、画面三要素已全部锁定，接下来进入分镜制作台为每个画面生成图片与短视频。</p>
+    </div>
+
+    <div class="btn-row" style="justify-content:space-between;margin-top:18px;">
+      <a class="btn" href="memorial.html">← 返回访谈</a>
+      <a class="btn btn-primary" id="btnToStudio" href="studio.html">进入分镜制作台 →</a>
+    </div>
+  </section>
+
+  <!-- 错误 -->
+  <section id="phaseError" class="hidden">
+    <div class="card" style="border:1px solid var(--red);background:rgba(193,86,86,.05);">
+      <div class="section-label" style="color:var(--red);">影像方案制作遇到问题</div>
+      <pre id="errorOutput" style="background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:.78rem;line-height:1.5;color:var(--ink-m);overflow-x:auto;max-height:400px;margin-top:12px;white-space:pre-wrap;"></pre>
+      <div class="btn-row" style="justify-content:flex-end;margin-top:14px;">
+        <button class="btn" id="btnRetry">重试</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/pipeline.js"></script>
+</body>
+</html>
