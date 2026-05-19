@@ -33,6 +33,14 @@ def create_session(form_data: Optional[Dict[str, Any]] = None) -> str:
             },
             "ds_chat":       [],   # 深度搜索对话
             "ds_result":     None,
+            # 数字人对话子状态（独立于 memorial 影像建档流程）
+            "dialogue": {
+                "persona_dna":      None,   # dict：聊天分析出的语言风格
+                "persona_name":     "",
+                "persona_override": "",     # 人设编辑器中累积的描述
+                "message_count":    0,      # 已分析的消息条数
+                "history":          [],     # [{role, content}]
+            },
         }
     return sid
 

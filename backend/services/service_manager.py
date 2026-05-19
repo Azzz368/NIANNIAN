@@ -264,6 +264,169 @@ def memorial_reply(form_data: Dict[str, Any], history: List[Dict[str, str]]) -> 
     return call_memorial_chat(_MEMORIAL_SYSTEM, seeded)
 
 
+# ── 数字人对话（独立于追思影像建档流程）────────────────────────────────────
+# 用户上传聊天记录 → 风格分析 → 人设融合 → 与"逝者"对话
+import csv as _csv
+import io as _io
+import json as _json2
+import re as _re2
+
+
+def parse_chat_file(file_bytes: bytes, filename: str, target: str) -> List[Dict[str, Any]]:
+    """解析微信聊天记录（CSV/JSON/TXT）→ 消息列表"""
+    messages: List[Dict[str, Any]] = []
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    target = (target or "").strip()
+
+    if ext == "csv":
+        text = file_bytes.decode("utf-8-sig", errors="replace")
+        reader = _csv.DictReader(_io.StringIO(text))
+        for row in reader:
+            sender    = row.get("StrTalker") or row.get("sender") or row.get("NickName", "")
+            is_sender = str(row.get("IsSender", "0"))
+            msg_type  = str(row.get("Type", "1"))
+            content   = row.get("StrContent") or row.get("content", "")
+            if is_sender == "0" and msg_type == "1" and (not target or target in sender) and content.strip():
+                messages.append({"sender": sender, "content": content.strip()})
+    elif ext == "json":
+        try:
+            data = _json2.loads(file_bytes.decode("utf-8", errors="replace"))
+        except Exception:
+            data = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = (data.get("messages") or data.get("msg") or
+                     data.get("records") or data.get("data") or [])
+            if not items:
+                for v in data.values():
+                    if isinstance(v, list) and v:
+                        items = v
+                        break
+        else:
+            items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            sender  = (item.get("sender") or item.get("from") or item.get("NickName")
+                       or item.get("talker") or item.get("StrTalker") or "")
+            content = (item.get("content") or item.get("text") or item.get("StrContent")
+                       or item.get("msg") or "")
+            is_sender = str(item.get("IsSender", item.get("isSender", "")))
+            msg_type  = str(item.get("Type", item.get("type", "1")))
+            if is_sender == "1":
+                continue
+            if is_sender == "0" and msg_type not in ("1", ""):
+                continue
+            content = str(content).strip()
+            if not content:
+                continue
+            if not target or target in sender:
+                messages.append({"sender": sender, "content": content})
+    elif ext == "txt":
+        text = file_bytes.decode("utf-8", errors="replace")
+        pattern = _re2.compile(
+            r'(?:\[([^\]]+)\]\s+)?([^\n:：\(]+)[：:\(]\s*([^\n]+(?:\n(?!\[|\d{4})[^\n]+)*)',
+            _re2.MULTILINE,
+        )
+        for m in pattern.finditer(text):
+            sender  = m.group(2).strip()
+            content = m.group(3).strip()
+            if (not target or target in sender) and content:
+                messages.append({"sender": sender, "content": content})
+    return messages
+
+
+def analyze_chat_style(messages: List[Dict[str, Any]], target_name: str, role_desc: str = "") -> Dict[str, Any]:
+    """调用 WECHAT01 skill 分析风格"""
+    skill_path = SKILLS_DIR / "WECHAT01-style-analysis.md"
+    if not skill_path.exists():
+        return {"error": True, "message": "WECHAT01 skill 文件缺失"}
+    sample = messages[-300:] if len(messages) > 300 else messages
+    sample_text = "\n".join(m["content"] for m in sample)
+    payload: Dict[str, Any] = {
+        "target_name": target_name or "目标人物",
+        "messages": sample_text,
+        "message_count": len(messages),
+    }
+    if role_desc.strip():
+        payload["role_description"] = role_desc.strip()
+    prompt = load_skill(str(skill_path))
+    return call_skill("WECHAT01", prompt, payload)
+
+
+def merge_persona(dna: Dict[str, Any], current_override: str, new_input: str) -> str:
+    """智能融合人设描述（沿用 Streamlit 端实现）"""
+    dna_summary = (
+        f"语气基调: {dna.get('tone', '')}, "
+        f"常用口头禅: {'、'.join(dna.get('speech_patterns', [])[:5])}, "
+        f"常聊话题: {'、'.join(dna.get('typical_topics', [])[:3])}, "
+        f"幽默程度: {dna.get('humor_level', 3)}/5, "
+        f"回应风格: {dna.get('response_style', '')}"
+    )
+    merge_prompt = (
+        f"你是一个角色人设管理助手。用户正在为数字人动态调整人设描述。\n\n"
+        f"【已有角色 DNA 摘要】\n{dna_summary}\n\n"
+        f"【当前角色背景描述】\n{current_override if current_override.strip() else '（暂无）'}\n\n"
+        f"【用户新增/修改内容】\n{new_input}\n\n"
+        f"请智能融合：保留有用旧设定，以新内容优先，去除矛盾重复，"
+        f"用自然流畅中文描述，不超过250字。"
+        f"直接返回融合后文本，不要任何解释或前缀。"
+    )
+    try:
+        result = call_memorial_chat(
+            system_prompt="你是角色人设管理助手，只返回融合结果文本，不解释。",
+            messages=[{"role": "user", "content": merge_prompt}],
+            model=DIALOGUE_MODEL,
+        )
+        return (result or "").strip()
+    except Exception:
+        return (current_override + "\n\n[新增] " + new_input).strip()
+
+
+def build_persona_system_prompt(dna: Dict[str, Any], name: str, extra_desc: str = "") -> str:
+    speech_patterns = "、".join(dna.get("speech_patterns", [])[:10])
+    signatures = "\n".join(f"  - {p}" for p in dna.get("signature_phrases", []))
+    topics    = "、".join(dna.get("typical_topics", [])[:5])
+    emo_words = "、".join(dna.get("emotional_words", [])[:8])
+    habits    = dna.get("special_habits", "")
+    extra_section = f"\n【角色背景补充】\n{extra_desc}\n" if extra_desc.strip() else ""
+    return (
+        f"你现在扮演一个真实存在过的人：{name}。\n\n"
+        f"你的任务是完全以 {name} 的口吻和风格与用户对话，让用户感受到 TA 仍然在陪伴着自己。"
+        f"{extra_section}\n"
+        f"【{name} 的语言风格特征】\n"
+        f"- 常用词/口头禅：{speech_patterns}\n"
+        f"- 句子长度风格：{dna.get('avg_sentence_length', '中等')}\n"
+        f"- 情感基调：{dna.get('tone', '温和')}\n"
+        f"- 幽默程度：{dna.get('humor_level', 3)}/5\n"
+        f"- 常聊话题：{topics}\n"
+        f"- 常用情感词：{emo_words}\n"
+        f"- 特殊语言习惯：{habits}\n"
+        f"- 标志性句式：\n{signatures}\n"
+        f"- 回应风格：{dna.get('response_style', '自然随和')}\n\n"
+        f"【角色扮演守则】\n"
+        f"1. 始终保持角色，不要说「我是AI」或打破扮演\n"
+        f"2. 回复长度符合 TA 原本的风格\n"
+        f"3. 适当使用口头禅和标志性句式，但不要每句都重复\n"
+        f"4. 语气温暖真实，像真正的对话而不是朗诵\n"
+        f"5. 如果用户问到不知道的事，以 {name} 的性格自然回应\n"
+        f"6. 每次回复后可自然地反问或延续话题\n"
+        f"7. 不使用 Markdown 格式符号，保持口语化\n"
+        f"8. 每次回复控制在1-4句话，除非用户要求详细"
+    )
+
+
+def dialogue_reply(dna: Dict[str, Any], name: str, override: str, history: List[Dict[str, str]]) -> str:
+    """数字人对话回复"""
+    sys_prompt = build_persona_system_prompt(dna, name or "TA", override or "")
+    return call_memorial_chat(
+        system_prompt=sys_prompt,
+        messages=history[-20:],
+        model=DIALOGUE_MODEL,
+    )
+
+
 def _form_summary_for_ai(form_data: Dict[str, Any]) -> str:
     name = form_data.get("deceased_name", "")
     rel  = form_data.get("speaker_relation", "")

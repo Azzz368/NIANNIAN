@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import assets, chat, intake, pipeline
+from routers import assets, chat, dialogue, intake, pipeline
 
 app = FastAPI(
     title="念念 NianNian Memorial API",
@@ -37,6 +37,7 @@ app.include_router(intake.router,   prefix="/api")
 app.include_router(chat.router,     prefix="/api")
 app.include_router(pipeline.router, prefix="/api")
 app.include_router(assets.router,   prefix="/api")
+app.include_router(dialogue.router, prefix="/api")
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"

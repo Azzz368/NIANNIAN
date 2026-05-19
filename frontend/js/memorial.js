@@ -104,15 +104,25 @@ async function gotoStep3() {
 
 // ───── 测试数据 ─────
 async function fillTestData() {
+  const btn = document.getElementById('btnFillTest');
+  const oldText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '正在加载...'; }
   try {
     const res = await apiGet('/intake/test-data');
     state.form = res.form_data;
     writeForm(state.form);
-    // 提交一次以创建 session
-    const r = await apiPost('/intake/submit', { form_data: state.form });
+    // 提交以创建/更新 session
+    const r = await apiPost('/intake/submit', { session_id: getSessionId() || null, form_data: state.form });
     setSessionId(r.session_id);
-    toast('测试数据已填入');
-  } catch (e) { toast('加载测试数据失败：' + e.message); }
+    toast('测试数据已填入，进入第二步');
+    // 自动跳至 Step 2
+    showStep(2);
+  } catch (e) {
+    toast('加载测试数据失败：' + e.message);
+    console.error(e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  }
 }
 
 // ───── Chat ─────
