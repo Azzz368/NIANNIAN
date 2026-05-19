@@ -25,11 +25,11 @@ MV_STEPS = [
 ]
 
 STATUS_BADGE = {
-    "pending": "⚬ 待命",
-    "running": "🟡 运行中",
-    "awaiting_review": "🔵 需确认",
-    "approved": "✅ 达成",
-    "rejected": "✖ 已退回",
+    "pending": " 待命",
+    "running": " 运行中",
+    "awaiting_review": " 需确认",
+    "approved": " 达成",
+    "rejected": " 已退回",
 }
 
 
@@ -729,10 +729,10 @@ def render_sidebar() -> None:
     st.sidebar.markdown("## 流水线进度")
     for step in MV_STEPS:
         status = gate_manager.get_status(step["id"])
-        badge = STATUS_BADGE.get(status, "⚪ 未开始")
+        badge = STATUS_BADGE.get(status, " 未开始")
         st.sidebar.markdown(f"**{badge}**  {step['id']} · {step['name']}")
     st.sidebar.divider()
-    if st.sidebar.button("🔄 重置全部阶段", use_container_width=True):
+    if st.sidebar.button(" 重置全部阶段", use_container_width=True):
         pipeline_runner.reset_state()
         st.rerun()
 
@@ -788,7 +788,7 @@ def render_mv03_scenes(output: Dict[str, Any]) -> None:
             f"<div class='mv-card'><div class='mv-header'><strong>Scene {scene_id}</strong></div>",
             unsafe_allow_html=True,
         )
-        st.markdown(f"**⏱️ {timecode}** · **🎥 {shot_type}**")
+        st.markdown(f"** {timecode}** · ** {shot_type}**")
         st.markdown(f"<span style='color:#4b5563'>{description}</span>", unsafe_allow_html=True)
         col_a, col_b, col_c = st.columns([1, 1, 2])
         with col_a:
@@ -803,7 +803,7 @@ def render_mv03_scenes(output: Dict[str, Any]) -> None:
                     st.session_state["mv03_detail_scene"] = scene
                 st.rerun()
         with col_b:
-            if st.button(f"↩️ 退回此镜 {scene_id}", key=f"reject_scene_{scene_id}"):
+            if st.button(f"↩ 退回此镜 {scene_id}", key=f"reject_scene_{scene_id}"):
                 gate_manager.reject("MV03", {"ids": [scene_id]})
                 st.warning(f"已标记退回镜头：{scene_id}")
         with col_c:
@@ -1158,7 +1158,7 @@ def render_step(step: Dict[str, str], mv01_input: Dict[str, Any], input_ok: bool
     state = pipeline_runner.get_status().get(mv_id, {})
     duration = state.get("duration_sec")
     duration_text = f"{duration:.2f}s" if duration else "-"
-    badge = STATUS_BADGE.get(status, "⚪ 未开始")
+    badge = STATUS_BADGE.get(status, " 未开始")
 
     st.markdown(
         f"""
@@ -1252,7 +1252,7 @@ def render_step(step: Dict[str, str], mv01_input: Dict[str, Any], input_ok: bool
         )
 
     if mv_id == "MV05" and output.get("requires_unlock_and_relock") is True:
-        st.error("⚠️ 需返回MV03补齐三要素再重跑")
+        st.error(" 需返回MV03补齐三要素再重跑")
 
     if mv_id == "MV02" and output.get("status") == "needs_input":
         prompts = output.get("prompts", [])
@@ -1264,7 +1264,7 @@ def render_step(step: Dict[str, str], mv01_input: Dict[str, Any], input_ok: bool
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         rerun_disabled = (mv_id == "MV01" and not input_ok) or status == "running"
-        if st.button("🔁 重新执行", key=f"rerun_{mv_id}", use_container_width=True, disabled=rerun_disabled):
+        if st.button(" 重新执行", key=f"rerun_{mv_id}", use_container_width=True, disabled=rerun_disabled):
             scope_text = st.session_state.get(f"scope_{mv_id}", "")
             scope_ids = [item.strip() for item in scope_text.split(",") if item.strip()]
             if scope_ids:
@@ -1290,11 +1290,11 @@ def render_step(step: Dict[str, str], mv01_input: Dict[str, Any], input_ok: bool
 
     with col3:
         approve_disabled = status != "awaiting_review" or (mv_id == "MV02" and output.get("status") == "needs_input")
-        approve_label = "✅ 通过 →"
+        approve_label = " 通过 →"
         if mv_id == "MV03":
-            approve_label = "✅ 确认三要素"
+            approve_label = " 确认三要素"
         if mv_id == "MV06":
-            approve_label = "✅ 终审通过，导出最终JSON"
+            approve_label = " 终审通过，导出最终JSON"
         if not (mv_id == "MV05" and output.get("requires_unlock_and_relock") is True):
             if st.button(approve_label, key=f"approve_{mv_id}", use_container_width=True, disabled=approve_disabled):
                 gate_manager.approve(mv_id)
@@ -1318,7 +1318,7 @@ tab_pipeline, tab_comfy = st.tabs(["MV 流水线", "ComfyUI 生成中心"])
 with tab_pipeline:
     st.title("追悼会 MV 执行层 Demo")
 
-    with st.expander("🧾 信息采集（文本 + 图片/音频/视频上传）", expanded=False):
+    with st.expander(" 信息采集（文本 + 图片/音频/视频上传）", expanded=False):
         st.caption("支持粘贴文字与上传素材，系统会自动整理成 MV01 输入 JSON。")
         intake_text = st.text_area(
             "输入文字信息",
@@ -1404,7 +1404,7 @@ with tab_pipeline:
     if mv01_error:
         st.warning(mv01_error)
 
-    if st.button("▶ 从 MV01 开始执行", type="primary"):
+    if st.button(" 从 MV01 开始执行", type="primary"):
         pipeline_runner.run_step("MV01", mv01_input)
         st.rerun()
 
