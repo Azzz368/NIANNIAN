@@ -2,13 +2,13 @@
 const { apiGet, apiPost, getSessionId, toast, esc } = window.NN;
 
 const state = {
-  sid: getSessionId(),
-  scenes: [],        // [{id, time, description, narration, image_url, video_url, image_status, video_status}]
-  mv03: null,
-  mv04: null,
+  sid:    getSessionId(),
+  scenes: [],
+  chars:  null,
+  mv04:   null,
 };
 
-const $ = id => document.getElementById(id);
+const $    = id => document.getElementById(id);
 const show = id => $(id).classList.remove('hidden');
 const hide = id => $(id).classList.add('hidden');
 
@@ -24,44 +24,22 @@ function setThink(on, label) {
   if (on && label) $('genThinkLabel').textContent = label;
 }
 
-// ───── 角色档案展示（从 MV03 输出读取）─────
+// ───── 角色档案展示（来自 /pipeline/characters/{sid}）─────
 function renderCharSummary() {
   const box = $('charSummary');
-  const mv03 = state.mv03 || {};
-  if (!mv03 || !Object.keys(mv03).length) {
+  const c = state.chars;
+  if (!c || !c.main) {
     box.innerHTML = `<div class="text-muted">尚未读取到角色档案，请先完成方案确认台。</div>`;
     return;
   }
-
-  // 收集主角和配角
-  const protagonist = mv03.protagonist || mv03.main_character || mv03.主角 || null;
-  const supporting = mv03.supporting_characters || mv03.supporting || mv03.配角 || [];
-  const tone = mv03.tone || mv03.基调 || mv03.style || '';
-  const atmosphere = mv03.atmosphere || mv03.画面氛围 || mv03.visual_style || '';
-
-  let html = '';
-  if (tone) html += `<div class="char-meta" style="margin-bottom:8px;"><b>基调：</b>${esc(typeof tone === 'string' ? tone : JSON.stringify(tone))}</div>`;
-  if (atmosphere) html += `<div class="char-meta" style="margin-bottom:12px;"><b>画面氛围：</b>${esc(typeof atmosphere === 'string' ? atmosphere : JSON.stringify(atmosphere))}</div>`;
-
-  html += `<div class="char-grid">`;
-  const chars = [];
-  if (protagonist) chars.push({ ...protagonist, _role: '主角' });
-  const supArr = Array.isArray(supporting) ? supporting : (supporting && typeof supporting === 'object' ? Object.values(supporting) : []);
-  supArr.forEach(c => chars.push({ ...c, _role: '配角' }));
-
-  if (!chars.length) {
-    html += `<div class="text-muted">（无角色信息）</div>`;
-  } else {
-    chars.forEach(c => {
-      const name = c.name || c.姓名 || '未命名';
-      const role = c._role || '';
-      const desc = c.description || c.appearance || c.外貌 || c.形象 || '';
-      html += `<div class="char-card">
-        <div class="char-name">${esc(name)} <span style="font-size:.7rem;color:var(--gold);">· ${esc(role)}</span></div>
-        ${desc ? `<div class="char-meta">${esc(typeof desc === 'string' ? desc : JSON.stringify(desc))}</div>` : ''}
-      </div>`;
-    });
-  }
+  const cards = [c.main, ...(c.supporting || [])];
+  let html = `<div class="char-grid">`;
+  cards.forEach(ch => {
+    html += `<div class="char-card">
+      <div class="char-name">${esc(ch.name)} <span style="font-size:.7rem;color:var(--gold);">· ${esc(ch.role_label || '')}</span></div>
+      ${ch.description ? `<div class="char-meta">${esc(ch.description)}</div>` : ''}
+    </div>`;
+  });
   html += `</div>`;
   box.innerHTML = html;
 }
@@ -75,38 +53,48 @@ function renderScenes() {
     return;
   }
   state.scenes.forEach((sc, i) => {
-    const id = sc.id || sc.scene_id || `S${String(i + 1).padStart(2, '0')}`;
+    const id   = sc.id || sc.scene_id || `S${String(i + 1).padStart(2, '0')}`;
     const time = sc.time || sc.duration || '';
     const desc = sc.description || sc.scene_desc || sc.prompt_global || sc.visual || '';
-    const narr = sc.narration || sc.voiceover || sc.subtitle || '';
+    const narr = sc.narration   || sc.voiceover  || sc.subtitle      || '';
     const imgStatus = sc._img_status || 'idle';
     const vidStatus = sc._vid_status || 'idle';
+
     const imgBadge =
-      imgStatus === 'done' ? '<span class="badge badge-done">✓ 已生成</span>' :
-      imgStatus === 'run'  ? '<span class="badge badge-run">⏳ 生成中</span>' :
-      imgStatus === 'err'  ? '<span class="badge badge-err">✗ 失败</span>' :
-      '<span class="badge badge-idle">未生成</span>';
+      imgStatus === 'done' ? '<span class="badge badge-done">已生成</span>' :
+      imgStatus === 'run'  ? '<span class="badge badge-run">生成中...</span>' :
+      imgStatus === 'err'  ? '<span class="badge badge-err">失败</span>' :
+                              '<span class="badge badge-idle">未生成</span>';
     const vidBadge =
-      vidStatus === 'done' ? '<span class="badge badge-done">✓ 已生成</span>' :
-      vidStatus === 'run'  ? '<span class="badge badge-run">⏳ 生成中</span>' :
-      vidStatus === 'err'  ? '<span class="badge badge-err">✗ 失败</span>' :
-      '<span class="badge badge-idle">未生成</span>';
+      vidStatus === 'done' ? '<span class="badge badge-done">已生成</span>' :
+      vidStatus === 'run'  ? '<span class="badge badge-run">生成中（约 1-3 分钟）</span>' :
+      vidStatus === 'err'  ? '<span class="badge badge-err">失败</span>' :
+                              '<span class="badge badge-idle">未生成</span>';
 
     const imgHtml = sc._img_url
-      ? `<div class="media-slot has-media"><img src="${esc(sc._img_url)}" alt="scene image"></div>`
-      : `<div class="media-slot">🖼 画面图片<br/>${imgBadge}</div>`;
+      ? `<div class="media-slot has-media">
+           <img class="zoomable" data-idx="${i}" src="${esc(sc._img_url)}" alt="scene image">
+           <div class="media-cap">点击图片放大查看</div>
+         </div>`
+      : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
+
     const vidHtml = sc._vid_url
-      ? `<div class="media-slot has-media"><video controls src="${esc(sc._vid_url)}"></video></div>`
-      : `<div class="media-slot">🎬 短视频<br/>${vidBadge}</div>`;
+      ? `<div class="media-slot has-media">
+           <video controls preload="metadata" src="${esc(sc._vid_url)}"></video>
+           <div class="media-cap" style="margin-top:6px;">
+             <a class="btn btn-sm" href="${esc(sc._vid_url)}" download="scene-${String(i + 1).padStart(2, '0')}.mp4" target="_blank">下载视频</a>
+           </div>
+         </div>`
+      : `<div class="media-slot"><div class="media-cap">短视频</div>${vidBadge}</div>`;
 
     list.insertAdjacentHTML('beforeend', `
       <div class="scene-row" data-idx="${i}">
         <div class="scene-head">
           <div><span class="scene-num">${i + 1}</span><span class="scene-id">${esc(id)}</span></div>
-          <div class="scene-meta">${time ? `⏱ ${esc(time)}` : ''}</div>
+          <div class="scene-meta">${time ? esc(time) : ''}</div>
         </div>
         ${desc ? `<div class="scene-desc">${esc(desc)}</div>` : ''}
-        ${narr ? `<div class="scene-narr">🎙 ${esc(narr)}</div>` : ''}
+        ${narr ? `<div class="scene-narr">${esc(narr)}</div>` : ''}
         <div class="scene-media">${imgHtml}${vidHtml}</div>
         <div class="scene-actions">
           <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新生成图片' : '生成图片'}</button>
@@ -116,15 +104,42 @@ function renderScenes() {
     `);
   });
 
-  // 绑定按钮
   list.querySelectorAll('button[data-act]').forEach(btn => {
+    const act = btn.dataset.act;
     btn.onclick = () => {
       const idx = +btn.dataset.idx;
-      const act = btn.dataset.act;
       if (act === 'img') genSceneImage(idx);
       else if (act === 'vid') genSceneVideo(idx);
     };
   });
+
+  list.querySelectorAll('img.zoomable').forEach(img => {
+    img.onclick = () => openLightbox(img.src);
+  });
+}
+
+// ───── 图片 Lightbox（点击放大）─────
+function openLightbox(src) {
+  let bg = $('lightbox');
+  if (!bg) {
+    bg = document.createElement('div');
+    bg.id = 'lightbox';
+    bg.className = 'lightbox';
+    bg.innerHTML = `<img class="lightbox-img" alt=""><button class="lightbox-close" type="button" aria-label="关闭">×</button>`;
+    document.body.appendChild(bg);
+    bg.addEventListener('click', e => {
+      if (e.target === bg || e.target.classList.contains('lightbox-close')) closeLightbox();
+    });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+  }
+  bg.querySelector('.lightbox-img').src = src;
+  bg.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  const bg = $('lightbox');
+  if (bg) bg.classList.remove('open');
+  document.body.style.overflow = '';
 }
 
 // ───── 生成 MV04 分镜 ─────
@@ -137,7 +152,6 @@ async function genScenes() {
     const res = await apiPost(`/pipeline/run/MV04/${state.sid}`, {});
     if (res.error) throw new Error(res.message || 'MV04 失败');
     state.mv04 = res.result;
-    // 提取 scenes
     let scenes = [];
     if (Array.isArray(res.result.scenes)) scenes = res.result.scenes;
     else if (res.result.scenes && typeof res.result.scenes === 'object') {
@@ -168,14 +182,14 @@ async function genSceneImage(idx) {
   try {
     const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, {});
     if (res.error) throw new Error(res.message || '图片生成失败');
-    sc._img_url = res.url || res.image_url;
+    sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
   } catch (e) {
     sc._img_status = 'err';
     toast('图片生成失败：' + e.message);
   } finally {
     renderScenes();
-    if (state.scenes.every(s => s._img_url)) setPill('MV05', 'done');
+    if (state.scenes.length && state.scenes.every(s => s._img_url)) setPill('MV05', 'done');
   }
 }
 
@@ -190,7 +204,7 @@ async function genSceneVideo(idx) {
       image_url: sc._img_url,
     });
     if (res.error) throw new Error(res.message || '视频生成失败');
-    sc._vid_url = res.url || res.video_url;
+    sc._vid_url    = res.url || res.video_url;
     sc._vid_status = 'done';
   } catch (e) {
     sc._vid_status = 'err';
@@ -213,7 +227,7 @@ async function finalCut() {
     const url = (res.result && (res.result.final_video_url || res.result.url)) || '';
     $('finalOutput').innerHTML = url
       ? `<video controls style="width:100%;border-radius:10px;" src="${esc(url)}"></video>
-         <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download>下载影像</a></div>`
+         <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a></div>`
       : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(res.result, null, 2))}</pre>`;
     show('phaseFinal');
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -233,22 +247,18 @@ async function bootstrap() {
     setTimeout(() => location.href = 'memorial.html', 1500);
     return;
   }
-  // 读取已有 MV03（角色档案）
+  // 1. 角色档案
   try {
-    const r = await apiGet(`/pipeline/output/${state.sid}/MV03`);
-    state.mv03 = r.result;
+    state.chars = await apiGet(`/pipeline/characters/${state.sid}`);
     renderCharSummary();
   } catch {
     $('charSummary').innerHTML = `<div class="text-muted" style="color:var(--red);">未找到角色档案，请先在「方案确认台」完成前期流程。</div>`;
   }
-  // 若已有 MV04 输出，直接跳过生成阶段
+  // 2. 已有 MV04 则直接展示
   try {
-    const r = await apiGet(`/pipeline/output/${state.sid}/MV04`);
-    state.mv04 = r.result;
-    let scenes = Array.isArray(r.result.scenes) ? r.result.scenes :
-                 (Array.isArray(r.result.storyboard) ? r.result.storyboard : []);
-    state.scenes = scenes.filter(x => x && typeof x === 'object');
-    if (state.scenes.length) {
+    const r = await apiGet(`/pipeline/scenes/${state.sid}`);
+    if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
+      state.scenes = r.scenes;
       setPill('MV04', 'done');
       hide('phaseGenScenes');
       show('phaseScenes');
@@ -260,5 +270,5 @@ async function bootstrap() {
 document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   $('btnGenScenes').onclick = genScenes;
-  $('btnFinalCut').onclick = finalCut;
+  $('btnFinalCut').onclick  = finalCut;
 });

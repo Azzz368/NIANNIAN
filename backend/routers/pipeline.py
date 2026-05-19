@@ -74,6 +74,27 @@ def scene_image(sid: str, idx: int) -> Dict[str, Any]:
     return sm.gen_scene_image(sid, idx)
 
 
+@router.get("/characters/{sid}")
+def characters(sid: str) -> Dict[str, Any]:
+    """返回主角 + 配角档案"""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return sm.get_characters(sid)
+
+
+@router.get("/scenes/{sid}")
+def scenes(sid: str) -> Dict[str, Any]:
+    """返回 MV04 已生成的分镜列表（含已渲染的图片/视频缓存）"""
+    try:
+        s = session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    mv04 = s["mv_outputs"].get("MV04")
+    return {"scenes": sm._get_scenes_from_mv04(mv04), "ready": mv04 is not None}
+
+
 @router.post("/scene/video/{sid}/{idx}")
 def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
     """为单个分镜生成短视频（image_url 可为 data URL 或 https URL）"""

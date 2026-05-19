@@ -22,6 +22,7 @@ from llm_client import (  # type: ignore
     build_scene_prompts,
     generate_image_302,
     generate_video_302ai_i2v,
+    generate_video_kling,
 )
 from skill_loader import load_skill  # type: ignore
 
@@ -581,6 +582,53 @@ def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def get_characters(sid: str) -> Dict[str, Any]:
+    """返回角色档案：主角（逝者）+ 配角列表（来自 MV03 character_bible）"""
+    s = session_store.require(sid)
+    form = s.get("form_data", {})
+    mv03 = s["mv_outputs"].get("MV03") or {}
+    bible = mv03.get("character_bible", {}) if isinstance(mv03, dict) else {}
+    dna   = bible.get("character_dna", {}) if isinstance(bible, dict) else {}
+
+    main_name = (
+        bible.get("display_name")
+        or form.get("deceased_name")
+        or bible.get("character_id")
+        or "主角"
+    )
+    main_desc_parts: List[str] = []
+    if dna.get("facial_features"):  main_desc_parts.append(f"面部：{dna['facial_features']}")
+    if dna.get("body_features"):    main_desc_parts.append(f"体型：{dna['body_features']}")
+    if dna.get("clothing_style"):   main_desc_parts.append(f"服装：{dna['clothing_style']}")
+    if dna.get("mannerisms"):       main_desc_parts.append(f"神态：{dna['mannerisms']}")
+    if not main_desc_parts and form.get("occupation"):
+        main_desc_parts.append(form["occupation"])
+
+    main_role = {
+        "name": main_name,
+        "role_label": f"主角 · 逝者（{form.get('speaker_relation','至亲')}）" if form.get("speaker_relation") else "主角 · 逝者",
+        "description": "；".join(main_desc_parts) or "（暂无详细外貌描述）",
+        "photo_url": "",
+    }
+
+    # 配角：优先 MV03 supporting_cast，其次 cast_roles
+    cast_raw = []
+    if isinstance(mv03, dict):
+        cast_raw = mv03.get("supporting_cast") or mv03.get("cast_roles") or []
+    supporting: List[Dict[str, Any]] = []
+    if isinstance(cast_raw, list):
+        for c in cast_raw:
+            if not isinstance(c, dict): continue
+            supporting.append({
+                "name":        c.get("name") or c.get("display_name") or "未命名",
+                "role_label":  c.get("role_label") or c.get("relation") or "配角",
+                "description": c.get("description") or c.get("desc") or "",
+                "photo_url":   c.get("photo_url") or "",
+            })
+
+    return {"main": main_role, "supporting": supporting}
+
+
 def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     """为单个分镜生成图片。返回 {url: data-url} 或 {error, message}"""
     s = session_store.require(sid)
@@ -636,10 +684,10 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
-    # 调用 302.ai i2v（同步轮询直到完成或超时）
-    res = generate_video_302ai_i2v(
+    # 调用可灵官方 API（含 302.ai 自动 fallback，与 archive/streamlit/pages/studio.py 完全一致）
+    res = generate_video_kling(
         prompt=video_prompt,
-        image_b64_or_url=image_url,
+        image_url=image_url,
         duration=5,
         poll=True,
         max_wait=600,
