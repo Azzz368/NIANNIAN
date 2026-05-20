@@ -247,3 +247,31 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
   .mode-switch{display:none;}
   .title-ornament .line{width:50px;}
 }
+
+/* ── 按住录音时的输入框视觉反馈 ── */
+.agent-input.is-listening{
+  border-color:#C4964A !important;
+  background:linear-gradient(90deg,rgba(196,150,74,.10),rgba(232,197,122,.06)) !important;
+  box-shadow:0 0 0 3px rgba(196,150,74,.18), inset 0 0 18px rgba(196,150,74,.10);
+  animation:listenPulse 1.4s ease-in-out infinite;
+}
+@keyframes listenPulse{
+  0%,100%{ box-shadow:0 0 0 3px rgba(196,150,74,.18), inset 0 0 18px rgba(196,150,74,.10); }
+  50%   { box-shadow:0 0 0 6px rgba(196,150,74,.10), inset 0 0 28px rgba(196,150,74,.18); }
+}
+#agentVoice.recording{
+  background:linear-gradient(135deg,#C4964A,#E8C57A) !important;
+  color:#fff !important;
+  box-shadow:0 6px 22px rgba(196,150,74,.45);
+  transform:scale(1.06);
+}
+#agentVoice.recording::after{
+  content:''; position:absolute; inset:-6px; border-radius:50%;
+  border:2px solid rgba(196,150,74,.55);
+  animation:recRing 1.2s ease-out infinite;
+}
+@keyframes recRing{
+  0%  { transform:scale(.9); opacity:1; }
+  100%{ transform:scale(1.45); opacity:0; }
+}
+#agentVoice{ position:relative; user-select:none; -webkit-user-select:none; touch-action:none; }

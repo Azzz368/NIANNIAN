@@ -1,21 +1,24 @@
 // agent.js — 念念智能体
-// 双模式：
-//   1) 文字模式：POST /api/agent/chat SSE 流式 + 浏览器 speechSynthesis 朗读
-//   2) 实时语音模式：WS /api/agent/realtime → Qwen-Omni-Realtime（PCM16 双向流）
+// 文字模式：
+//   - 输入 → /api/agent/chat (SSE) 流式回复，不朗读
+//   - 按住麦克风键 = 录音；松开 = 停止 + 上传 DashScope Paraformer 精准识别
+//   - 录音过程中：浏览器 webkitSpeechRecognition 实时本地预览，填充到输入框
+// 实时语音模式：
+//   - WS /api/agent/realtime → Qwen-Omni-Realtime（双向 PCM16）
 (function () {
   'use strict';
 
-  // ─── 状态 ─────────────────────────────────────────────────────────
   var state = {
-    mode: 'text',            // 'text' | 'live'
+    mode: 'text',
     history: [],
     isThinking: false,
-    // 文字模式
+    // 文字模式 录音
     isRecording: false,
     mediaRecorder: null,
     audioChunks: [],
-    synth: window.speechSynthesis || null,
-    voices: [],
+    sr: null,                  // SpeechRecognition 实例（本地预览）
+    srPreview: '',             // 本地实时预览文本
+    srBaseText: '',            // 按下录音前输入框已有的文本（保留）
     // 实时模式
     ws: null,
     audioCtx: null,
@@ -32,30 +35,22 @@
 
   function $(id){ return document.getElementById(id); }
 
-  // ─── 工具 ────────────────────────────────────────────────────────
   function escHtml(s){
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   }
-  function scrollBottom(){
-    var list = $('agentMessages');
-    if (list) list.scrollTop = list.scrollHeight;
-  }
+  function scrollBottom(){ var l=$('agentMessages'); if (l) l.scrollTop = l.scrollHeight; }
   function setInputLock(lock){
     var inp = $('agentInput'), btn = $('agentSend');
     if (inp) inp.disabled = lock;
     if (btn) btn.disabled = lock;
   }
-  function setStatus(text){
-    var el = $('agentStatus');
-    if (el) el.textContent = text;
-  }
-  function setLiveStatus(text, show){
-    var bar = $('liveStatus'), t = $('liveStatusText');
-    if (t) t.textContent = text;
+  function setStatus(t){ var el = $('agentStatus'); if (el) el.textContent = t; }
+  function setLiveStatus(t, show){
+    var bar = $('liveStatus'), txt = $('liveStatusText');
+    if (txt) txt.textContent = t;
     if (bar) bar.classList.toggle('show', !!show);
   }
 
-  // ─── 气泡 ────────────────────────────────────────────────────────
   function appendBubble(role, text){
     var list = $('agentMessages');
     var wrap = document.createElement('div');
@@ -82,34 +77,7 @@
     return wrap;
   }
 
-  // ─── 浏览器 TTS（文字模式用）────────────────────────────────────
-  function loadVoices(){
-    if (!state.synth) return;
-    state.voices = state.synth.getVoices();
-    if (!state.voices.length) {
-      state.synth.onvoiceschanged = function(){ state.voices = state.synth.getVoices(); };
-    }
-  }
-  function pickChineseVoice(){
-    var langs = ['zh-CN','zh_CN','zh-TW','zh'];
-    for (var i=0; i<langs.length; i++) {
-      var v = state.voices.find(function(v){ return v.lang && v.lang.startsWith(langs[i]); });
-      if (v) return v;
-    }
-    return state.voices[0] || null;
-  }
-  function speak(text){
-    if (state.mode === 'live') return;           // 实时模式由 Qwen 出声
-    if (!state.synth) return;
-    state.synth.cancel();
-    var utt = new SpeechSynthesisUtterance(text);
-    utt.lang = 'zh-CN'; utt.rate = 0.95; utt.pitch = 1.05;
-    var voice = pickChineseVoice();
-    if (voice) utt.voice = voice;
-    state.synth.speak(utt);
-  }
-
-  // ─── 文字模式：SSE 发送 ──────────────────────────────────────────
+  // ─── 文字模式：SSE（不朗读）─────────────────────────────────────
   async function sendMessage(text){
     if (!text || !text.trim() || state.isThinking) return;
     state.isThinking = true; setInputLock(true);
@@ -126,7 +94,6 @@
         body: JSON.stringify({ message: text, history: state.history.slice(-30) })
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-
       var reader = resp.body.getReader();
       var decoder = new TextDecoder();
       var buf = '';
@@ -158,20 +125,30 @@
       thinkEl.remove(); appendBubble('ai', '网络连接不稳定，请稍候再试。');
     }
 
-    if (fullText) {
-      state.history.push({ role:'assistant', content: fullText });
-      speak(fullText);
-    }
+    if (fullText) state.history.push({ role:'assistant', content: fullText });
     state.isThinking = false; setInputLock(false); scrollBottom();
   }
 
-  // ─── 文字模式：单次录音 → /api/agent/asr ────────────────────────
-  async function toggleVoiceInput(){
-    var btn = $('agentVoice');
-    if (state.isRecording) {
-      if (state.mediaRecorder) state.mediaRecorder.stop();
-      return;
-    }
+  // ─── 文字模式：按住录音 ────────────────────────────────────────
+  function getSR(){
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return null;
+    var sr = new SR();
+    sr.lang = 'zh-CN';
+    sr.continuous = true;
+    sr.interimResults = true;
+    return sr;
+  }
+
+  async function startHoldRecording(){
+    if (state.isRecording || state.isThinking) return;
+    var btn = $('agentVoice'); var inp = $('agentInput');
+    if (!inp) return;
+
+    state.srBaseText = inp.value || '';
+    state.srPreview = '';
+
+    // 请求麦克风
     var stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -179,41 +156,87 @@
       alert('无法获取麦克风权限，请在浏览器设置中允许麦克风访问。');
       return;
     }
+
+    // ── MediaRecorder（用于最终精准识别）──
     state.audioChunks = [];
     var mimeTypes = ['audio/webm;codecs=opus','audio/webm','audio/ogg','audio/wav'];
     var mimeType = mimeTypes.find(function(t){ return MediaRecorder.isTypeSupported(t); }) || '';
-    state.mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : {});
-    state.mediaRecorder.ondataavailable = function(e){
-      if (e.data && e.data.size > 0) state.audioChunks.push(e.data);
-    };
-    state.mediaRecorder.onstop = async function(){
-      state.isRecording = false;
-      if (btn) { btn.classList.remove('recording'); btn.title = '语音输入'; }
+    var mr = new MediaRecorder(stream, mimeType ? { mimeType: mimeType } : {});
+    mr.ondataavailable = function(e){ if (e.data && e.data.size > 0) state.audioChunks.push(e.data); };
+    mr.onstop = async function(){
       stream.getTracks().forEach(function(t){ t.stop(); });
+      state.isRecording = false;
+      if (btn) { btn.classList.remove('recording'); btn.title = '按住说话'; }
+      inp.classList.remove('is-listening');
+      if (inp) inp.placeholder = '正在精准识别...';
+
       var ext = mimeType.includes('ogg') ? 'ogg' : mimeType.includes('wav') ? 'wav' : 'webm';
       var blob = new Blob(state.audioChunks, { type: mimeType || 'audio/webm' });
-      var inp = $('agentInput');
-      if (inp) inp.placeholder = '正在识别...';
       try {
         var form = new FormData();
         form.append('audio', blob, 'rec.' + ext);
         var res = await fetch('/api/agent/asr', { method:'POST', body: form });
         if (!res.ok) throw new Error('ASR ' + res.status);
         var data = await res.json();
-        var txt = (data.text || '').trim();
-        if (txt) sendMessage(txt);
-        else if (inp) { inp.placeholder = '未识别到内容，请重试'; setTimeout(function(){ inp.placeholder='跟念念说说 Ta 的故事...'; }, 2000); }
+        var final = (data.text || '').trim();
+        if (final) {
+          // 用精准结果替换本地预览文本
+          inp.value = (state.srBaseText ? state.srBaseText + ' ' : '') + final;
+          inp.focus();
+          // 把光标放末尾
+          try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch(e){}
+        }
+        inp.placeholder = '跟念念说说 Ta 的故事...';
       } catch(err){
         console.error(err);
-        if (inp) { inp.placeholder = '识别失败，请手动输入'; setTimeout(function(){ inp.placeholder='跟念念说说 Ta 的故事...'; }, 2500); }
+        inp.placeholder = '识别失败，可手动输入';
+        setTimeout(function(){ inp.placeholder = '跟念念说说 Ta 的故事...'; }, 2500);
       }
     };
+    state.mediaRecorder = mr;
+    mr.start();
+
+    // ── webkitSpeechRecognition（用于实时预览）──
+    var sr = getSR();
+    if (sr) {
+      sr.onresult = function(ev){
+        var interim = '', finalT = '';
+        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+          var r = ev.results[i];
+          if (r.isFinal) finalT += r[0].transcript;
+          else interim += r[0].transcript;
+        }
+        // 累加 final + 当前 interim
+        state.srPreview = (state.srPreview + finalT).trim();
+        var preview = state.srPreview + (interim ? (state.srPreview ? ' ' : '') + interim : '');
+        inp.value = (state.srBaseText ? state.srBaseText + ' ' : '') + preview;
+      };
+      sr.onerror = function(e){ console.warn('[SR] error', e.error); };
+      sr.onend = function(){};
+      try { sr.start(); } catch(e){ console.warn('[SR] start', e); }
+      state.sr = sr;
+    } else {
+      // 浏览器不支持 → 仅显示提示
+      inp.placeholder = '聆听中...（无实时预览）';
+    }
+
     state.isRecording = true;
-    if (btn) { btn.classList.add('recording'); btn.title = '点击停止录音'; }
-    state.mediaRecorder.start();
+    if (btn) { btn.classList.add('recording'); btn.title = '松开发送录音'; }
+    inp.classList.add('is-listening');
   }
 
-  // ─── 实时模式：PCM 编解码工具 ───────────────────────────────────
+  function stopHoldRecording(){
+    if (!state.isRecording) return;
+    // 先停 SR（避免再触发 onresult 覆盖最终结果）
+    if (state.sr) { try { state.sr.stop(); } catch(e){} state.sr = null; }
+    state.srPreview = '';
+    // 再停录音，触发 onstop → DashScope Paraformer 精准识别
+    if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+      try { state.mediaRecorder.stop(); } catch(e){}
+    }
+  }
+
+  // ─── 实时模式：PCM 工具 ─────────────────────────────────────────
   function floatTo16BitPCM(input){
     var out = new Int16Array(input.length);
     for (var i=0; i<input.length; i++) {
@@ -224,12 +247,9 @@
   }
   function int16ToBase64(int16){
     var u8 = new Uint8Array(int16.buffer);
-    var binary = '';
-    var CHUNK = 0x8000;
-    for (var i=0; i<u8.length; i+=CHUNK) {
-      binary += String.fromCharCode.apply(null, u8.subarray(i, i+CHUNK));
-    }
-    return btoa(binary);
+    var bin = ''; var CHUNK = 0x8000;
+    for (var i=0; i<u8.length; i+=CHUNK) bin += String.fromCharCode.apply(null, u8.subarray(i, i+CHUNK));
+    return btoa(bin);
   }
   function base64ToInt16(b64){
     var bin = atob(b64);
@@ -243,11 +263,9 @@
     return f32;
   }
 
-  // ─── 实时模式：启动 WebSocket + 麦克风采集 + 上游播放 ─────────
   async function startLiveMode(){
     var btn = $('agentVoice');
     setLiveStatus('正在请求麦克风...', true);
-
     var stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -259,20 +277,13 @@
       return;
     }
     state.micStream = stream;
-
-    // 输入音频 16kHz；浏览器可能不接受任意采样率，回退到 48000 再降采样
     var AudioCtx = window.AudioContext || window.webkitAudioContext;
-    try { state.audioCtx = new AudioCtx({ sampleRate: 16000 }); }
-    catch(e) { state.audioCtx = new AudioCtx(); }
+    try { state.audioCtx = new AudioCtx({ sampleRate: 16000 }); } catch(e) { state.audioCtx = new AudioCtx(); }
     var srcRate = state.audioCtx.sampleRate;
     var needResample = srcRate !== 16000;
-
-    // 输出音频独立上下文 24kHz
-    try { state.playCtx = new AudioCtx({ sampleRate: 24000 }); }
-    catch(e) { state.playCtx = new AudioCtx(); }
+    try { state.playCtx = new AudioCtx({ sampleRate: 24000 }); } catch(e) { state.playCtx = new AudioCtx(); }
     state.playTime = 0;
 
-    // ── WebSocket 连接 ──
     setLiveStatus('正在连接 Qwen-Omni-Realtime...', true);
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var ws = new WebSocket(wsProto + '//' + location.host + '/api/agent/realtime');
@@ -282,16 +293,12 @@
       setLiveStatus('已连接，请开始说话...', true);
       setStatus('实时对话中');
       if (btn) btn.classList.add('live');
-
-      // 开场打招呼（让 AI 主动说一句）
       try {
         ws.send(JSON.stringify({
           type: 'response.create',
           response: { modalities: ['audio','text'], instructions: '用一句温柔的话开场，问候用户、并询问 ta 想聊谁。' }
         }));
       } catch(e){}
-
-      // 启动麦克风采集
       var source = state.audioCtx.createMediaStreamSource(stream);
       var proc = state.audioCtx.createScriptProcessor(4096, 1, 1);
       proc.onaudioprocess = function(e){
@@ -301,69 +308,38 @@
         if (needResample) {
           var ratio = srcRate / 16000;
           var outLen = Math.floor(input.length / ratio);
-          var resampled = new Float32Array(outLen);
-          for (var j=0; j<outLen; j++) resampled[j] = input[Math.floor(j * ratio)];
-          pcm = floatTo16BitPCM(resampled);
-        } else {
-          pcm = floatTo16BitPCM(input);
-        }
-        var b64 = int16ToBase64(pcm);
-        try {
-          state.ws.send(JSON.stringify({ type:'input_audio_buffer.append', audio: b64 }));
-        } catch(e){}
+          var rs = new Float32Array(outLen);
+          for (var j=0; j<outLen; j++) rs[j] = input[Math.floor(j * ratio)];
+          pcm = floatTo16BitPCM(rs);
+        } else pcm = floatTo16BitPCM(input);
+        try { state.ws.send(JSON.stringify({ type:'input_audio_buffer.append', audio: int16ToBase64(pcm) })); } catch(e){}
       };
       source.connect(proc);
-      proc.connect(state.audioCtx.destination);
+      var mute = state.audioCtx.createGain();
+      mute.gain.value = 0;
+      proc.connect(mute).connect(state.audioCtx.destination);
       state.micNode = source; state.procNode = proc;
-      // 静音回放（接到 destination 必须发声会导致回环；上面 destination 是为了触发处理）
-      // 改用 gain=0 路由：
-      try {
-        proc.disconnect(state.audioCtx.destination);
-        var mute = state.audioCtx.createGain();
-        mute.gain.value = 0;
-        proc.connect(mute).connect(state.audioCtx.destination);
-      } catch(e){}
     };
 
-    ws.onmessage = function(ev){
-      var msg;
-      try { msg = JSON.parse(ev.data); } catch(e){ return; }
-      handleUpstreamEvent(msg);
-    };
-
-    ws.onerror = function(e){
-      console.error('[ws] error', e);
-      setLiveStatus('连接出错', true);
-    };
-
+    ws.onmessage = function(ev){ var m; try { m = JSON.parse(ev.data); } catch(e){ return; } handleUpstreamEvent(m); };
+    ws.onerror = function(e){ console.error('[ws] error', e); setLiveStatus('连接出错', true); };
     ws.onclose = function(){
       cleanupLive();
       setLiveStatus('连接已关闭', false);
       setStatus('在线 · 随时倾听');
       if (btn) btn.classList.remove('live');
-      // 自动切回文字模式
-      if (state.mode === 'live') switchMode('text', /*silent*/ true);
+      if (state.mode === 'live') switchMode('text', true);
     };
   }
 
   function handleUpstreamEvent(msg){
     var t = msg.type || '';
-    // 用户语音 -> 文字
     if (t === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
-      if (!state.liveUserBubble) state.liveUserBubble = appendBubble('user', msg.transcript);
-      else state.liveUserBubble.querySelector('.bubble-text').textContent = msg.transcript;
-      state.liveUserBubble = null;
+      appendBubble('user', msg.transcript);
       return;
     }
-    if (t === 'input_audio_buffer.speech_started') {
-      setLiveStatus('听到你了，正在听...', true);
-      return;
-    }
-    if (t === 'input_audio_buffer.speech_stopped') {
-      setLiveStatus('念念正在思考...', true);
-      return;
-    }
-    // AI 文字流
+    if (t === 'input_audio_buffer.speech_started') { setLiveStatus('听到你了，正在听...', true); return; }
+    if (t === 'input_audio_buffer.speech_stopped') { setLiveStatus('念念正在思考...', true); return; }
     if (t === 'response.audio_transcript.delta' && msg.delta) {
       if (!state.liveAiBubble) { state.liveAiBubble = appendBubble('ai', ''); state.liveAiText = ''; }
       state.liveAiText += msg.delta;
@@ -376,11 +352,10 @@
       state.liveAiBubble = null; state.liveAiText = '';
       return;
     }
-    // AI 音频流 → 立即播放
     if (t === 'response.audio.delta' && msg.delta) {
       try {
-        var int16 = base64ToInt16(msg.delta);
-        var f32 = int16ToFloat32(int16);
+        var i16 = base64ToInt16(msg.delta);
+        var f32 = int16ToFloat32(i16);
         var buf = state.playCtx.createBuffer(1, f32.length, 24000);
         buf.copyToChannel(f32, 0);
         var src = state.playCtx.createBufferSource();
@@ -393,16 +368,10 @@
       setLiveStatus('念念在说话...', true);
       return;
     }
-    if (t === 'response.audio.done') {
-      setLiveStatus('请继续说话...', true);
-      return;
-    }
-    if (t === 'session.created' || t === 'session.updated') {
-      console.log('[ws]', t);
-      return;
-    }
+    if (t === 'response.audio.done') { setLiveStatus('请继续说话...', true); return; }
+    if (t === 'session.created' || t === 'session.updated') { console.log('[ws]', t); return; }
     if (t === 'error') {
-      console.error('[ws] error event', msg);
+      console.error('[ws] error', msg);
       setLiveStatus('上游错误：' + (msg.error && msg.error.message || msg.message || '未知'), true);
     }
   }
@@ -416,40 +385,30 @@
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null;
   }
-
   function stopLiveMode(){
     cleanupLive();
     setLiveStatus('', false);
-    var btn = $('agentVoice');
-    if (btn) btn.classList.remove('live');
+    var btn = $('agentVoice'); if (btn) btn.classList.remove('live');
     setStatus('在线 · 随时倾听');
   }
 
-  // ─── 模式切换 ────────────────────────────────────────────────────
   function switchMode(mode, silent){
     if (state.mode === mode) return;
     var prev = state.mode;
     state.mode = mode;
-    var btnT = $('modeText'), btnL = $('modeLive');
-    if (btnT) btnT.classList.toggle('active', mode === 'text');
-    if (btnL) btnL.classList.toggle('active', mode === 'live');
-
+    var bT = $('modeText'), bL = $('modeLive');
+    if (bT) bT.classList.toggle('active', mode === 'text');
+    if (bL) bL.classList.toggle('active', mode === 'live');
     if (prev === 'live') stopLiveMode();
-    if (state.synth) state.synth.cancel();
-
-    if (mode === 'live') {
-      startLiveMode();
-    } else if (!silent) {
-      setLiveStatus('', false);
-      setStatus('在线 · 随时倾听');
-    }
+    if (prev === 'text' && state.isRecording) stopHoldRecording();
+    if (mode === 'live') startLiveMode();
+    else if (!silent) { setLiveStatus('', false); setStatus('在线 · 随时倾听'); }
   }
 
   // ─── 初始化 ─────────────────────────────────────────────────────
   function init(){
     var inp = $('agentInput');
     if (!inp) return;
-    loadVoices();
 
     $('agentSend').addEventListener('click', function(){
       var t = inp.value.trim();
@@ -460,21 +419,38 @@
     inp.addEventListener('keydown', function(e){
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('agentSend').click(); }
     });
+
     var vBtn = $('agentVoice');
-    if (vBtn) vBtn.addEventListener('click', function(){
-      if (state.mode === 'live') {
-        // 实时模式下点击麦克风按钮 = 退出实时
-        switchMode('text');
-      } else {
-        toggleVoiceInput();
+    if (vBtn) {
+      // 实时模式下点击 = 退出实时
+      vBtn.addEventListener('click', function(e){
+        if (state.mode === 'live') { e.preventDefault(); switchMode('text'); }
+      });
+      // 文字模式下：按住开始 / 松开停止
+      function startHold(e){
+        if (state.mode !== 'text') return;
+        e.preventDefault();
+        startHoldRecording();
       }
-    });
+      function endHold(e){
+        if (state.mode !== 'text') return;
+        if (state.isRecording) { e.preventDefault(); stopHoldRecording(); }
+      }
+      vBtn.addEventListener('mousedown', startHold);
+      vBtn.addEventListener('touchstart', startHold, { passive: false });
+      vBtn.addEventListener('mouseup', endHold);
+      vBtn.addEventListener('mouseleave', endHold);
+      vBtn.addEventListener('touchend', endHold);
+      vBtn.addEventListener('touchcancel', endHold);
+      // 防止拖动选中
+      vBtn.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+    }
 
     var mT = $('modeText'), mL = $('modeLive');
     if (mT) mT.addEventListener('click', function(){ switchMode('text'); });
     if (mL) mL.addEventListener('click', function(){ switchMode('live'); });
 
-    // 文字模式自动问候（实时模式由后端触发开场）
+    // 文字模式自动问候
     if (!state.hasGreeted) {
       state.hasGreeted = true;
       setTimeout(function(){
@@ -483,9 +459,6 @@
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
