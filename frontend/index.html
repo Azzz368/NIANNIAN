@@ -6,8 +6,44 @@
 <title>念念 · 追思影像平台</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/index-hero.css">
+<style>
+  /* 顶部账号条 */
+  .topnav-bar{position:fixed;top:14px;right:18px;z-index:20;display:flex;align-items:center;gap:10px;font-size:.82rem;color:#8a7654}
+  .topnav-bar a,.topnav-bar button{background:rgba(255,255,255,.7);border:1px solid rgba(196,150,74,.25);padding:7px 14px;border-radius:99px;text-decoration:none;color:#8a7654;cursor:pointer;font-size:.82rem;transition:.15s;backdrop-filter:blur(6px)}
+  .topnav-bar a:hover,.topnav-bar button:hover{border-color:#C4964A;color:#C4964A}
+  .topnav-bar .who{padding:0 4px}
+  .topnav-bar .who b{color:#C4964A;font-weight:600}
+  /* 当前对象选择条 */
+  .active-mem-bar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:linear-gradient(90deg,rgba(196,150,74,.07),rgba(232,197,122,.04));border-bottom:1px solid rgba(196,150,74,.14);font-size:.85rem;color:#8a7654}
+  .active-mem-bar select{flex:1;padding:6px 10px;border:1px solid rgba(196,150,74,.2);border-radius:7px;background:#fff;color:#3a2f22;outline:none;font-family:inherit;font-size:.85rem}
+  .active-mem-bar .new-mem{background:none;border:1px dashed rgba(196,150,74,.4);color:#C4964A;padding:5px 12px;border-radius:7px;cursor:pointer;font-size:.78rem}
+  .active-mem-bar .new-mem:hover{background:rgba(196,150,74,.08)}
+  .active-mem-bar .hint{color:#8a7654;opacity:.7;font-size:.78rem}
+  /* 上传按钮 */
+  #agentUpload{background:transparent}
+  /* 上传弹窗 */
+  .upload-modal{position:fixed;inset:0;background:rgba(58,47,34,.45);display:none;align-items:center;justify-content:center;z-index:60}
+  .upload-modal.show{display:flex}
+  .upload-modal-card{background:#fff;border-radius:16px;padding:28px 30px;width:460px;max-width:92vw}
+  .upload-modal-card h3{font-family:"Songti SC",serif;color:#3a2f22;font-size:1.15rem;margin-bottom:6px}
+  .upload-modal-card .sub{color:#8a7654;font-size:.82rem;margin-bottom:18px}
+  .upload-preview{background:#f9f3e6;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:.85rem;color:#3a2f22;display:flex;gap:12px;align-items:center}
+  .upload-preview .ic{font-size:1.6rem}
+  .upload-modal-card textarea{width:100%;border:1px solid rgba(196,150,74,.25);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:.9rem;background:#fdfaf4;outline:none;min-height:80px}
+  .upload-modal-card textarea:focus{border-color:#C4964A;background:#fff}
+  .upload-modal-card .acts{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+  .upload-modal-card button{padding:8px 18px;border-radius:8px;border:1px solid rgba(196,150,74,.4);background:#fff;color:#8a7654;font-size:.88rem;cursor:pointer}
+  .upload-modal-card button.primary{background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;border:none}
+  .upload-modal-card button:disabled{opacity:.6;cursor:wait}
+  /* 资料库变动提示 */
+  .dossier-toast{position:fixed;right:24px;bottom:24px;background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;padding:10px 18px;border-radius:10px;font-size:.82rem;box-shadow:0 8px 24px rgba(196,150,74,.32);opacity:0;transform:translateY(10px);transition:.3s;z-index:50;pointer-events:none}
+  .dossier-toast.show{opacity:1;transform:translateY(0)}
+</style>
 </head>
 <body>
+
+<!-- 顶部账号条（登录后由 JS 渲染） -->
+<div class="topnav-bar" id="topnavBar"></div>
 
 <canvas id="silkCanvas"></canvas>
 
@@ -36,6 +72,13 @@
       </div>
     </div>
 
+    <!-- 当前纪念对象 -->
+    <div class="active-mem-bar" id="activeMemBar" style="display:none">
+      <span class="hint">正在聊</span>
+      <select id="memSelect"></select>
+      <button class="new-mem" id="newMemBtn">+ 新建</button>
+    </div>
+
     <div id="agentMessages"></div>
 
     <div class="live-status" id="liveStatus">
@@ -50,6 +93,12 @@
           <path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/>
         </svg>
       </button>
+      <button class="btn-icon" id="agentUpload" type="button" title="上传文件 · 照片/音频/视频/文档" aria-label="上传">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+        </svg>
+      </button>
+      <input type="file" id="agentFileInput" hidden multiple accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.txt,.md,.csv,.json">
       <input type="text" id="agentInput" placeholder="跟念念说说 Ta 的故事..." autocomplete="off">
       <button class="btn-icon" id="agentSend" type="button" title="发送" aria-label="发送">
         <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
@@ -100,8 +149,39 @@
   </div>
 </section>
 
+<!-- 上传弹窗 -->
+<div class="upload-modal" id="uploadModal">
+  <div class="upload-modal-card">
+    <h3>这是什么？</h3>
+    <div class="sub">告诉念念这个文件是什么、什么时候的、有什么故事 · 念念会自动打标签存进资料库</div>
+    <div class="upload-preview" id="uploadPreview"></div>
+    <textarea id="uploadDesc" placeholder="例如：这是爸爸 2008 年在老家院子里拍的，他最喜欢这件灰呢大衣..."></textarea>
+    <div class="acts">
+      <button id="uploadCancel" type="button">取消</button>
+      <button class="primary" id="uploadConfirm" type="button">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建对象弹窗 -->
+<div class="upload-modal" id="newMemModal">
+  <div class="upload-modal-card">
+    <h3>新建一位想念的人</h3>
+    <div class="sub">念念会为 Ta 单独建立一份档案，跟你聊的每一句都会自动归档</div>
+    <textarea id="newMemName" placeholder="称呼，例如：爸爸 / 张国强 / 外婆" style="min-height:46px"></textarea>
+    <div class="acts">
+      <button id="newMemCancel" type="button">取消</button>
+      <button class="primary" id="newMemConfirm" type="button">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 资料库变动提示 -->
+<div class="dossier-toast" id="dossierToast"></div>
+
 <script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
 <script src="js/silk-bg.js"></script>
+<script src="js/auth.js"></script>
 <script src="js/api.js"></script>
 <script src="js/agent.js"></script>
 

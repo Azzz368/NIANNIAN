@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>登录 · 念念</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:#F4ECDB;min-height:100vh;display:flex;align-items:center;justify-content:center;color:#3a2f22}
+  .card{background:#fff;border-radius:20px;padding:48px 44px;width:420px;max-width:92vw;box-shadow:0 20px 60px rgba(196,150,74,.18);border:1px solid rgba(196,150,74,.16)}
+  h1{font-family:"Cormorant Garamond","Songti SC",serif;font-size:2rem;text-align:center;color:#C4964A;letter-spacing:.1em;margin-bottom:6px}
+  .sub{text-align:center;color:#8a7654;font-size:.85rem;margin-bottom:30px;letter-spacing:.2em}
+  .tabs{display:flex;border-bottom:1px solid rgba(196,150,74,.2);margin-bottom:22px}
+  .tab{flex:1;padding:10px 0;text-align:center;cursor:pointer;color:#8a7654;font-size:.9rem;border-bottom:2px solid transparent;transition:.2s}
+  .tab.active{color:#C4964A;border-bottom-color:#C4964A;font-weight:600}
+  .pane{display:none}
+  .pane.active{display:block}
+  .field{margin-bottom:16px}
+  .field label{display:block;font-size:.78rem;color:#8a7654;margin-bottom:6px;letter-spacing:.1em}
+  .field input{width:100%;padding:12px 14px;border:1px solid rgba(196,150,74,.3);border-radius:10px;font-size:.95rem;background:#fdfaf4;outline:none;transition:.2s}
+  .field input:focus{border-color:#C4964A;background:#fff;box-shadow:0 0 0 3px rgba(196,150,74,.12)}
+  .btn{width:100%;padding:13px;background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;letter-spacing:.1em;cursor:pointer;margin-top:6px;transition:.2s}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(196,150,74,.32)}
+  .btn:disabled{opacity:.6;cursor:wait}
+  .err{color:#c0392b;font-size:.85rem;margin-top:10px;text-align:center;min-height:1.2em}
+  .swap{text-align:center;font-size:.82rem;color:#8a7654;margin-top:14px}
+  .swap a{color:#C4964A;text-decoration:none;cursor:pointer}
+  .hint{font-size:.75rem;color:#8a7654;text-align:center;margin-top:18px;opacity:.7}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>念念</h1>
+    <div class="sub">N I A N · N I A N</div>
+
+    <div class="tabs">
+      <div class="tab active" data-pane="login">登录</div>
+      <div class="tab" data-pane="register">注册</div>
+      <div class="tab" data-pane="code">访问码</div>
+    </div>
+
+    <!-- 登录 -->
+    <div class="pane active" id="paneLogin">
+      <div class="field"><label>邮箱</label><input id="loginEmail" type="email" autocomplete="email"></div>
+      <div class="field"><label>密码</label><input id="loginPwd" type="password" autocomplete="current-password"></div>
+      <button class="btn" id="btnLogin">登 录</button>
+    </div>
+
+    <!-- 注册 -->
+    <div class="pane" id="paneRegister">
+      <div class="field"><label>邮箱</label><input id="regEmail" type="email"></div>
+      <div class="field"><label>昵称（可选）</label><input id="regName" type="text"></div>
+      <div class="field"><label>密码（至少 6 位）</label><input id="regPwd" type="password"></div>
+      <button class="btn" id="btnRegister">创 建 账 号</button>
+    </div>
+
+    <!-- 访问码 -->
+    <div class="pane" id="paneCode">
+      <div class="field"><label>主人访问码</label><input id="codeInput" type="password" placeholder="开启数据写入模式"></div>
+      <button class="btn" id="btnCode">开 启</button>
+      <div class="hint">输入主人码后，所有对话与文件将保存到 data/users/owner/，可通过 git 同步到 GitHub。</div>
+    </div>
+
+    <div class="err" id="err"></div>
+  </div>
+
+<script src="/static/js/auth.js"></script>
+<script>
+  // tab 切换
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
+      document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('active')});
+      t.classList.add('active');
+      document.getElementById('pane'+t.dataset.pane[0].toUpperCase()+t.dataset.pane.slice(1)).classList.add('active');
+      document.getElementById('err').textContent = '';
+    });
+  });
+
+  function showErr(msg){ document.getElementById('err').textContent = msg || ''; }
+  function go(token, user){
+    NianAuth.setToken(token); NianAuth.setUser(user);
+    location.href = '/static/index.html';
+  }
+  async function call(url, body){
+    var btns = document.querySelectorAll('button'); btns.forEach(function(b){b.disabled=true});
+    showErr('');
+    try{
+      var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || ('错误 '+r.status));
+      go(d.token, d.user);
+    } catch(e){ showErr(e.message || '网络错误'); }
+    btns.forEach(function(b){b.disabled=false});
+  }
+
+  document.getElementById('btnLogin').addEventListener('click', function(){
+    call('/api/auth/login', {email:document.getElementById('loginEmail').value, password:document.getElementById('loginPwd').value});
+  });
+  document.getElementById('btnRegister').addEventListener('click', function(){
+    call('/api/auth/register', {
+      email:document.getElementById('regEmail').value,
+      password:document.getElementById('regPwd').value,
+      display_name:document.getElementById('regName').value
+    });
+  });
+  document.getElementById('btnCode').addEventListener('click', function(){
+    call('/api/auth/code', {code:document.getElementById('codeInput').value});
+  });
+
+  // Enter 提交
+  document.querySelectorAll('input').forEach(function(i){
+    i.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') {
+        var pane = document.querySelector('.pane.active');
+        pane.querySelector('button').click();
+      }
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>我的资料库 · 念念</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="css/library.css">
+</head>
+<body>
+<header class="lib-top">
+  <a href="/static/index.html" class="lib-back">← 回到念念</a>
+  <h1>我的资料库</h1>
+  <div class="lib-user" id="libUser"></div>
+</header>
+
+<main class="lib-main">
+  <!-- 左：纪念对象列表 -->
+  <aside class="lib-side">
+    <div class="side-head">
+      <span>纪念对象</span>
+      <button id="btnNew" class="btn-mini">+ 新建</button>
+    </div>
+    <ul id="memList" class="mem-list"></ul>
+  </aside>
+
+  <!-- 右：详情 -->
+  <section class="lib-detail" id="libDetail">
+    <div class="empty" id="emptyHint">从左侧选择一位，或点击「+ 新建」开始整理资料库。</div>
+
+    <div id="detailBody" style="display:none">
+      <div class="detail-head">
+        <div>
+          <h2 id="dName">—</h2>
+          <div class="meta-line">
+            <span id="dRelation"></span>
+            <span class="dot">·</span>
+            <span id="dIntent" class="intent-tag"></span>
+            <span class="dot">·</span>
+            <span id="dUpdated"></span>
+          </div>
+        </div>
+        <div class="head-actions">
+          <button class="btn-mini danger" id="btnDelete">删除</button>
+          <button class="btn-mini primary" id="btnSave">保存修改</button>
+        </div>
+      </div>
+
+      <!-- tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="profile">人物档案</button>
+        <button class="tab" data-tab="memories">记忆与金句</button>
+        <button class="tab" data-tab="assets">素材库</button>
+        <button class="tab" data-tab="conv">对话历史</button>
+        <button class="tab" data-tab="permissions">授权与边界</button>
+      </div>
+
+      <!-- 人物档案 -->
+      <div class="pane active" data-pane="profile">
+        <div class="grid2">
+          <div class="field"><label>姓名 / 称呼</label><input data-bind="subject.name"></div>
+          <div class="field"><label>与你的关系</label><input data-bind="subject.relation"></div>
+          <div class="field"><label>出生</label><input data-bind="subject.birth" placeholder="例如 1948"></div>
+          <div class="field"><label>离开</label><input data-bind="subject.passing" placeholder="例如 2023"></div>
+          <div class="field full"><label>主要生活地</label><input data-bind="subject.locations" placeholder="逗号分隔"></div>
+          <div class="field full"><label>职业 / 身份</label><input data-bind="subject.occupation"></div>
+        </div>
+        <h3>性格与习惯</h3>
+        <div class="grid2">
+          <div class="field"><label>性格关键词</label><input data-bind="personality.keywords" placeholder="温和, 倔强, 沉默..."></div>
+          <div class="field"><label>常做的事/习惯</label><input data-bind="personality.habits" placeholder="逗号分隔"></div>
+          <div class="field full"><label>口头禅 / 常说的话</label><textarea data-bind="personality.catchphrases" placeholder="每行一句"></textarea></div>
+        </div>
+        <h3>外貌与声音</h3>
+        <div class="grid2">
+          <div class="field"><label>外貌特征</label><input data-bind="visual_traits.appearance"></div>
+          <div class="field"><label>穿着风格</label><input data-bind="visual_traits.style"></div>
+          <div class="field"><label>音色</label><input data-bind="voice_traits.timbre"></div>
+          <div class="field"><label>语速 / 口音</label><input data-bind="voice_traits.pace"></div>
+        </div>
+        <h3>产品方向</h3>
+        <div class="field">
+          <label>当前倾向</label>
+          <select data-bind="product_intent.primary">
+            <option value="">未确定</option>
+            <option value="video">追思影像</option>
+            <option value="biography">个人传记</option>
+            <option value="digital_human">实时对话数字人</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 记忆 / 金句 -->
+      <div class="pane" data-pane="memories">
+        <h3>核心记忆</h3>
+        <ul id="memoriesList" class="card-list"></ul>
+        <button class="btn-mini" id="btnAddMem">+ 添加记忆</button>
+
+        <h3 style="margin-top:30px">金句库</h3>
+        <textarea id="quotesArea" placeholder="每行一句 ta 说过的话"></textarea>
+
+        <h3 style="margin-top:30px">代表性物件</h3>
+        <textarea id="objectsArea" placeholder="每行一件物品"></textarea>
+      </div>
+
+      <!-- 素材库 -->
+      <div class="pane" data-pane="assets">
+        <ul id="assetsList" class="asset-list"></ul>
+      </div>
+
+      <!-- 对话历史 -->
+      <div class="pane" data-pane="conv">
+        <div id="convList" class="conv-list"></div>
+      </div>
+
+      <!-- 授权 -->
+      <div class="pane" data-pane="permissions">
+        <div class="perm-row"><span>公开搜索</span><select data-bind="permissions.public_search"><option value="">未确认</option><option value="true">允许</option><option value="false">禁止</option></select></div>
+        <div class="perm-row"><span>声音克隆</span><select data-bind="permissions.voice_clone"><option value="">未确认</option><option value="true">允许</option><option value="false">禁止</option></select></div>
+        <div class="perm-row"><span>数字人</span><select data-bind="permissions.digital_human"><option value="">未确认</option><option value="true">允许</option><option value="false">禁止</option></select></div>
+        <div class="perm-row"><span>图像生成</span><select data-bind="permissions.image_generation"><option value="">未确认</option><option value="true">允许</option><option value="false">禁止</option></select></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- 新建弹窗 -->
+<div class="modal" id="newModal">
+  <div class="modal-card">
+    <h3>新建纪念对象</h3>
+    <div class="field"><label>名字 / 称呼</label><input id="newName" placeholder="例如：爸爸 / 张奶奶"></div>
+    <div class="field"><label>与你的关系</label><input id="newRelation" placeholder="例如：父亲 / 朋友"></div>
+    <div class="field"><label>简短说明（可选）</label><input id="newNote"></div>
+    <div class="modal-actions">
+      <button class="btn-mini" id="newCancel">取消</button>
+      <button class="btn-mini primary" id="newCreate">创建</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/auth.js"></script>
+<script src="/static/js/library.js"></script>
+</body>
+</html>

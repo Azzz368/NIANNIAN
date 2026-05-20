@@ -39,6 +39,14 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
   }
   function scrollBottom(){ var l=$('agentMessages'); if (l) l.scrollTop = l.scrollHeight; }
+
+  function showToast(msg, ms){
+    var t = $('dossierToast'); if (!t) return;
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._tm);
+    t._tm = setTimeout(function(){ t.classList.remove('show'); }, ms || 2800);
+  }
   function setInputLock(lock){
     var inp = $('agentInput'), btn = $('agentSend');
     if (inp) inp.disabled = lock;
@@ -88,10 +96,14 @@
     var fullText = ''; var aiEl = null;
 
     try {
+      var headers = {'Content-Type':'application/json'};
+      var tok = window.NianAuth && window.NianAuth.getToken();
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+      var mid = window.NianAuth && window.NianAuth.getActiveMemorialId();
       var resp = await fetch('/api/agent/chat', {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ message: text, history: state.history.slice(-30) })
+        headers: headers,
+        body: JSON.stringify({ message: text, history: state.history.slice(-30), memorial_id: mid || null })
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var reader = resp.body.getReader();
@@ -405,10 +417,179 @@
     else if (!silent) { setLiveStatus('', false); setStatus('在线 · 随时倾听'); }
   }
 
+  // ─── 顶部账号条 ─────────────────────────────────────────────────
+  function renderTopnav(){
+    var bar = $('topnavBar'); if (!bar) return;
+    var u = window.NianAuth && window.NianAuth.getUser();
+    if (u) {
+      var who = u.display_name || u.email || (u.user_id === 'owner' ? '主理人' : '用户');
+      var ownerTag = u.is_owner ? ' <b>·OWNER</b>' : '';
+      bar.innerHTML =
+        '<span class="who">你好，<b>' + escHtml(who) + '</b>' + ownerTag + '</span>' +
+        '<a href="/static/library.html" title="我的资料库">资料库</a>' +
+        '<button id="logoutBtn" type="button">退出</button>';
+      var lb = $('logoutBtn');
+      if (lb) lb.addEventListener('click', function(){ window.NianAuth.logout(); });
+    } else {
+      bar.innerHTML =
+        '<a href="/static/login.html">登录</a>' +
+        '<a href="/static/login.html#code" style="background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;border:none">访问码</a>';
+    }
+  }
+
+  // ─── 纪念对象选择 ───────────────────────────────────────────────
+  var memorials = [];
+  async function loadMemorials(){
+    if (!window.NianAuth || !window.NianAuth.isAuthed()) return;
+    try {
+      var r = await window.NianAuth.fetch('/api/memorials');
+      if (!r.ok) return;
+      var data = await r.json();
+      memorials = data.memorials || [];
+      var bar = $('activeMemBar'); if (bar) bar.style.display = 'flex';
+      var sel = $('memSelect'); if (!sel) return;
+      sel.innerHTML = '';
+      if (memorials.length === 0) {
+        // 自动创建一个默认对象
+        var m = await createMemorial('Ta');
+        if (m) { memorials = [m]; }
+      }
+      for (var i=0; i<memorials.length; i++) {
+        var m = memorials[i];
+        var opt = document.createElement('option');
+        opt.value = m.memorial_id;
+        opt.textContent = (m.name || '未命名') + (m.relation ? ' · ' + m.relation : '');
+        sel.appendChild(opt);
+      }
+      var cur = window.NianAuth.getActiveMemorialId();
+      if (!cur || !memorials.some(function(x){ return x.memorial_id === cur; })) {
+        cur = memorials[0].memorial_id;
+        window.NianAuth.setActiveMemorialId(cur);
+      }
+      sel.value = cur;
+      sel.addEventListener('change', function(){
+        window.NianAuth.setActiveMemorialId(sel.value);
+        state.history = []; // 切换对象 → 清空上下文
+        $('agentMessages').innerHTML = '';
+        showToast('已切换到 ' + sel.options[sel.selectedIndex].text, 1800);
+        triggerGreet();
+      });
+    } catch(e){ console.warn('[memorials] load', e); }
+  }
+
+  async function createMemorial(name){
+    try {
+      var r = await window.NianAuth.fetch('/api/memorials', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ name: name, relation:'', note:'' })
+      });
+      if (!r.ok) return null;
+      var d = await r.json();
+      return d.memorial;
+    } catch(e){ return null; }
+  }
+
+  // ─── 文件上传 ───────────────────────────────────────────────────
+  var pendingFile = null;
+  function openUploadModal(file){
+    pendingFile = file;
+    var prev = $('uploadPreview');
+    var icon = '📄';
+    if (/^image\//.test(file.type)) icon = '🖼';
+    else if (/^audio\//.test(file.type)) icon = '🎵';
+    else if (/^video\//.test(file.type)) icon = '🎬';
+    var size = (file.size/1024).toFixed(1) + ' KB';
+    if (file.size > 1024*1024) size = (file.size/1024/1024).toFixed(1) + ' MB';
+    prev.innerHTML = '<span class="ic">' + icon + '</span><div><div style="font-weight:600">' + escHtml(file.name) + '</div><div style="color:#8a7654;font-size:.78rem">' + size + '</div></div>';
+    $('uploadDesc').value = '';
+    $('uploadModal').classList.add('show');
+    setTimeout(function(){ $('uploadDesc').focus(); }, 100);
+  }
+  function closeUploadModal(){
+    $('uploadModal').classList.remove('show');
+    pendingFile = null;
+    var fi = $('agentFileInput'); if (fi) fi.value = '';
+  }
+  async function confirmUpload(){
+    if (!pendingFile) return;
+    if (!window.NianAuth || !window.NianAuth.isAuthed()) {
+      alert('请先登录后再上传文件'); closeUploadModal(); return;
+    }
+    var mid = window.NianAuth.getActiveMemorialId();
+    if (!mid) { alert('请先选择或创建一个纪念对象'); return; }
+    var desc = $('uploadDesc').value.trim();
+    var btn = $('uploadConfirm'); btn.disabled = true; btn.textContent = '上传中...';
+    try {
+      var form = new FormData();
+      form.append('file', pendingFile);
+      form.append('description', desc);
+      var r = await window.NianAuth.fetch('/api/memorials/' + mid + '/upload', { method:'POST', body: form });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      var d = await r.json();
+      var asset = d.asset || {};
+      var tags = (asset.tags || []).slice(0,4).join('、');
+      appendBubble('user', '📎 我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
+      appendBubble('ai', '我把这份资料收下了。' + (tags ? '我读到了：' + tags + '。' : '') + ' 这些内容已经存进 Ta 的资料库里了，我们继续聊。');
+      showToast('📎 已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
+      closeUploadModal();
+    } catch(e){
+      console.error(e);
+      alert('上传失败：' + e.message);
+      btn.disabled = false; btn.textContent = '上传';
+    }
+  }
+
+  // ─── 新建纪念对象 ───────────────────────────────────────────────
+  function openNewMemModal(){
+    $('newMemName').value = '';
+    $('newMemModal').classList.add('show');
+    setTimeout(function(){ $('newMemName').focus(); }, 100);
+  }
+  function closeNewMemModal(){ $('newMemModal').classList.remove('show'); }
+  async function confirmNewMem(){
+    var name = $('newMemName').value.trim();
+    if (!name) { alert('请填写称呼'); return; }
+    var btn = $('newMemConfirm'); btn.disabled = true; btn.textContent = '创建中...';
+    try {
+      var m = await createMemorial(name);
+      if (!m) throw new Error('创建失败');
+      memorials.push(m);
+      var sel = $('memSelect');
+      var opt = document.createElement('option');
+      opt.value = m.memorial_id; opt.textContent = m.name;
+      sel.appendChild(opt);
+      sel.value = m.memorial_id;
+      window.NianAuth.setActiveMemorialId(m.memorial_id);
+      state.history = [];
+      $('agentMessages').innerHTML = '';
+      closeNewMemModal();
+      showToast('已建立「' + m.name + '」的档案，开始聊吧', 2400);
+      triggerGreet();
+    } catch(e){
+      alert(e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = '创建';
+    }
+  }
+
+  function triggerGreet(){
+    if (state.mode !== 'text') return;
+    setTimeout(function(){
+      var sel = $('memSelect');
+      var name = (sel && sel.options[sel.selectedIndex]) ? sel.options[sel.selectedIndex].text.split(' · ')[0] : '';
+      var hi = name && name !== 'Ta' ? '你好，我想和你聊聊 ' + name : '你好，我想制作一部追思影像';
+      if (state.mode === 'text') sendMessage(hi);
+    }, 600);
+  }
+
   // ─── 初始化 ─────────────────────────────────────────────────────
   function init(){
     var inp = $('agentInput');
     if (!inp) return;
+
+    renderTopnav();
+    loadMemorials();
 
     $('agentSend').addEventListener('click', function(){
       var t = inp.value.trim();
@@ -445,6 +626,35 @@
       // 防止拖动选中
       vBtn.addEventListener('contextmenu', function(e){ e.preventDefault(); });
     }
+
+    // 上传按钮
+    var uBtn = $('agentUpload'), fInp = $('agentFileInput');
+    if (uBtn && fInp) {
+      uBtn.addEventListener('click', function(){
+        if (!window.NianAuth || !window.NianAuth.isAuthed()) {
+          if (confirm('上传文件需要先登录。是否前往登录？')) location.href = '/static/login.html';
+          return;
+        }
+        fInp.click();
+      });
+      fInp.addEventListener('change', function(){
+        if (fInp.files && fInp.files[0]) openUploadModal(fInp.files[0]);
+      });
+    }
+    var uc = $('uploadCancel'), uok = $('uploadConfirm');
+    if (uc)  uc.addEventListener('click', closeUploadModal);
+    if (uok) uok.addEventListener('click', confirmUpload);
+
+    // 新建对象
+    var nmBtn = $('newMemBtn');
+    if (nmBtn) nmBtn.addEventListener('click', openNewMemModal);
+    var nmC = $('newMemCancel'), nmOK = $('newMemConfirm');
+    if (nmC)  nmC.addEventListener('click', closeNewMemModal);
+    if (nmOK) nmOK.addEventListener('click', confirmNewMem);
+    var nmInput = $('newMemName');
+    if (nmInput) nmInput.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); confirmNewMem(); }
+    });
 
     var mT = $('modeText'), mL = $('modeLive');
     if (mT) mT.addEventListener('click', function(){ switchMode('text'); });
