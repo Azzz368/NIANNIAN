@@ -1,93 +1,58 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>念念 · 追思影像平台</title>
 <link rel="stylesheet" href="css/style.css">
-<style>
-#silkCanvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
-.hero-agent{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px 80px;}
-.hero-title-wrap{text-align:center;margin-bottom:36px;}
-.hero-title-wrap h1{font-family:"Cormorant Garamond",serif;font-size:clamp(2.2rem,5vw,3.4rem);font-weight:400;color:var(--ink);line-height:1.3;}
-.hero-title-wrap h1 em{color:var(--gold-l);font-style:italic;}
-.hero-title-wrap p{font-size:.95rem;color:var(--muted-l);margin-top:10px;line-height:1.8;}
-.agent-chat-card{width:100%;max-width:680px;background:rgba(255,255,255,.72);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(180,155,115,.22);border-radius:22px;box-shadow:0 8px 48px rgba(156,122,69,.13),0 2px 12px rgba(0,0,0,.06);overflow:hidden;display:flex;flex-direction:column;}
-.agent-chat-header{display:flex;align-items:center;gap:12px;padding:14px 20px;background:rgba(255,255,255,.6);border-bottom:1px solid rgba(180,155,115,.15);}
-.agent-chat-header .agent-orb{width:38px;height:38px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,#C4964A,#E8C57A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Cormorant Garamond",serif;font-size:1.1rem;font-weight:600;box-shadow:0 2px 8px rgba(196,150,74,.35);}
-.agent-chat-header .agent-name{font-weight:600;color:var(--ink);font-size:.95rem;}
-.agent-chat-header .agent-status{font-size:.72rem;color:var(--green);display:flex;align-items:center;gap:4px;}
-.agent-chat-header .agent-status::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;}
-.voice-toggle-wrap{display:flex;align-items:center;gap:6px;font-size:.78rem;color:var(--muted-l);}
-.voice-toggle-wrap input[type=checkbox]{accent-color:var(--gold);}
-#agentMessages{flex:1;min-height:320px;max-height:420px;overflow-y:auto;padding:18px 16px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth;}
-#agentMessages::-webkit-scrollbar{width:4px;}
-#agentMessages::-webkit-scrollbar-thumb{background:rgba(156,122,69,.2);border-radius:2px;}
-.msg-row{display:flex;align-items:flex-end;gap:8px;max-width:100%;}
-.msg-user{flex-direction:row-reverse;}
-.msg-ai{flex-direction:row;}
-.msg-avatar .agent-orb{width:32px;height:32px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,#C4964A,#E8C57A);display:flex;align-items:center;justify-content:center;color:#fff;font-family:"Cormorant Garamond",serif;font-size:.85rem;font-weight:600;}
-.bubble{padding:10px 14px;border-radius:18px;max-width:72%;font-size:.9rem;line-height:1.7;word-break:break-word;box-shadow:0 1px 4px rgba(0,0,0,.06);}
-.bubble-ai{background:#fff;border:1px solid rgba(180,155,115,.18);border-bottom-left-radius:4px;color:var(--ink);}
-.bubble-user{background:linear-gradient(135deg,#C4964A,#D4A84A);border-bottom-right-radius:4px;color:#fff;}
-.bubble-think{display:flex;align-items:center;padding:12px 16px;}
-.bubble-think .think-dots{display:flex;gap:5px;}
-.bubble-think .think-dots span{width:7px;height:7px;border-radius:50%;background:var(--gold);opacity:.5;animation:tDot 1.2s ease-in-out infinite;}
-.bubble-think .think-dots span:nth-child(2){animation-delay:.2s;}
-.bubble-think .think-dots span:nth-child(3){animation-delay:.4s;}
-@keyframes tDot{0%,80%,100%{transform:scale(.7);opacity:.3}40%{transform:scale(1);opacity:1}}
-.agent-input-bar{display:flex;align-items:center;gap:8px;padding:12px 16px;background:rgba(255,255,255,.65);border-top:1px solid rgba(180,155,115,.15);}
-.agent-input-bar input[type=text]{flex:1;background:var(--surf2);border:1px solid var(--border);border-radius:999px;padding:9px 16px;font-size:.9rem;font-family:inherit;color:var(--ink);outline:none;transition:border-color .2s;}
-.agent-input-bar input:focus{border-color:var(--gold);}
-.agent-input-bar .btn-icon{width:38px;height:38px;border-radius:50%;flex-shrink:0;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .15s;font-size:1rem;}
-#agentSend{background:linear-gradient(135deg,#C4964A,#D4A84A);color:#fff;}
-#agentSend:hover{transform:scale(1.06);}
-#agentSend:disabled{opacity:.45;transform:none;}
-#agentVoice{background:var(--surf2);border:1px solid var(--border);color:var(--muted-l);}
-#agentVoice:hover{background:var(--surf3);border-color:var(--gold);}
-#agentVoice.recording{background:rgba(193,86,86,.12);border-color:var(--red);color:var(--red);animation:pulseRec 1s ease-in-out infinite;}
-@keyframes pulseRec{0%,100%{box-shadow:0 0 0 0 rgba(193,86,86,.3)}50%{box-shadow:0 0 0 6px rgba(193,86,86,0)}}
-.scroll-hint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:4px;color:rgba(156,122,69,.55);font-size:.72rem;letter-spacing:.08em;animation:bounceY 1.8s ease-in-out infinite;cursor:pointer;z-index:2;}
-.scroll-hint svg{width:22px;height:22px;}
-@keyframes bounceY{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(6px)}}
-.nav-section{position:relative;z-index:1;background:rgba(248,245,240,.95);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:60px 0 80px;border-top:1px solid rgba(180,155,115,.18);}
-</style>
+<link rel="stylesheet" href="css/index-hero.css">
 </head>
-<body style="background:var(--bg);margin:0;padding:0;overflow-x:hidden;">
+<body>
 
 <canvas id="silkCanvas"></canvas>
 
 <section class="hero-agent">
   <div class="hero-title-wrap">
-    <h1>让记忆<br/><em>永远留存</em></h1>
-    <p>和念念聊聊，把对 Ta 的思念轻轻说出来</p>
+    <div class="hero-title-eyebrow">NianNian · Memorial Atelier</div>
+    <h1>让记忆<br><em>永远留存</em></h1>
+    <div class="title-ornament">
+      <span class="line"></span>
+      <span class="diamond"></span>
+      <span class="line"></span>
+    </div>
+    <p class="hero-subtitle">和念念聊聊，把对 Ta 的思念轻轻说出来<br>我们一同将这些温柔的话语，化作可以反复重温的影像</p>
   </div>
 
   <div class="agent-chat-card">
     <div class="agent-chat-header">
       <div class="agent-orb">念</div>
       <div class="agent-info">
-        <div class="agent-name">念念 · 追思影像助手</div>
-        <div class="agent-status">在线 · 随时倾听</div>
+        <div class="agent-name">念念<span class="sep">·</span>追思影像助手</div>
+        <div class="agent-status" id="agentStatus">在线 · 随时倾听</div>
       </div>
-      <label class="voice-toggle-wrap" title="开启后 AI 会朗读回复">
-        <input type="checkbox" id="agentVoiceToggle">
-        <span>朗读</span>
-      </label>
+      <div class="mode-switch" role="tablist" aria-label="对话模式">
+        <button id="modeText" class="active" type="button" title="文字 · 一句一答">文字</button>
+        <button id="modeLive" type="button" title="实时语音 · 边说边听">实时语音</button>
+      </div>
     </div>
 
     <div id="agentMessages"></div>
 
+    <div class="live-status" id="liveStatus">
+      <div class="live-wave"><span></span><span></span><span></span><span></span><span></span></div>
+      <span id="liveStatusText">正在连接 Qwen-Omni-Realtime...</span>
+    </div>
+
     <div class="agent-input-bar">
-      <button class="btn-icon" id="agentVoice" title="语音输入" aria-label="语音输入">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+      <button class="btn-icon" id="agentVoice" type="button" title="语音输入" aria-label="语音输入">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
           <rect x="9" y="2" width="6" height="11" rx="3"/>
           <path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/>
         </svg>
       </button>
       <input type="text" id="agentInput" placeholder="跟念念说说 Ta 的故事..." autocomplete="off">
-      <button class="btn-icon" id="agentSend" title="发送" aria-label="发送">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+      <button class="btn-icon" id="agentSend" type="button" title="发送" aria-label="发送">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
           <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
         </svg>
       </button>
@@ -95,14 +60,14 @@
   </div>
 
   <div class="scroll-hint" onclick="document.getElementById('navSection').scrollIntoView({behavior:'smooth'})">
-    <span>探索更多功能</span>
+    <span>探索更多</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
   </div>
 </section>
 
 <section class="nav-section" id="navSection">
   <div class="container">
-    <div class="topbar" style="margin-bottom:36px;">
+    <div class="topbar" style="margin-bottom:48px;">
       <div class="topbar-logo">
         <div class="topbar-orb">念</div>
         <div>
@@ -131,81 +96,14 @@
       </a>
     </div>
 
-    <div style="text-align:center;margin-top:40px;font-size:.78rem;color:var(--muted-l);line-height:1.8;">
-      技术支持：FastAPI · 302.ai · Alibaba Qwen · Three.js
-    </div>
+    <div class="footer-credit">Powered by FastAPI · 302.ai · Alibaba Qwen-Omni-Realtime · Three.js</div>
   </div>
 </section>
 
+<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
+<script src="js/silk-bg.js"></script>
 <script src="js/api.js"></script>
 <script src="js/agent.js"></script>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
-<script>
-(function(){
-  var canvas = document.getElementById('silkCanvas');
-  var renderer = new THREE.WebGLRenderer({canvas:canvas,antialias:true,alpha:false});
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
-  renderer.setClearColor(0xF8F5F0,1);
-  var scene = new THREE.Scene();
-  var camera = new THREE.OrthographicCamera(-1,1,1,-1,0.1,10);
-  camera.position.z=1;
-  var geo = new THREE.PlaneGeometry(2,2,160,160);
-  var vsh = [
-    'uniform float uTime;',
-    'varying vec2 vUv;',
-    'varying float vWave;',
-    'vec2 hash2(vec2 p){',
-    '  p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3)));',
-    '  return -1.0+2.0*fract(sin(p)*43758.5453);',
-    '}',
-    'float noise(vec2 p){',
-    '  vec2 i=floor(p);vec2 f=fract(p);',
-    '  vec2 u=f*f*(3.0-2.0*f);',
-    '  return mix(mix(dot(hash2(i),f),dot(hash2(i+vec2(1,0)),f-vec2(1,0)),u.x),',
-    '             mix(dot(hash2(i+vec2(0,1)),f-vec2(0,1)),dot(hash2(i+vec2(1,1)),f-vec2(1,1)),u.x),u.y);',
-    '}',
-    'void main(){',
-    '  vUv=uv;',
-    '  vec3 pos=position;',
-    '  float t=uTime*0.28;',
-    '  float w=noise(vec2(pos.x*2.4+t*.6,pos.y*1.8+t*.4))*.055',
-    '         +noise(vec2(pos.x*4.2-t*.35,pos.y*3.1+t*.55))*.025',
-    '         +noise(vec2(pos.x*7.0+t*.8,pos.y*6.0-t*.3))*.01;',
-    '  pos.z+=w; vWave=w;',
-    '  gl_Position=projectionMatrix*modelViewMatrix*vec4(pos,1.0);',
-    '}'
-  ].join('\n');
-  var fsh = [
-    'uniform float uTime;',
-    'varying vec2 vUv;',
-    'varying float vWave;',
-    'void main(){',
-    '  vec3 cream=vec3(0.972,0.961,0.941);',
-    '  vec3 silk=vec3(0.990,0.985,0.970);',
-    '  vec3 goldL=vec3(0.910,0.780,0.490);',
-    '  vec3 gold=vec3(0.769,0.592,0.275);',
-    '  float t=uTime*0.18;',
-    '  float stripe=sin(vUv.y*12.0+vUv.x*3.5+t+vWave*18.0)*.5+.5;',
-    '  float sheen=sin(vUv.x*20.0-t*.7+vWave*25.0)*.5+.5;',
-    '  float diag=sin((vUv.x+vUv.y)*8.0+t*.4)*.5+.5;',
-    '  vec3 col=mix(cream,silk,stripe*.55);',
-    '  col=mix(col,goldL,diag*.08);',
-    '  col=mix(col,gold,sheen*.045);',
-    '  col=mix(col,silk,smoothstep(.7,1.0,sheen)*.25);',
-    '  gl_FragColor=vec4(col,1.0);',
-    '}'
-  ].join('\n');
-  var mat = new THREE.ShaderMaterial({
-    vertexShader:vsh, fragmentShader:fsh,
-    uniforms:{uTime:{value:0}}
-  });
-  scene.add(new THREE.Mesh(geo,mat));
-  function resize(){renderer.setSize(window.innerWidth,window.innerHeight);}
-  resize(); window.addEventListener('resize',resize);
-  function animate(t){requestAnimationFrame(animate);mat.uniforms.uTime.value=t*.001;renderer.render(scene,camera);}
-  animate(0);
-})();
-</script>
 </body>
 </html>
