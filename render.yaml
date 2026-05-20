@@ -18,4 +18,17 @@ services:
         value: gemini-2.5-flash
       - key: PYTHON_VERSION
         value: "3.11"
+      # ─── Stage 1 用户系统 ───
+      - key: JWT_SECRET
+        generateValue: true   # Render 自动生成长随机串，重启不变
+      - key: OWNER_ACCESS_CODE
+        sync: false           # 在控制台手填，默认 NIAN-2026-OWNER
+      - key: NIAN_DATA_DIR
+        value: /var/data      # 配合下面 Disk 的挂载点
     healthCheckPath: /api/health
+    # ─── 持久化磁盘（避免重启丢失用户数据）───
+    # 免费层不支持 Disk，需要升到 Starter($7/月) 或先把 disk 段注释掉
+    disk:
+      name: niannian-data
+      mountPath: /var/data
+      sizeGB: 1

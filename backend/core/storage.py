@@ -23,7 +23,10 @@ _LOCK = threading.RLock()
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 ROOT_DIR = BACKEND_DIR.parent
-DATA_DIR = ROOT_DIR / "data"
+# 数据目录：优先使用 NIAN_DATA_DIR 环境变量（用于 Render Persistent Disk），
+# 否则回退到仓库根目录下的 data/
+_env_dir = os.environ.get("NIAN_DATA_DIR", "").strip()
+DATA_DIR = Path(_env_dir) if _env_dir else (ROOT_DIR / "data")
 USERS_INDEX = DATA_DIR / "users.json"
 
 def _ensure():
