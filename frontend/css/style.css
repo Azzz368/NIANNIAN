@@ -138,7 +138,7 @@ button{font-family:inherit;cursor:pointer;}
 .preview-val{font-size:.9rem;color:var(--ink-m);line-height:1.65;}
 
 /* 上传区 */
-.upload-zone{border:2px dashed var(--border-h);border-radius:14px;padding:24px;text-align:center;color:var(--muted-l);font-size:.88rem;background:var(--surf2);transition:all .2s;}
+.upload-zone{display:block;width:100%;box-sizing:border-box;cursor:pointer;border:2px dashed var(--border-h);border-radius:14px;padding:32px 24px;text-align:center;color:var(--muted-l);font-size:.88rem;background:var(--surf2);transition:all .2s;user-select:none;}
 .upload-zone:hover{background:var(--surf3);border-color:var(--gold);}
 .upload-input{display:none;}
 .upload-list{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
