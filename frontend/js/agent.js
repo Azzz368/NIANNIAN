@@ -309,19 +309,16 @@
     var ws = new WebSocket(wsUrl);
     state.ws = ws;
 
-    // ─── 停止检测 state ─────────────────────────────────────
-    state.hasSpoken = false;           // 当前这一轮里用户是否说过话
-    state.silenceStartedAt = 0;        // 安静起点 ms
-    state.committing = false;          // 防重复提交
-    state.aiSpeaking = false;          // AI 正在说话时不计静音
+    // ─── 停止检测 state（服务端 VAD 已设为 7s 静音，这里只做 UI 渐弱提示 + 关键词快捷提交）─
+    state.committing = false;
     state.fadeActive = false;
+    state.aiSpeaking = false;
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
       if (state.fadeActive) return;
       state.fadeActive = true;
       var el = liveWaveEl(); if (el) el.classList.add('fading');
-      setLiveStatus('听到你在停顿，2 秒后将自动发送…', true);
     }
     function clearFade(){
       state.fadeActive = false;
@@ -329,15 +326,12 @@
     }
     function commitTurn(reason){
       if (state.committing) return;
-      if (!state.hasSpoken) { clearFade(); return; }
       state.committing = true;
       clearFade();
       setLiveStatus('已提交（' + reason + '），念念正在思考...', true);
       try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
       try { ws.send(JSON.stringify({ type: 'response.create', response: { modalities: ['audio','text'] } })); } catch(e){}
-      state.hasSpoken = false;
-      state.silenceStartedAt = 0;
-      setTimeout(function(){ state.committing = false; }, 1000);
+      setTimeout(function(){ state.committing = false; }, 1500);
     }
     state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
 
@@ -362,25 +356,6 @@
       proc.onaudioprocess = function(e){
         if (!state.ws || state.ws.readyState !== 1) return;
         var input = e.inputBuffer.getChannelData(0);
-
-        // RMS 用于客户端静音检测
-        var sum = 0;
-        for (var k=0; k<input.length; k++) sum += input[k]*input[k];
-        var rms = Math.sqrt(sum / input.length);
-        var now = Date.now();
-        if (!state.aiSpeaking) {
-          if (rms > 0.015) {
-            state.hasSpoken = true;
-            state.silenceStartedAt = 0;
-            if (state.fadeActive) clearFade();
-          } else if (state.hasSpoken) {
-            if (!state.silenceStartedAt) state.silenceStartedAt = now;
-            var sil = now - state.silenceStartedAt;
-            if (sil > 5000 && !state.fadeActive) startFade();
-            if (sil > 7000) commitTurn('静音 7 秒');
-          }
-        }
-
         var pcm;
         if (needResample) {
           var ratio = srcRate / 16000;
@@ -419,9 +394,25 @@
       }
       return;
     }
-    // 服务端 VAD 已关闭，这两个事件正常不会再来；保留兼容
-    if (t === 'input_audio_buffer.speech_started') { setLiveStatus('听到你了，正在听...', true); return; }
-    if (t === 'input_audio_buffer.speech_stopped') { setLiveStatus('念念正在思考...', true); return; }
+    // 服务端 VAD：用户开始/停止说话 → 同步 UI 渐弱动画
+    if (t === 'input_audio_buffer.speech_started') {
+      state.aiSpeaking = false;
+      if (typeof clearFade === 'function') {} // no-op
+      var el1 = document.querySelector('.live-wave'); if (el1) el1.classList.remove('fading');
+      setLiveStatus('听到你了，慢慢说…', true);
+      return;
+    }
+    if (t === 'input_audio_buffer.speech_stopped') {
+      // 服务端检测到停顿，正在等 7 秒确认。给用户视觉反馈：音浪渐弱
+      var el2 = document.querySelector('.live-wave'); if (el2) el2.classList.add('fading');
+      setLiveStatus('正在等你继续…（再停顿几秒就会发送）', true);
+      return;
+    }
+    if (t === 'input_audio_buffer.committed') {
+      var el3 = document.querySelector('.live-wave'); if (el3) el3.classList.remove('fading');
+      setLiveStatus('念念正在思考...', true);
+      return;
+    }
     if (t === 'response.audio_transcript.delta' && msg.delta) {
       if (!state.liveAiBubble) { state.liveAiBubble = appendBubble('ai', ''); state.liveAiText = ''; }
       state.liveAiText += msg.delta;
@@ -453,9 +444,7 @@
     }
     if (t === 'response.audio.done') {
       state.aiSpeaking = false;
-      state.hasSpoken = false;
-      state.silenceStartedAt = 0;
-      setLiveStatus('请继续说话…（说完后说「我说完了」或暂停 7 秒）', true);
+      setLiveStatus('请继续说话…（说完后说「我说完了」或停顿 7 秒即可）', true);
       return;
     }
     if (t === 'session.created' || t === 'session.updated') { console.log('[ws]', t); return; }

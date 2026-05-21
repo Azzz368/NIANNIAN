@@ -25,8 +25,8 @@ BASE_INSTRUCTIONS = (
     "语气克制、有分寸，像贴心的倾听者。每次回复控制在 80 字以内，"
     "主动追问一个具体细节。使用中文。"
     "\n\n【非常重要】"
-    "用户每段话结束才会发给你（前端会用『我说完了』或 7 秒静音才提交），"
-    "所以请不要打断用户。如果用户只是简短确认（嗯、好、对），不要长篇大论。"
+    "用户可能慢慢说，中间会有停顿（最长 7 秒），请耐心等待 ta 说完整段再回复，不要打断。"
+    "如果用户只是简短确认（嗯、好、对），不要长篇大论。"
     "永远不要重复自我介绍。如果上下文已经在聊某个人，直接接着聊，"
     "**不要再问『今天想聊谁』或者『你是谁』**。"
 )
@@ -163,7 +163,14 @@ async def realtime_proxy(client_ws: WebSocket):
                     "input_audio_sample_rate": 16000,
                     "output_audio_sample_rate": 24000,
                     "input_audio_transcription": {"model": "paraformer-realtime-v2"},
-                    "turn_detection": None,
+                    # 保留服务端 VAD，但把"算作说完"的静音从默认 600ms 拉长到 7000ms
+                    # 这样人正常的停顿/换气不会被切断；客户端"我说完了"关键词作为快捷提交
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 300,
+                        "silence_duration_ms": 7000,
+                    },
                 },
             }
             await upstream.send(json.dumps(session_cfg, ensure_ascii=False))
