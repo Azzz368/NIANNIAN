@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>声音工坊 · 念念</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="css/library.css">
+<link rel="stylesheet" href="css/voice_studio.css">
+</head>
+<body>
+
+<a class="back-btn" href="/static/library.html" title="返回资料库">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+  返回资料库
+</a>
+
+<main class="vs-wrap">
+  <header class="vs-header">
+    <div class="vs-hero-icon">🎙</div>
+    <div>
+      <h1>声音工坊</h1>
+      <div class="sub" id="vsSubTitle">为 Ta 克隆一份永远不会消失的声音</div>
+    </div>
+    <select id="vsMemSelect" class="vs-mem-select" title="切换纪念对象"></select>
+  </header>
+
+  <!-- 状态条 -->
+  <div class="vs-status-bar" id="vsStatusBar">
+    <div class="vs-status-dot" id="vsStatusDot"></div>
+    <div class="vs-status-text" id="vsStatusText">读取中...</div>
+    <div class="vs-status-actions">
+      <button id="vsResetBtn" type="button" class="vs-btn-ghost" title="清空当前克隆">重置</button>
+    </div>
+  </div>
+
+  <div class="vs-grid">
+
+    <!-- 左：声音样本 -->
+    <section class="vs-card">
+      <div class="vs-card-head">
+        <h2>① 声音样本</h2>
+        <span class="vs-help">建议：10-30 秒 · 安静环境 · 单人清晰说话</span>
+      </div>
+      <div class="vs-samples" id="vsSamples"></div>
+      <div class="vs-upload-line">
+        <input type="file" id="vsFileInput" accept="audio/*" hidden>
+        <button class="vs-btn-ghost" id="vsUploadBtn" type="button">+ 上传新的声音样本</button>
+        <span class="vs-hint">上传后会自动归档到资料库 · 也可在聊天页用 ⬆ 上传</span>
+      </div>
+    </section>
+
+    <!-- 右：参数调整 -->
+    <section class="vs-card">
+      <div class="vs-card-head"><h2>② 克隆与音色参数</h2></div>
+
+      <div class="vs-param">
+        <label>未克隆时的预制音色 <span class="vs-pval" id="vsBaseLabel">龙小淳</span></label>
+        <select id="vsBaseVoice"></select>
+      </div>
+
+      <div class="vs-param">
+        <label>语速 <span class="vs-pval" id="vsSpeedVal">1.0</span></label>
+        <input type="range" id="vsSpeed" min="0.5" max="2" step="0.05" value="1">
+      </div>
+
+      <div class="vs-param">
+        <label>音调 <span class="vs-pval" id="vsPitchVal">±0</span> 半音</label>
+        <input type="range" id="vsPitch" min="-12" max="12" step="1" value="0">
+      </div>
+
+      <div class="vs-param">
+        <label>音量 <span class="vs-pval" id="vsVolVal">1.0</span></label>
+        <input type="range" id="vsVol" min="0.3" max="2" step="0.1" value="1">
+      </div>
+
+      <div class="vs-param">
+        <label>情绪基调</label>
+        <div class="vs-chip-group" id="vsEmotion">
+          <button data-v="neutral" class="active">日常</button>
+          <button data-v="warm">温暖</button>
+          <button data-v="gentle">轻柔</button>
+          <button data-v="serious">沉稳</button>
+        </div>
+      </div>
+
+      <div class="vs-actions">
+        <button class="vs-btn-primary" id="vsCloneBtn" type="button">🎯 开始克隆</button>
+        <button class="vs-btn-ghost" id="vsSaveParamsBtn" type="button">保存参数</button>
+      </div>
+    </section>
+
+    <!-- 下：试听 -->
+    <section class="vs-card vs-card-wide">
+      <div class="vs-card-head">
+        <h2>③ 试听</h2>
+        <div class="vs-toggle">
+          <label><input type="radio" name="vsMode" value="clone" checked> 使用克隆音色</label>
+          <label><input type="radio" name="vsMode" value="base"> 使用预制音色</label>
+        </div>
+      </div>
+      <textarea id="vsPreviewText" placeholder="输入想让 Ta 念的一段话..."></textarea>
+      <div class="vs-actions">
+        <button class="vs-btn-primary" id="vsPreviewBtn" type="button">▶ 合成并试听</button>
+        <audio id="vsAudioPlayer" controls></audio>
+      </div>
+      <div class="vs-preview-hint" id="vsPreviewHint">提示：克隆完成后，这里会用 Ta 的声音念出文本。</div>
+    </section>
+
+    <!-- 历史 -->
+    <section class="vs-card vs-card-wide">
+      <div class="vs-card-head"><h2>克隆历史</h2></div>
+      <div class="vs-history" id="vsHistory"></div>
+    </section>
+
+  </div>
+</main>
+
+<div class="dossier-toast" id="vsToast"></div>
+
+<script src="js/auth.js"></script>
+<script src="js/voice_studio.js"></script>
+</body>
+</html>

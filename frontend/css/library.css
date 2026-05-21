@@ -84,3 +84,14 @@ textarea{width:100%;padding:10px 12px;border:1px solid rgba(196,150,74,.25);bord
 .modal-card{background:#fff;border-radius:16px;padding:30px 32px;width:420px;max-width:92vw}
 .modal-card h3{color:#3a2f22;font-size:1.2rem;letter-spacing:.05em;margin-bottom:18px}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+
+/* 声音工坊入口卡片 */
+.voice-studio-card{display:flex;align-items:center;gap:16px;padding:18px 22px;margin-bottom:18px;background:linear-gradient(135deg,rgba(196,150,74,.10),rgba(232,197,122,.06));border:1px solid rgba(196,150,74,.28);border-radius:14px;text-decoration:none;color:#3a2f22;transition:.2s;cursor:pointer}
+.voice-studio-card:hover{transform:translateY(-2px);box-shadow:0 10px 26px rgba(196,150,74,.22);border-color:#C4964A}
+.voice-studio-card .vs-icon{font-size:2.2rem;width:54px;height:54px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:50%;box-shadow:0 4px 12px rgba(196,150,74,.18)}
+.voice-studio-card .vs-body{flex:1;min-width:0}
+.voice-studio-card .vs-title{font-size:1rem;font-weight:600;color:#C4964A;font-family:"Songti SC",serif;letter-spacing:.05em;margin-bottom:4px}
+.voice-studio-card .vs-sub{font-size:.78rem;color:#8a7654;line-height:1.55}
+.voice-studio-card .vs-meta{font-size:.72rem;color:#a08762;margin-top:6px;letter-spacing:.05em}
+.voice-studio-card .vs-arrow{font-size:1.4rem;color:#C4964A;opacity:.6;transition:.2s}
+.voice-studio-card:hover .vs-arrow{opacity:1;transform:translateX(4px)}

@@ -1,0 +1,103 @@
+/* voice_studio.css — 声音工坊 */
+*{box-sizing:border-box}
+body{margin:0;font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:linear-gradient(180deg,#F8F0DC 0%,#F4ECDB 100%);color:#3a2f22;min-height:100vh;padding-bottom:60px}
+
+.back-btn{position:fixed;top:20px;left:24px;z-index:30;display:flex;align-items:center;gap:6px;padding:8px 16px;background:rgba(255,255,255,.7);border:1px solid rgba(196,150,74,.25);border-radius:99px;color:#8a7654;text-decoration:none;font-size:.85rem;cursor:pointer;backdrop-filter:blur(6px);transition:.2s}
+.back-btn:hover{border-color:#C4964A;color:#C4964A;transform:translateX(-2px)}
+.back-btn svg{width:14px;height:14px}
+
+.vs-wrap{max-width:1100px;margin:0 auto;padding:80px 30px 0}
+
+.vs-header{display:flex;align-items:center;gap:18px;margin-bottom:24px}
+.vs-hero-icon{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#C4964A,#E8C57A);display:flex;align-items:center;justify-content:center;font-size:2rem;box-shadow:0 8px 22px rgba(196,150,74,.32)}
+.vs-header h1{font-family:"Cormorant Garamond","Songti SC",serif;font-size:2rem;color:#C4964A;margin:0;letter-spacing:.08em}
+.vs-header .sub{color:#8a7654;font-size:.88rem;margin-top:4px}
+.vs-mem-select{margin-left:auto;padding:8px 14px;border:1px solid rgba(196,150,74,.3);border-radius:10px;background:#fff;color:#3a2f22;font-family:inherit;font-size:.88rem;outline:none;min-width:220px}
+
+/* 状态条 */
+.vs-status-bar{display:flex;align-items:center;gap:12px;padding:14px 20px;background:#fff;border:1px solid rgba(196,150,74,.18);border-radius:12px;margin-bottom:22px;font-size:.88rem;box-shadow:0 4px 14px rgba(196,150,74,.06)}
+.vs-status-dot{width:10px;height:10px;border-radius:50%;background:#cbb288;flex-shrink:0}
+.vs-status-dot.ready{background:#62B280;box-shadow:0 0 0 4px rgba(98,178,128,.18)}
+.vs-status-dot.cloning{background:#E8C57A;animation:pulse 1.2s infinite;box-shadow:0 0 0 4px rgba(232,197,122,.25)}
+.vs-status-dot.mock{background:#D89A6F;box-shadow:0 0 0 4px rgba(216,154,111,.18)}
+.vs-status-dot.failed{background:#c0392b}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.15)}}
+.vs-status-text{flex:1;color:#3a2f22;font-weight:500}
+.vs-status-actions{display:flex;gap:8px}
+
+/* 网格 */
+.vs-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.vs-card{background:#fff;border:1px solid rgba(196,150,74,.16);border-radius:14px;padding:22px 24px;box-shadow:0 6px 18px rgba(196,150,74,.07)}
+.vs-card-wide{grid-column:1/-1}
+.vs-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px}
+.vs-card-head h2{font-family:"Songti SC",serif;font-size:1.05rem;color:#C4964A;margin:0;letter-spacing:.06em;font-weight:600}
+.vs-help{font-size:.75rem;color:#a08762}
+
+/* 样本卡片 */
+.vs-samples{display:flex;flex-direction:column;gap:10px;min-height:80px}
+.vs-sample{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid rgba(196,150,74,.18);border-radius:10px;background:#fdfaf4;cursor:pointer;transition:.18s}
+.vs-sample:hover{border-color:#C4964A;background:#fff}
+.vs-sample.selected{border-color:#C4964A;background:linear-gradient(135deg,rgba(196,150,74,.10),rgba(232,197,122,.04));box-shadow:0 0 0 2px rgba(196,150,74,.18)}
+.vs-sample .chk{width:18px;height:18px;border:2px solid rgba(196,150,74,.4);border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#fff;font-size:.7rem;color:#fff;transition:.15s}
+.vs-sample.selected .chk{background:#C4964A;border-color:#C4964A}
+.vs-sample .chk:before{content:'✓'}
+.vs-sample:not(.selected) .chk:before{content:''}
+.vs-sample audio{flex:1;height:30px;max-width:240px}
+.vs-sample .info{flex:1;min-width:0}
+.vs-sample .name{font-size:.88rem;color:#3a2f22;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vs-sample .desc{font-size:.72rem;color:#8a7654;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vs-empty{padding:24px;text-align:center;color:#8a7654;font-size:.85rem;border:1px dashed rgba(196,150,74,.3);border-radius:10px}
+
+.vs-upload-line{display:flex;align-items:center;gap:14px;margin-top:14px;flex-wrap:wrap}
+.vs-hint{font-size:.72rem;color:#a08762}
+
+/* 参数 */
+.vs-param{margin-bottom:18px}
+.vs-param label{display:block;font-size:.82rem;color:#8a7654;margin-bottom:8px;letter-spacing:.05em}
+.vs-param .vs-pval{color:#C4964A;font-weight:600;margin-left:6px;font-family:"SF Mono",Consolas,monospace;font-size:.85rem}
+.vs-param input[type=range]{width:100%;accent-color:#C4964A;height:6px}
+.vs-param select{width:100%;padding:9px 12px;border:1px solid rgba(196,150,74,.28);border-radius:8px;background:#fdfaf4;color:#3a2f22;font-family:inherit;font-size:.88rem;outline:none}
+.vs-param select:focus{border-color:#C4964A;background:#fff}
+
+.vs-chip-group{display:flex;gap:8px;flex-wrap:wrap}
+.vs-chip-group button{padding:7px 16px;border:1px solid rgba(196,150,74,.3);border-radius:99px;background:#fff;color:#8a7654;cursor:pointer;font-size:.82rem;font-family:inherit;transition:.15s}
+.vs-chip-group button:hover{border-color:#C4964A;color:#C4964A}
+.vs-chip-group button.active{background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;border-color:transparent}
+
+/* 操作按钮 */
+.vs-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.vs-btn-primary{padding:11px 22px;background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;border:none;border-radius:10px;font-size:.92rem;font-weight:600;letter-spacing:.05em;cursor:pointer;font-family:inherit;transition:.2s;box-shadow:0 4px 14px rgba(196,150,74,.28)}
+.vs-btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(196,150,74,.36)}
+.vs-btn-primary:disabled{opacity:.55;cursor:wait;transform:none}
+.vs-btn-ghost{padding:10px 18px;background:#fff;color:#8a7654;border:1px solid rgba(196,150,74,.3);border-radius:10px;font-size:.85rem;cursor:pointer;font-family:inherit;transition:.15s}
+.vs-btn-ghost:hover{border-color:#C4964A;color:#C4964A}
+
+/* 试听 */
+.vs-toggle{display:flex;gap:18px;font-size:.82rem;color:#8a7654}
+.vs-toggle label{display:flex;align-items:center;gap:6px;cursor:pointer}
+.vs-toggle input{accent-color:#C4964A}
+#vsPreviewText{width:100%;min-height:90px;padding:14px;border:1px solid rgba(196,150,74,.25);border-radius:10px;background:#fdfaf4;font-family:inherit;font-size:.92rem;color:#3a2f22;resize:vertical;outline:none;line-height:1.6}
+#vsPreviewText:focus{border-color:#C4964A;background:#fff}
+#vsAudioPlayer{flex:1;height:42px;min-width:200px;max-width:520px;border-radius:10px}
+.vs-preview-hint{margin-top:10px;font-size:.78rem;color:#a08762}
+
+/* 历史 */
+.vs-history{display:flex;flex-direction:column;gap:8px}
+.vs-history-empty{padding:20px;color:#8a7654;text-align:center;font-size:.85rem}
+.vs-hist-row{display:flex;align-items:center;gap:14px;padding:10px 14px;background:#fdfaf4;border-radius:8px;font-size:.82rem}
+.vs-hist-row .ts{color:#a08762;font-family:"SF Mono",Consolas,monospace;font-size:.78rem}
+.vs-hist-row .vid{flex:1;color:#3a2f22;font-family:"SF Mono",Consolas,monospace;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vs-hist-row .badge{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600}
+.vs-hist-row .badge.dashscope{background:#dfeede;color:#3d7a4e}
+.vs-hist-row .badge.mock{background:#f4e3c8;color:#a07530}
+
+/* Toast */
+.dossier-toast{position:fixed;right:24px;bottom:24px;background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;padding:11px 20px;border-radius:10px;font-size:.84rem;box-shadow:0 8px 24px rgba(196,150,74,.32);opacity:0;transform:translateY(10px);transition:.3s;z-index:50;pointer-events:none}
+.dossier-toast.show{opacity:1;transform:translateY(0)}
+
+@media (max-width: 820px){
+  .vs-grid{grid-template-columns:1fr}
+  .vs-wrap{padding:80px 16px 0}
+  .vs-header{flex-wrap:wrap}
+  .vs-mem-select{margin-left:0;width:100%}
+}

@@ -134,6 +134,14 @@
 
   // ── 素材 ──
   function renderAssets(){
+    // 声音工坊入口：附带当前 memorial_id，并展示统计
+    var entry = $('voiceStudioEntry');
+    if (entry && state.currentId) {
+      entry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(state.currentId);
+      var audioCount = (state.assets || []).filter(function(a){ return a.kind === 'audio'; }).length;
+      var voiceMeta = $('voiceStudioMeta');
+      if (voiceMeta) voiceMeta.textContent = audioCount + ' 个音频样本 · 点击进入工坊管理克隆';
+    }
     var ul = $('assetsList'); ul.innerHTML = '';
     if (!state.assets.length) {
       ul.innerHTML = '<li style="grid-column:1/-1;color:#8a7654;padding:30px;text-align:center">还没有素材。在聊天页上传后，文件会出现在这里。</li>';
