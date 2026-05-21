@@ -1,61 +1,147 @@
 # backend/routers/agent_realtime.py — 念念 · Qwen-Omni-Realtime WebSocket 代理
-# 浏览器 <-> 本服务 <-> wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime
-#
-# 协议参考：阿里云 Realtime audio and video understanding 文档
-# - 浏览器推 PCM16 16kHz mono base64，事件: input_audio_buffer.append
-# - 服务端回 PCM16 24kHz mono base64，事件: response.audio.delta
-# - 文字流：response.audio_transcript.delta
-
+# v2: 注入 dossier+对话记忆, 关闭服务端 VAD, 断开时持久化对话+提取档案
 import os
 import json
 import asyncio
+from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 try:
     import websockets
-    from websockets.asyncio.client import connect as ws_connect  # websockets >= 12
-except Exception:  # pragma: no cover
+    from websockets.asyncio.client import connect as ws_connect
+except Exception:
     websockets = None
     ws_connect = None
+
+from core import security, storage
 
 router = APIRouter(prefix="/agent", tags=["agent-realtime"])
 
 UPSTREAM_URL = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
 
-NIANNIAN_INSTRUCTIONS = (
+BASE_INSTRUCTIONS = (
     "你是『念念』，一个温柔、细腻、有同理心的追思影像创作助手。"
     "用温暖的对话引导用户讲述思念之人的故事、性格、人生经历；"
     "语气克制、有分寸，像贴心的倾听者。每次回复控制在 80 字以内，"
     "主动追问一个具体细节。使用中文。"
+    "\n\n【非常重要】"
+    "用户每段话结束才会发给你（前端会用『我说完了』或 7 秒静音才提交），"
+    "所以请不要打断用户。如果用户只是简短确认（嗯、好、对），不要长篇大论。"
+    "永远不要重复自我介绍。如果上下文已经在聊某个人，直接接着聊，"
+    "**不要再问『今天想聊谁』或者『你是谁』**。"
 )
+
+
+def _build_context_brief(user_id: str, memorial_id: str) -> str:
+    lines = []
+    try:
+        d = storage.get_dossier(user_id, memorial_id) or {}
+        subj = d.get("subject") or {}
+        if subj.get("name") or subj.get("relation"):
+            lines.append(f"【正在聊的对象】{subj.get('name','')}（{subj.get('relation','')}）")
+        if subj.get("birth") or subj.get("passing"):
+            lines.append(f"  · {subj.get('birth','')} ~ {subj.get('passing','')}")
+        pers = (d.get("personality") or {}).get("keywords") or []
+        if pers:
+            lines.append(f"【性格关键词】{','.join(pers[:8])}")
+        mems = d.get("memories") or []
+        if mems:
+            lines.append("【已记录的记忆片段】")
+            for m in mems[-3:]:
+                t = m.get("title") or ""
+                c = (m.get("content") or "")[:40]
+                lines.append(f"  · {t}：{c}")
+        quotes = d.get("quotes") or []
+        if quotes:
+            lines.append(f"【金句】{' / '.join(quotes[:3])}")
+        pi = (d.get("product_intent") or {}).get("primary")
+        if pi:
+            lines.append(f"【用户产品倾向】{pi}")
+    except Exception:
+        pass
+    try:
+        convs = storage.read_conversations(user_id, memorial_id, limit=8) or []
+        if convs:
+            lines.append("【最近的对话（请基于此继续）】")
+            for c in convs:
+                role = "用户" if c.get("role") == "user" else "念念"
+                txt = (c.get("content") or "").strip().replace("\n", " ")
+                if len(txt) > 80:
+                    txt = txt[:80] + "..."
+                lines.append(f"  {role}：{txt}")
+    except Exception:
+        pass
+    if not lines:
+        return ""
+    return ("\n\n【对话记忆 · 必读】\n" + "\n".join(lines) +
+            "\n\n请基于以上记忆继续这段对话，不要从头开始问。")
+
+
+def _persist_realtime_turns(user_id: str, memorial_id: str, turns: list):
+    if not turns:
+        return
+    try:
+        storage.append_conversation(user_id, memorial_id, turns)
+    except Exception as e:
+        print("[realtime persist] failed:", e)
+    try:
+        from .agent import _persist_and_extract
+        last_user, last_ai = "", ""
+        for t in turns:
+            if t.get("role") == "user":
+                last_user = t.get("content", "")
+            elif t.get("role") == "assistant":
+                last_ai = t.get("content", "")
+        if last_user and last_ai:
+            _persist_and_extract(user_id, memorial_id, last_user, last_ai)
+    except Exception as e:
+        print("[realtime extract] failed:", e)
 
 
 @router.websocket("/realtime")
 async def realtime_proxy(client_ws: WebSocket):
-    """
-    浏览器 <-> 本端点 <-> 阿里云 Qwen Realtime
-    双向透传 JSON 事件；连接建立后由服务端先发送 session.update 配置念念人格。
-    """
     await client_ws.accept()
+    qp = client_ws.query_params
+    mid = (qp.get("mid") or "").strip()
+    token = (qp.get("token") or "").strip()
+
+    user: Optional[dict] = None
+    if token:
+        try:
+            payload = security.decode_token(token)
+            if payload and payload.get("user_id"):
+                user = {"user_id": payload["user_id"]}
+        except Exception:
+            user = None
+
+    can_persist = False
+    if user and mid:
+        try:
+            if storage.get_memorial(user["user_id"], mid):
+                can_persist = True
+        except Exception:
+            pass
 
     api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
     if not api_key:
-        await client_ws.send_json({
-            "type": "error",
-            "message": "服务端未配置 DASHSCOPE_API_KEY，无法启用实时语音。"
-        })
+        await client_ws.send_json({"type": "error", "message": "服务端未配置 DASHSCOPE_API_KEY"})
         await client_ws.close()
         return
-
     if ws_connect is None:
-        await client_ws.send_json({
-            "type": "error",
-            "message": "服务端缺少 websockets 库，请安装：pip install websockets>=12"
-        })
+        await client_ws.send_json({"type": "error", "message": "服务端缺少 websockets 库"})
         await client_ws.close()
         return
 
     headers = [("Authorization", f"Bearer {api_key}")]
+    instructions = BASE_INSTRUCTIONS
+    if can_persist and user:
+        ctx = _build_context_brief(user["user_id"], mid)
+        if ctx:
+            instructions += ctx
+
+    turns: list = []
+    cur_user = {"text": ""}
+    cur_ai = {"text": ""}
 
     try:
         async with ws_connect(
@@ -65,30 +151,23 @@ async def realtime_proxy(client_ws: WebSocket):
             ping_interval=20,
             ping_timeout=30,
         ) as upstream:
-            # ── 1. 推送 session 配置 ─────────────────────────────────
             session_cfg = {
                 "event_id": "evt_nn_session_init",
                 "type": "session.update",
                 "session": {
                     "modalities": ["text", "audio"],
-                    "voice": "Serena",                # 温柔女声，适合追思
-                    "instructions": NIANNIAN_INSTRUCTIONS,
+                    "voice": "Serena",
+                    "instructions": instructions,
                     "input_audio_format": "pcm16",
                     "output_audio_format": "pcm16",
                     "input_audio_sample_rate": 16000,
                     "output_audio_sample_rate": 24000,
                     "input_audio_transcription": {"model": "paraformer-realtime-v2"},
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 600,
-                    },
+                    "turn_detection": None,
                 },
             }
             await upstream.send(json.dumps(session_cfg, ensure_ascii=False))
 
-            # ── 2. 双向透传 ─────────────────────────────────────────
             async def client_to_upstream():
                 try:
                     while True:
@@ -101,21 +180,39 @@ async def realtime_proxy(client_ws: WebSocket):
 
             async def upstream_to_client():
                 try:
-                    async for msg in upstream:
-                        if isinstance(msg, (bytes, bytearray, memoryview)):
-                            msg = bytes(msg).decode("utf-8", errors="ignore")
-                        await client_ws.send_text(str(msg))
+                    async for raw in upstream:
+                        if isinstance(raw, (bytes, bytearray, memoryview)):
+                            raw = bytes(raw).decode("utf-8", errors="ignore")
+                        text = str(raw)
+                        try:
+                            evt = json.loads(text)
+                            t = evt.get("type", "")
+                            if t == "conversation.item.input_audio_transcription.completed":
+                                u = (evt.get("transcript") or "").strip()
+                                if u:
+                                    cur_user["text"] = u
+                            elif t == "response.audio_transcript.delta":
+                                d = evt.get("delta") or ""
+                                cur_ai["text"] += d
+                            elif t == "response.audio_transcript.done":
+                                ai = cur_ai["text"].strip()
+                                if cur_user["text"] or ai:
+                                    if cur_user["text"]:
+                                        turns.append({"role": "user", "content": cur_user["text"]})
+                                    if ai:
+                                        turns.append({"role": "assistant", "content": ai})
+                                cur_user["text"] = ""
+                                cur_ai["text"] = ""
+                        except Exception:
+                            pass
+                        await client_ws.send_text(text)
                 except Exception as e:
                     print(f"[realtime] u2c closed: {e}")
 
-            tasks = [
-                asyncio.create_task(client_to_upstream()),
-                asyncio.create_task(upstream_to_client()),
-            ]
+            tasks = [asyncio.create_task(client_to_upstream()), asyncio.create_task(upstream_to_client())]
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for t in pending:
                 t.cancel()
-
     except Exception as e:
         try:
             await client_ws.send_json({"type": "error", "message": f"上游连接失败: {e}"})
@@ -126,3 +223,9 @@ async def realtime_proxy(client_ws: WebSocket):
         await client_ws.close()
     except Exception:
         pass
+
+    if can_persist and turns and user:
+        try:
+            _persist_realtime_turns(user["user_id"], mid, turns)
+        except Exception as e:
+            print("[realtime] persist failed:", e)

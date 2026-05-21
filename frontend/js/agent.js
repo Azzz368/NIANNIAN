@@ -298,24 +298,89 @@
 
     setLiveStatus('正在连接 Qwen-Omni-Realtime...', true);
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var ws = new WebSocket(wsProto + '//' + location.host + '/api/agent/realtime');
+    var qs = [];
+    try {
+      var mid = (window.NianAuth && NianAuth.getActiveMemorialId && NianAuth.getActiveMemorialId()) || '';
+      var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
+      if (mid) qs.push('mid=' + encodeURIComponent(mid));
+      if (tok) qs.push('token=' + encodeURIComponent(tok));
+    } catch(e){}
+    var wsUrl = wsProto + '//' + location.host + '/api/agent/realtime' + (qs.length ? '?' + qs.join('&') : '');
+    var ws = new WebSocket(wsUrl);
     state.ws = ws;
 
+    // ─── 停止检测 state ─────────────────────────────────────
+    state.hasSpoken = false;           // 当前这一轮里用户是否说过话
+    state.silenceStartedAt = 0;        // 安静起点 ms
+    state.committing = false;          // 防重复提交
+    state.aiSpeaking = false;          // AI 正在说话时不计静音
+    state.fadeActive = false;
+
+    function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
+    function startFade(){
+      if (state.fadeActive) return;
+      state.fadeActive = true;
+      var el = liveWaveEl(); if (el) el.classList.add('fading');
+      setLiveStatus('听到你在停顿，2 秒后将自动发送…', true);
+    }
+    function clearFade(){
+      state.fadeActive = false;
+      var el = liveWaveEl(); if (el) el.classList.remove('fading');
+    }
+    function commitTurn(reason){
+      if (state.committing) return;
+      if (!state.hasSpoken) { clearFade(); return; }
+      state.committing = true;
+      clearFade();
+      setLiveStatus('已提交（' + reason + '），念念正在思考...', true);
+      try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
+      try { ws.send(JSON.stringify({ type: 'response.create', response: { modalities: ['audio','text'] } })); } catch(e){}
+      state.hasSpoken = false;
+      state.silenceStartedAt = 0;
+      setTimeout(function(){ state.committing = false; }, 1000);
+    }
+    state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
+
     ws.onopen = function(){
-      setLiveStatus('已连接，请开始说话...', true);
+      setLiveStatus('已连接，请开始说话…', true);
       setStatus('实时对话中');
       if (btn) btn.classList.add('live');
-      try {
-        ws.send(JSON.stringify({
-          type: 'response.create',
-          response: { modalities: ['audio','text'], instructions: '用一句温柔的话开场，问候用户、并询问 ta 想聊谁。' }
-        }));
-      } catch(e){}
+
+      // 仅当本次会话历史为空时才主动问候；之后重连不再重复自我介绍
+      var firstTime = !state.history || state.history.length === 0;
+      if (firstTime) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'response.create',
+            response: { modalities: ['audio','text'], instructions: '用一句温柔的话开场，问候用户，邀请 ta 慢慢说。不要自我介绍是谁。' }
+          }));
+        } catch(e){}
+      }
+
       var source = state.audioCtx.createMediaStreamSource(stream);
       var proc = state.audioCtx.createScriptProcessor(4096, 1, 1);
       proc.onaudioprocess = function(e){
         if (!state.ws || state.ws.readyState !== 1) return;
         var input = e.inputBuffer.getChannelData(0);
+
+        // RMS 用于客户端静音检测
+        var sum = 0;
+        for (var k=0; k<input.length; k++) sum += input[k]*input[k];
+        var rms = Math.sqrt(sum / input.length);
+        var now = Date.now();
+        if (!state.aiSpeaking) {
+          if (rms > 0.015) {
+            state.hasSpoken = true;
+            state.silenceStartedAt = 0;
+            if (state.fadeActive) clearFade();
+          } else if (state.hasSpoken) {
+            if (!state.silenceStartedAt) state.silenceStartedAt = now;
+            var sil = now - state.silenceStartedAt;
+            if (sil > 5000 && !state.fadeActive) startFade();
+            if (sil > 7000) commitTurn('静音 7 秒');
+          }
+        }
+
         var pcm;
         if (needResample) {
           var ratio = srcRate / 16000;
@@ -348,8 +413,13 @@
     var t = msg.type || '';
     if (t === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
       appendBubble('user', msg.transcript);
+      // 关键词触发立即提交（防止用户说完了但还没到 7 秒）
+      if (/我说完了|说完了|讲完了|over|done/i.test(msg.transcript)) {
+        try { state._commitTurn && state._commitTurn('关键词「我说完了」'); } catch(e){}
+      }
       return;
     }
+    // 服务端 VAD 已关闭，这两个事件正常不会再来；保留兼容
     if (t === 'input_audio_buffer.speech_started') { setLiveStatus('听到你了，正在听...', true); return; }
     if (t === 'input_audio_buffer.speech_stopped') { setLiveStatus('念念正在思考...', true); return; }
     if (t === 'response.audio_transcript.delta' && msg.delta) {
@@ -365,6 +435,7 @@
       return;
     }
     if (t === 'response.audio.delta' && msg.delta) {
+      state.aiSpeaking = true;
       try {
         var i16 = base64ToInt16(msg.delta);
         var f32 = int16ToFloat32(i16);
@@ -380,7 +451,13 @@
       setLiveStatus('念念在说话...', true);
       return;
     }
-    if (t === 'response.audio.done') { setLiveStatus('请继续说话...', true); return; }
+    if (t === 'response.audio.done') {
+      state.aiSpeaking = false;
+      state.hasSpoken = false;
+      state.silenceStartedAt = 0;
+      setLiveStatus('请继续说话…（说完后说「我说完了」或暂停 7 秒）', true);
+      return;
+    }
     if (t === 'session.created' || t === 'session.updated') { console.log('[ws]', t); return; }
     if (t === 'error') {
       console.error('[ws] error', msg);
