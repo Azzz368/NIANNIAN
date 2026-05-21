@@ -145,7 +145,9 @@ def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_use
         public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
         if not public_base:
             raise RuntimeError("PUBLIC_BASE_URL 未配置，无法将样本提交给 DashScope，已切换 mock")
-        sample_url = f"{public_base}/api/memorials/{mid}/assets/{sample_asset['asset_id']}/raw"
+        from .uploads import make_asset_sig
+        sig = make_asset_sig(mid, sample_asset["asset_id"])
+        sample_url = f"{public_base}/api/memorials/{mid}/assets/{sample_asset['asset_id']}/raw?sig={sig}"
         svc = VoiceEnrollmentService()
         prefix = f"nian{mid[:6]}"
         target_model = "cosyvoice-v1"
@@ -205,20 +207,34 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
         import dashscope  # type: ignore
         from dashscope.audio.tts_v2 import SpeechSynthesizer  # type: ignore
         dashscope.api_key = api_key
-        synth = SpeechSynthesizer(
-            model="cosyvoice-v1",
-            voice=voice,
-            speech_rate=float(params.get("speed", 1.0)),
-            pitch_rate=float(params.get("pitch", 0)) / 12.0,  # 半音→比率近似
-            volume=int(50 * float(params.get("volume", 1.0))),
-        )
-        audio = synth.call(text)
-        if not audio:
-            raise RuntimeError("合成返回空")
-        return StreamingResponse(io.BytesIO(audio), media_type="audio/mpeg")
+        # 注意：新版 dashscope SDK 不再支持 __init__ 传 speech_rate/pitch_rate
+        # 这些参数得在 call() 时通过 SSML 或者额外参数传；这里先用基础调用确保稳定
+        synth = SpeechSynthesizer(model="cosyvoice-v1", voice=voice)
+        result = synth.call(text)
+        # 兼容多种返回：bytes / Result 对象 / dict
+        audio_bytes = None
+        if isinstance(result, (bytes, bytearray)):
+            audio_bytes = bytes(result)
+        elif hasattr(result, "get_audio_data"):
+            audio_bytes = result.get_audio_data()
+        elif hasattr(result, "output"):
+            out = getattr(result, "output")
+            if isinstance(out, (bytes, bytearray)):
+                audio_bytes = bytes(out)
+            elif isinstance(out, dict) and "audio" in out:
+                audio_bytes = out["audio"]
+        if not audio_bytes:
+            # 把 result 打印出来便于排查
+            print(f"[voice.preview] unexpected result type={type(result)}, value={str(result)[:200]}")
+            raise RuntimeError(f"合成返回为空（type={type(result).__name__}）")
+        return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
     except ImportError:
         raise HTTPException(500, "服务端未安装 dashscope SDK：pip install dashscope")
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        print("[voice.preview] failed:", traceback.format_exc())
         raise HTTPException(500, f"合成失败：{e}")
 
 

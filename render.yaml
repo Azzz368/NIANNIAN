@@ -39,6 +39,10 @@ services:
         sync: false
       - key: OSS_PREFIX
         value: nian/
+      # ─── 声音克隆：DashScope 需要公网 URL 拉样本 ───
+      # 填你的 Render 公网域名，例如 https://niannian-memorial.onrender.com
+      - key: PUBLIC_BASE_URL
+        sync: false
     healthCheckPath: /api/health
     # ─── 持久化磁盘（避免重启丢失用户数据）───
     # 免费层不支持 Disk，需要升到 Starter($7/月) 或先把 disk 段注释掉

@@ -104,13 +104,16 @@
     state.audios.forEach(function(a){
       var row = document.createElement('div');
       row.className = 'vs-sample' + (state.selected.has(a.asset_id) ? ' selected' : '');
+      // 音频 URL 必须带 token，因为 <audio> 不会发 Authorization header
+      var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
+      var audioUrl = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
       row.innerHTML =
         '<div class="chk"></div>' +
         '<div class="info">' +
           '<div class="name">' + esc(a.filename || a.asset_id) + '</div>' +
           '<div class="desc">' + esc(a.description || a.summary || '未填描述') + '</div>' +
         '</div>' +
-        '<audio src="' + a.url + '" controls preload="none"></audio>';
+        '<audio src="' + audioUrl + '" controls preload="metadata"></audio>';
       row.addEventListener('click', function(e){
         if (e.target.tagName === 'AUDIO' || e.target.closest('audio')) return;
         if (state.selected.has(a.asset_id)) state.selected.delete(a.asset_id);
