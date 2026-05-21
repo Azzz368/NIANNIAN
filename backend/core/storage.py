@@ -205,6 +205,8 @@ def default_dossier(name: str = "", relation: str = "") -> dict:
             "confidence": 0.0,
             "evidence": [],
         },
+        "memory_brief": "",           # 由 qwen-plus 周期性生成的 200 字精炼记忆（供语音/文字 agent 注入）
+        "memory_brief_updated_at": "",
         "updated_at": now_iso(),
     }
 

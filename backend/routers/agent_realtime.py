@@ -14,6 +14,7 @@ except Exception:
     ws_connect = None
 
 from core import security, storage
+from core import memory as memory_mod
 
 router = APIRouter(prefix="/agent", tags=["agent-realtime"])
 
@@ -34,6 +35,14 @@ BASE_INSTRUCTIONS = (
 
 def _build_context_brief(user_id: str, memorial_id: str) -> str:
     lines = []
+    # 0) 长期记忆 brief（qwen-plus 精炼，优先级最高）
+    try:
+        brief = memory_mod.get_memory_brief(user_id, memorial_id)
+        if brief:
+            lines.append("【长期记忆 · 必读】")
+            lines.append(brief)
+    except Exception:
+        pass
     try:
         d = storage.get_dossier(user_id, memorial_id) or {}
         subj = d.get("subject") or {}
@@ -60,6 +69,7 @@ def _build_context_brief(user_id: str, memorial_id: str) -> str:
     except Exception:
         pass
     try:
+        # 短期记忆：最近 4 轮（≈8 条）
         convs = storage.read_conversations(user_id, memorial_id, limit=8) or []
         if convs:
             lines.append("【最近的对话（请基于此继续）】")
@@ -74,7 +84,7 @@ def _build_context_brief(user_id: str, memorial_id: str) -> str:
     if not lines:
         return ""
     return ("\n\n【对话记忆 · 必读】\n" + "\n".join(lines) +
-            "\n\n请基于以上记忆继续这段对话，不要从头开始问。")
+            "\n\n请基于以上记忆继续这段对话，不要从头开始问，不要重复自我介绍。")
 
 
 def _persist_realtime_turns(user_id: str, memorial_id: str, turns: list):
@@ -94,6 +104,12 @@ def _persist_realtime_turns(user_id: str, memorial_id: str, turns: list):
                 last_ai = t.get("content", "")
         if last_user and last_ai:
             _persist_and_extract(user_id, memorial_id, last_user, last_ai)
+        # 关键词 / 每 4 轮触发长期记忆刷新
+        if last_user:
+            try:
+                memory_mod.maybe_refresh(user_id, memorial_id, last_user)
+            except Exception as e:
+                print("[realtime memory] failed:", e)
     except Exception as e:
         print("[realtime extract] failed:", e)
 

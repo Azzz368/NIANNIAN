@@ -76,3 +76,24 @@ def merge_dossier(mid: str, req: DossierReplaceReq, user = Depends(security.get_
 @router.get("/{mid}/conversations")
 def get_conv(mid: str, limit: int = 200, user = Depends(security.get_current_user)):
     return {"conversations": storage.read_conversations(user["user_id"], mid, limit=limit)}
+
+
+# --- 长期记忆 brief（qwen-plus 精炼，供 agent 注入）---
+from core import memory as _memory_mod
+
+@router.get("/{mid}/memory")
+def get_memory(mid: str, user = Depends(security.get_current_user)):
+    d = storage.get_dossier(user["user_id"], mid) or {}
+    return {
+        "brief": d.get("memory_brief", ""),
+        "updated_at": d.get("memory_brief_updated_at", ""),
+    }
+
+@router.post("/{mid}/memory/refresh")
+def refresh_memory(mid: str, user = Depends(security.get_current_user)):
+    if not storage.get_memorial(user["user_id"], mid):
+        raise HTTPException(404, "未找到")
+    b = _memory_mod.refresh_memory_brief(user["user_id"], mid, force=True)
+    if not b:
+        raise HTTPException(500, "记忆生成失败（可能缺少 DASHSCOPE_API_KEY 或对话太短）")
+    return {"brief": b}

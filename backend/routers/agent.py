@@ -8,6 +8,7 @@ from typing import List, Optional
 from openai import OpenAI
 
 from core import security, storage
+from core import memory as memory_mod
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -116,6 +117,12 @@ product_intent.primary 只能是 "video" / "biography" / "digital_human" / "" �
     except Exception as e:
         print("[extract] failed:", e)
 
+    # 提取完顺便看看要不要刷新长期记忆 brief（关键词触发 / 每 4 轮）
+    try:
+        memory_mod.maybe_refresh(user_id, memorial_id, user_msg)
+    except Exception as e:
+        print("[memory hook] failed:", e)
+
 
 def _drop_empty(d):
     """递归剔除空 list / 空 dict / 空字符串。"""
@@ -140,6 +147,12 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
     # 注入当前 dossier 概要，让 agent 知道已收集到什么
     if user and req.memorial_id:
         try:
+            # 1) 长期记忆 brief（最重要，优先注入）
+            brief = memory_mod.get_memory_brief(user["user_id"], req.memorial_id)
+            if brief:
+                messages.append({"role": "system", "content":
+                    "【长期记忆 · 必读】\n" + brief +
+                    "\n\n请基于这段记忆继续对话，不要重复问『你想聊谁』或自我介绍。"})
             d = storage.get_dossier(user["user_id"], req.memorial_id)
             ctx_lines = []
             subj = d.get("subject", {})
