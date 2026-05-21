@@ -18,6 +18,7 @@ data/
 import os, json, uuid, time, threading
 from pathlib import Path
 from typing import Any
+from . import oss_sync
 
 _LOCK = threading.RLock()
 
@@ -28,6 +29,9 @@ ROOT_DIR = BACKEND_DIR.parent
 _env_dir = os.environ.get("NIAN_DATA_DIR", "").strip()
 DATA_DIR = Path(_env_dir) if _env_dir else (ROOT_DIR / "data")
 USERS_INDEX = DATA_DIR / "users.json"
+
+# 通知 OSS 镜像模块本地数据根，便于计算 OSS key
+oss_sync.init(DATA_DIR)
 
 def _ensure():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,6 +50,15 @@ def _read_json(p: Path, default: Any) -> Any:
 def _write_json(p: Path, data: Any):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 双写到 OSS（异步、best-effort）
+    oss_sync.push_path(p)
+
+
+def save_binary(p: Path, content: bytes):
+    """保存二进制文件（用户上传的资产等）+ 同步推送到 OSS。"""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(content)
+    oss_sync.push_path(p)
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -166,6 +179,7 @@ def delete_memorial(user_id: str, memorial_id: str) -> bool:
         return False
     with _LOCK:
         shutil.rmtree(md, ignore_errors=True)
+        oss_sync.delete_path(md)
     return True
 
 # ─── Dossier（资料库） ────────────────────────────────────────────
@@ -251,6 +265,7 @@ def append_conversation(user_id: str, memorial_id: str, turns: list[dict]):
                 rec = dict(t)
                 rec.setdefault("ts", now_iso())
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    oss_sync.push_path(p)
 
 def read_conversations(user_id: str, memorial_id: str, limit: int = 200) -> list[dict]:
     p = memorial_dir(user_id, memorial_id) / "conversations.jsonl"

@@ -25,6 +25,20 @@ services:
         sync: false           # 在控制台手填，默认 NIAN-2026-OWNER
       - key: NIAN_DATA_DIR
         value: /var/data      # 配合下面 Disk 的挂载点
+      # ─── 阿里云 OSS 持久化（推荐：彻底解决 Render 重启丢数据）───
+      # 详见 OSS_SETUP.md。设为 1 启用；不填则继续用本地 Disk
+      - key: OSS_ENABLE
+        sync: false
+      - key: OSS_ACCESS_KEY_ID
+        sync: false
+      - key: OSS_ACCESS_KEY_SECRET
+        sync: false
+      - key: OSS_BUCKET
+        sync: false
+      - key: OSS_ENDPOINT
+        sync: false
+      - key: OSS_PREFIX
+        value: nian/
     healthCheckPath: /api/health
     # ─── 持久化磁盘（避免重启丢失用户数据）───
     # 免费层不支持 Disk，需要升到 Starter($7/月) 或先把 disk 段注释掉

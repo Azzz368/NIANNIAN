@@ -16,12 +16,25 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice
+from core import oss_sync, storage as _storage  # noqa: F401
 
 app = FastAPI(
     title="念念 NianNian Memorial API",
     version="0.1.0",
     description="念念追思影像平台 — 后端 API（FastAPI），与 Streamlit 共享业务层",
 )
+
+# 启动：如启用 OSS，则从 OSS 镜像拉回本地（容器重启/扩容不丢数据）
+@app.on_event("startup")
+def _nian_bootstrap():
+    try:
+        if oss_sync.enabled():
+            print("[oss] enabled, bootstrap pulling from OSS...")
+            oss_sync.bootstrap_pull()
+        else:
+            print("[oss] disabled (using local filesystem only)")
+    except Exception as e:
+        print(f"[oss] bootstrap failed: {e}")
 
 # CORS（开发阶段全开，生产收紧）
 app.add_middleware(

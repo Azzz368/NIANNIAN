@@ -86,7 +86,7 @@ async def upload(
     save_name = f"{aid}.{ext}"
     save_path = storage.memorial_dir(uid, mid) / "assets" / save_name
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    save_path.write_bytes(raw)
+    storage.save_binary(save_path, raw)
 
     tag_info = _auto_tag(file.filename or "", kind, description)
 

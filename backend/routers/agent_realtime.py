@@ -109,8 +109,9 @@ async def realtime_proxy(client_ws: WebSocket):
     if token:
         try:
             payload = security.decode_token(token)
-            if payload and payload.get("user_id"):
-                user = {"user_id": payload["user_id"]}
+            uid = payload.get("sub") or payload.get("user_id")
+            if payload and uid:
+                user = {"user_id": uid}
         except Exception:
             user = None
 
