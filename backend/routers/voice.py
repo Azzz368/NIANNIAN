@@ -109,7 +109,10 @@ class CloneReq(BaseModel):
 
 @router.post("/{mid}/voice/clone")
 def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_user)):
-    """触发声音克隆。优先调用 DashScope CosyVoice 自训；不可用时落回 mock。"""
+    """触发声音克隆。
+    优先走 Qwen-TTS 路径：把音频 base64 直传给 DashScope（不需要公网 URL）。
+    如失败则回落 CosyVoice（需 PUBLIC_BASE_URL）；再失败走 mock。
+    """
     if not storage.get_memorial(user["user_id"], mid):
         raise HTTPException(404, "纪念对象不存在")
     audios = _list_audio_assets(user["user_id"], mid)
@@ -124,48 +127,78 @@ def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_use
     cfg["error"] = ""
     _save_voice_cfg(user["user_id"], mid, cfg)
 
-    # 真实克隆（DashScope）—— 需要 dashscope SDK + 音频可公网访问
-    # 若环境没有 dashscope SDK，则走 mock：生成一个本地 voice_id 标记
+    api_key = os.getenv("DASHSCOPE_API_KEY", "")
+    sample_asset = next(a for a in audios if a["asset_id"] == samples[0])
+    sample_path = storage.memorial_dir(user["user_id"], mid) / "assets" / sample_asset.get("stored_name", "")
+
     voice_id = ""
     provider = ""
+    target_model = ""
     err = ""
-    try:
-        import dashscope  # type: ignore
-        from dashscope.audio.tts_v2 import VoiceEnrollmentService  # type: ignore
-        api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        if not api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY 未配置")
-        dashscope.api_key = api_key
-        # 取第一个样本（CosyVoice clone 一次只用一个样本，10-30s 效果最佳）
-        sample_asset = next(a for a in audios if a["asset_id"] == samples[0])
-        sample_path = storage.memorial_dir(user["user_id"], mid) / "assets" / sample_asset.get("stored_name", "")
-        if not sample_path.exists():
-            raise RuntimeError("样本文件不存在")
-        # DashScope 要求公网 URL；这里假设有 PUBLIC_BASE_URL 环境变量；否则报错回 mock
-        public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-        if not public_base:
-            raise RuntimeError("PUBLIC_BASE_URL 未配置，无法将样本提交给 DashScope，已切换 mock")
-        from .uploads import make_asset_sig
-        sig = make_asset_sig(mid, sample_asset["asset_id"])
-        sample_url = f"{public_base}/api/memorials/{mid}/assets/{sample_asset['asset_id']}/raw?sig={sig}"
-        svc = VoiceEnrollmentService()
-        prefix = f"nian{mid[:6]}"
-        target_model = "cosyvoice-v1"
-        voice_id = svc.create_voice(target_model=target_model, prefix=prefix, url=sample_url)
-        provider = "dashscope"
-    except ImportError:
-        # mock 模式
-        voice_id = f"mock_vc_{mid[:6]}_{int(time.time())}"
-        provider = "mock"
-    except Exception as e:
-        err = str(e)
-        # 失败也给 mock，让前端流程继续
+
+    if not api_key:
+        err = "DASHSCOPE_API_KEY 未配置"
+    elif not sample_path.exists():
+        err = f"样本文件不存在：{sample_path.name}"
+    else:
+        # ─── 路径 A：Qwen-TTS（base64 直传，不需要公网 URL） ───
+        try:
+            import base64, requests
+            mime = sample_asset.get("mime", "audio/mpeg") or "audio/mpeg"
+            b64 = base64.b64encode(sample_path.read_bytes()).decode()
+            data_uri = f"data:{mime};base64,{b64}"
+            target_model = "qwen3-tts-vc-2026-01-22"
+            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
+            payload = {
+                "model": "qwen-voice-enrollment",
+                "input": {
+                    "action": "create",
+                    "target_model": target_model,
+                    "preferred_name": f"nian{mid[:6]}",
+                    "audio": {"data": data_uri},
+                },
+            }
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            resp = requests.post(url, json=payload, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                raise RuntimeError(f"Qwen-TTS HTTP {resp.status_code}: {resp.text[:300]}")
+            data = resp.json()
+            voice_id = (data.get("output") or {}).get("voice") or ""
+            if not voice_id:
+                raise RuntimeError(f"Qwen-TTS 返回无 voice: {str(data)[:300]}")
+            provider = "qwen_tts"
+            print(f"[voice.clone] qwen_tts OK voice_id={voice_id}")
+        except Exception as e_qwen:
+            print(f"[voice.clone] qwen_tts failed: {e_qwen}")
+            # ─── 路径 B：CosyVoice（公网 URL）兜底 ───
+            try:
+                import dashscope  # type: ignore
+                from dashscope.audio.tts_v2 import VoiceEnrollmentService  # type: ignore
+                dashscope.api_key = api_key
+                public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+                if not public_base:
+                    raise RuntimeError(f"CosyVoice 需要 PUBLIC_BASE_URL；Qwen-TTS 失败原因：{e_qwen}")
+                from .uploads import make_asset_sig
+                sig = make_asset_sig(mid, sample_asset["asset_id"])
+                sample_url = f"{public_base}/api/memorials/{mid}/assets/{sample_asset['asset_id']}/raw?sig={sig}"
+                svc = VoiceEnrollmentService()
+                target_model = "cosyvoice-v1"
+                voice_id = svc.create_voice(target_model=target_model, prefix=f"nian{mid[:6]}", url=sample_url)
+                provider = "dashscope"
+                print(f"[voice.clone] cosyvoice OK voice_id={voice_id}")
+            except Exception as e_cosy:
+                err = f"Qwen-TTS 失败:{e_qwen} | CosyVoice 失败:{e_cosy}"
+                print(f"[voice.clone] both failed: {err}")
+
+    if not voice_id:
+        # mock 兜底，不让前端流程卡死
         voice_id = f"mock_vc_{mid[:6]}_{int(time.time())}"
         provider = "mock"
 
     cfg["voice_id"] = voice_id
     cfg["provider"] = provider
-    cfg["status"] = "ready" if provider == "dashscope" else "mock"
+    cfg["target_model"] = target_model
+    cfg["status"] = "ready" if provider in ("qwen_tts", "dashscope") else "mock"
     cfg["last_clone_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     cfg["error"] = err
     cfg["history"] = (cfg.get("history") or [])[-9:] + [{
@@ -174,6 +207,7 @@ def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_use
         "sample_count": len(samples),
         "note": req.note,
         "provider": provider,
+        "target_model": target_model,
     }]
     _save_voice_cfg(user["user_id"], mid, cfg)
     return {"ok": True, "voice": cfg}
@@ -196,22 +230,39 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
 
     cfg = _get_voice_cfg(user["user_id"], mid)
     params = cfg["params"]
-    voice = cfg["voice_id"] if (req.use_clone and cfg.get("voice_id") and cfg.get("provider") == "dashscope") else params.get("base_voice", "longxiaochun")
-
     api_key = os.getenv("DASHSCOPE_API_KEY", "")
     if not api_key:
         raise HTTPException(500, "DASHSCOPE_API_KEY 未配置，无法合成")
 
-    # 调用 DashScope CosyVoice
+    provider = cfg.get("provider", "")
+    voice_id = cfg.get("voice_id", "")
+    target_model = cfg.get("target_model", "")
+    use_clone = req.use_clone and voice_id and provider in ("qwen_tts", "dashscope")
+
     try:
+        # ─── Qwen-TTS 合成 ───
+        if use_clone and provider == "qwen_tts":
+            import dashscope, base64  # type: ignore
+            dashscope.api_key = api_key
+            model = target_model or "qwen3-tts-vc-2026-01-22"
+            resp = dashscope.MultiModalConversation.call(
+                model=model, api_key=api_key, text=text, voice=voice_id, stream=False
+            )
+            # 解析 audio
+            audio_bytes = _extract_audio_from_qwen_resp(resp)
+            if not audio_bytes:
+                print(f"[voice.preview] qwen resp dump: {str(resp)[:500]}")
+                raise RuntimeError("Qwen-TTS 返回无音频")
+            return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+
+        # ─── CosyVoice 合成（克隆或预制） ───
         import dashscope  # type: ignore
         from dashscope.audio.tts_v2 import SpeechSynthesizer  # type: ignore
         dashscope.api_key = api_key
-        # 注意：新版 dashscope SDK 不再支持 __init__ 传 speech_rate/pitch_rate
-        # 这些参数得在 call() 时通过 SSML 或者额外参数传；这里先用基础调用确保稳定
-        synth = SpeechSynthesizer(model="cosyvoice-v1", voice=voice)
+        cosy_voice = voice_id if (use_clone and provider == "dashscope") else params.get("base_voice", "longxiaochun")
+        cosy_model = target_model if (use_clone and provider == "dashscope") else "cosyvoice-v1"
+        synth = SpeechSynthesizer(model=cosy_model, voice=cosy_voice)
         result = synth.call(text)
-        # 兼容多种返回：bytes / Result 对象 / dict
         audio_bytes = None
         if isinstance(result, (bytes, bytearray)):
             audio_bytes = bytes(result)
@@ -224,9 +275,8 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
             elif isinstance(out, dict) and "audio" in out:
                 audio_bytes = out["audio"]
         if not audio_bytes:
-            # 把 result 打印出来便于排查
-            print(f"[voice.preview] unexpected result type={type(result)}, value={str(result)[:200]}")
-            raise RuntimeError(f"合成返回为空（type={type(result).__name__}）")
+            print(f"[voice.preview] cosy result type={type(result)}, value={str(result)[:200]}")
+            raise RuntimeError(f"CosyVoice 返回为空（type={type(result).__name__}）")
         return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
     except ImportError:
         raise HTTPException(500, "服务端未安装 dashscope SDK：pip install dashscope")
@@ -236,6 +286,55 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
         import traceback
         print("[voice.preview] failed:", traceback.format_exc())
         raise HTTPException(500, f"合成失败：{e}")
+
+
+def _extract_audio_from_qwen_resp(resp) -> bytes | None:
+    """从 Qwen-TTS MultiModalConversation 响应里抽取音频字节。
+    可能返回：
+      - resp.output.audio.data (base64)
+      - resp.output.audio.url  (公网 URL，需要再拉一次)
+      - resp.output.choices[0].message.content -> [{audio: {data|url}}]
+    """
+    import base64, requests
+    try:
+        out = getattr(resp, "output", None) or (resp.get("output") if isinstance(resp, dict) else None)
+        if not out:
+            return None
+        # 路径 1: output.audio
+        audio = out.get("audio") if isinstance(out, dict) else None
+        if isinstance(audio, dict):
+            data = audio.get("data")
+            url = audio.get("url")
+            if data:
+                # data 可能是 base64 或 data URI
+                if isinstance(data, str) and data.startswith("data:"):
+                    data = data.split(",", 1)[1]
+                return base64.b64decode(data)
+            if url:
+                r = requests.get(url, timeout=30)
+                if r.status_code == 200:
+                    return r.content
+        # 路径 2: choices -> message -> content[].audio
+        choices = out.get("choices") if isinstance(out, dict) else None
+        if choices and isinstance(choices, list):
+            msg = (choices[0] or {}).get("message") or {}
+            content = msg.get("content") or []
+            for c in content if isinstance(content, list) else []:
+                a = c.get("audio") if isinstance(c, dict) else None
+                if isinstance(a, dict):
+                    if a.get("data"):
+                        d = a["data"]
+                        if isinstance(d, str) and d.startswith("data:"):
+                            d = d.split(",", 1)[1]
+                        return base64.b64decode(d)
+                    if a.get("url"):
+                        r = requests.get(a["url"], timeout=30)
+                        if r.status_code == 200:
+                            return r.content
+    except Exception as e:
+        print(f"[voice._extract_audio_from_qwen_resp] {e}")
+    return None
+
 
 
 @router.delete("/{mid}/voice")
