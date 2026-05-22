@@ -88,7 +88,7 @@
       idle:    '尚未克隆 · 选择音频样本后即可开始',
       cloning: '克隆中...',
       ready:   '✓ 已就绪 · DashScope 克隆成功 · voice_id=' + (state.voice.voice_id||'').slice(0,32),
-      mock:    '⚠ Mock 模式（DashScope 未配置或样本不可公网访问，先用预制音色试听）',
+      mock:    '⚠ Mock 模式 · 原因：' + (state.voice.error || 'DashScope 未配置或样本不可公网访问') + '（先用预制音色试听）',
       failed:  '✗ 失败：' + (state.voice.error || '未知错误'),
     };
     txt.textContent = map[s] || s;

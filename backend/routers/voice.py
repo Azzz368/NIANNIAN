@@ -249,3 +249,61 @@ def reset_voice(mid: str, user = Depends(security.get_current_user)):
     cfg["history"] = history  # 保留历史
     _save_voice_cfg(user["user_id"], mid, cfg)
     return {"ok": True, "voice": cfg}
+
+
+@router.get("/{mid}/voice/diagnose")
+def diagnose_voice(mid: str, user = Depends(security.get_current_user)):
+    """诊断声音克隆链路：把每个环节单独探一遍，告诉你卡在哪。"""
+    if not storage.get_memorial(user["user_id"], mid):
+        raise HTTPException(404, "纪念对象不存在")
+    result = {"checks": [], "ready_for_clone": False}
+
+    def add(name, ok, detail=""):
+        result["checks"].append({"name": name, "ok": bool(ok), "detail": detail})
+
+    # 1) dashscope SDK
+    try:
+        import dashscope  # type: ignore
+        from dashscope.audio.tts_v2 import VoiceEnrollmentService, SpeechSynthesizer  # type: ignore
+        add("dashscope SDK 已安装", True, getattr(dashscope, "__version__", "unknown"))
+        sdk_ok = True
+    except ImportError as e:
+        add("dashscope SDK 已安装", False, f"未安装：{e}")
+        sdk_ok = False
+
+    # 2) DASHSCOPE_API_KEY
+    api_key = os.getenv("DASHSCOPE_API_KEY", "")
+    add("DASHSCOPE_API_KEY 已配置", bool(api_key), f"长度={len(api_key)}" if api_key else "未设置")
+
+    # 3) PUBLIC_BASE_URL
+    public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    add("PUBLIC_BASE_URL 已配置", bool(public_base), public_base or "未设置")
+
+    # 4) 有音频样本
+    audios = _list_audio_assets(user["user_id"], mid)
+    add("有可用音频样本", len(audios) > 0, f"共 {len(audios)} 个")
+
+    # 5) 样本公网可拉（拿第一个试探）
+    sample_url = ""
+    fetch_ok = False
+    fetch_detail = "跳过：缺前置条件"
+    if audios and public_base:
+        a0 = audios[0]
+        try:
+            from .uploads import make_asset_sig
+            sig = make_asset_sig(mid, a0["asset_id"])
+            sample_url = f"{public_base}/api/memorials/{mid}/assets/{a0['asset_id']}/raw?sig={sig}"
+            import urllib.request
+            req = urllib.request.Request(sample_url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                fetch_ok = (200 <= resp.status < 300)
+                fetch_detail = f"HTTP {resp.status} · Content-Type={resp.headers.get('Content-Type','')} · Content-Length={resp.headers.get('Content-Length','')}"
+        except Exception as e:
+            fetch_detail = f"无法拉取：{type(e).__name__}: {e}"
+    add(f"样本可被 DashScope 拉取（HEAD {sample_url[:80]}...）" if sample_url else "样本可被 DashScope 拉取", fetch_ok, fetch_detail)
+
+    result["ready_for_clone"] = sdk_ok and bool(api_key) and bool(public_base) and len(audios) > 0 and fetch_ok
+    result["sample_url_example"] = sample_url
+    return result
+
+
