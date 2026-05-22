@@ -276,6 +276,189 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
 }
 #agentVoice{ position:relative; user-select:none; -webkit-user-select:none; touch-action:none; }
 
-/* ���� �� ����������˵���⣩*/
+/* 声波淡出动效 */
 .live-wave.fading span{animation:waveFade 2s ease-in forwards;}
 @keyframes waveFade{0%{opacity:1;transform:scaleY(1)}100%{opacity:.05;transform:scaleY(.2)}}
+
+/* ══════════════════════════════════════════════════════
+   ── Premium Section · 白金雾气品质区 ──
+   底色：#FBF7F0 (Gilded Porcelain)
+   漫反射光影 · 模糊渐变叠加 · 绸缎高级纸张质感
+   ══════════════════════════════════════════════════════ */
+.premium-section {
+  position: relative;
+  overflow: hidden;
+  background: #FBF7F0;
+  padding: 120px 24px 110px;
+  z-index: 1;
+}
+
+/* 底层模糊渐变 — 漫反射绸缎质感，控制在 15% 占比 */
+.premium-section::before {
+  content: '';
+  position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 72% 48% at 18% 28%, rgba(226,211,190,.55) 0%, transparent 68%),
+    radial-gradient(ellipse 55% 60% at 85% 72%, rgba(199,183,161,.48) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 35% at 52% 10%, rgba(255,253,248,.80) 0%, transparent 60%);
+  filter: blur(36px);
+  opacity: .95;
+}
+
+/* Three.js 粒子雾气 canvas */
+.premium-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 0;
+  opacity: .85;
+}
+
+/* 内容包裹 */
+.premium-inner {
+  position: relative; z-index: 2;
+  max-width: 1040px; margin: 0 auto;
+  text-align: center;
+}
+
+/* 眉首 */
+.premium-eyebrow {
+  font-family: "Cormorant Garamond", serif;
+  font-size: .88rem; letter-spacing: .48em; text-transform: uppercase;
+  color: #C4964A; opacity: .78;
+  margin-bottom: 22px;
+}
+
+/* 大标题 */
+.premium-headline {
+  font-family: "Cormorant Garamond","Songti SC","Noto Serif SC", serif;
+  font-size: clamp(2rem, 4.5vw, 3.6rem);
+  font-weight: 300; line-height: 1.28;
+  color: #3a2f22; letter-spacing: .02em;
+  margin: 0 auto 18px;
+}
+.premium-headline em {
+  font-style: italic; font-weight: 400;
+  background: linear-gradient(135deg,#9C7A45 0%,#D4A84A 55%,#E8C57A 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 副标题 */
+.premium-sub {
+  font-size: 1rem; color: #8a7654; font-weight: 300;
+  letter-spacing: .04em; line-height: 1.8;
+  max-width: 520px; margin: 0 auto 72px;
+}
+
+/* 装饰分割线 */
+.premium-divider {
+  display: flex; align-items: center; justify-content: center; gap: 18px;
+  margin-bottom: 68px;
+}
+.premium-divider .line {
+  width: 80px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196,150,74,.5), transparent);
+}
+.premium-divider .gem {
+  width: 6px; height: 6px; transform: rotate(45deg);
+  background: linear-gradient(135deg, #C4964A, #E8C57A);
+  box-shadow: 0 0 10px rgba(196,150,74,.45);
+}
+
+/* 三栏卡片网格 */
+.premium-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 28px;
+}
+
+/* 卡片 — 模糊渐变背景 + 极细线边框 + 漫反射 box-shadow */
+.premium-card {
+  background: linear-gradient(160deg,
+    rgba(255,253,248,.92) 0%,
+    rgba(240,230,212,.65) 60%,
+    rgba(255,252,246,.88) 100%);
+  border: 1px solid rgba(196,150,74,.16);
+  border-radius: 22px;
+  padding: 46px 32px 40px;
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  /* 漫反射高光：轻柔，不强烈，模拟光打在高级纸上 */
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.95) inset,           /* 顶亮边 */
+    0 2px 0 rgba(255,255,255,.6) inset,
+    0 12px 40px -8px rgba(156,122,69,.10),          /* 暖色外投影 */
+    0 4px 16px -4px rgba(156,122,69,.07);
+  transition: transform .45s cubic-bezier(.22,1,.36,1),
+              box-shadow .45s cubic-bezier(.22,1,.36,1);
+}
+/* 卡片顶部微弱高光扫光 */
+.premium-card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 42%;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,.45) 0%,
+    rgba(255,255,255,.06) 60%,
+    transparent 100%);
+  border-radius: 22px 22px 0 0;
+  pointer-events: none;
+}
+.premium-card:hover {
+  transform: translateY(-5px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.98) inset,
+    0 2px 0 rgba(255,255,255,.7) inset,
+    0 22px 52px -10px rgba(156,122,69,.18),
+    0 8px 24px -6px rgba(156,122,69,.12);
+}
+
+/* 卡片图标 */
+.pcard-icon {
+  width: 48px; height: 48px; border-radius: 14px;
+  background: linear-gradient(135deg,
+    rgba(196,150,74,.18) 0%,
+    rgba(232,197,122,.10) 100%);
+  border: 1px solid rgba(196,150,74,.22);
+  display: flex; align-items: center; justify-content: center;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.5rem; color: #C4964A;
+  margin-bottom: 26px;
+  box-shadow: 0 3px 12px rgba(196,150,74,.12);
+}
+
+/* 卡片标题 */
+.pcard-title {
+  font-family: "Cormorant Garamond","Songti SC", serif;
+  font-size: 1.22rem; font-weight: 600;
+  color: #3a2f22; letter-spacing: .03em;
+  margin-bottom: 12px;
+}
+
+/* 卡片正文 */
+.pcard-body {
+  font-size: .9rem; color: #8a7654;
+  line-height: 1.8; font-weight: 300;
+  letter-spacing: .02em;
+}
+
+/* 底部品牌行 */
+.premium-footer-row {
+  margin-top: 72px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font-family: "Cormorant Garamond", serif;
+  font-size: .85rem; letter-spacing: .3em; text-transform: uppercase;
+  color: rgba(156,122,69,.6);
+}
+.premium-footer-row .dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(196,150,74,.4); }
+
+/* 响应式 */
+@media (max-width: 800px) {
+  .premium-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 540px) {
+  .premium-grid { grid-template-columns: 1fr; }
+  .premium-section { padding: 80px 18px 70px; }
+  .premium-card { padding: 34px 24px 30px; }
+}
