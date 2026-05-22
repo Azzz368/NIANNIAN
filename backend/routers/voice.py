@@ -11,6 +11,27 @@ from core import security, storage
 
 router = APIRouter(prefix="/memorials", tags=["voice"])
 
+# ─── DashScope 区域配置 ──────────────────────────────────────────
+# 默认走新加坡（国际）区，与 agent.py / agent_realtime.py 保持一致
+# 想切到北京区：设 DASHSCOPE_REGION=cn
+def _dashscope_region() -> str:
+    return (os.getenv("DASHSCOPE_REGION", "intl") or "intl").lower()
+
+def _http_base() -> str:
+    return "https://dashscope-intl.aliyuncs.com/api/v1" if _dashscope_region() == "intl" else "https://dashscope.aliyuncs.com/api/v1"
+
+def _ws_base() -> str:
+    return "wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference" if _dashscope_region() == "intl" else "wss://dashscope.aliyuncs.com/api-ws/v1/inference"
+
+def _apply_region_to_sdk():
+    """设置 dashscope SDK 的全局 endpoint（影响 SpeechSynthesizer / VoiceEnrollmentService）"""
+    try:
+        import dashscope  # type: ignore
+        dashscope.base_http_api_url = _http_base()
+        dashscope.base_websocket_api_url = _ws_base()
+    except Exception:
+        pass
+
 # ─── 默认克隆配置 ────────────────────────────────────────────────
 DEFAULT_VOICE = {
     "voice_id": "",           # 克隆完成后的 voice_id；空 = 尚未克隆
@@ -148,7 +169,7 @@ def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_use
             b64 = base64.b64encode(sample_path.read_bytes()).decode()
             data_uri = f"data:{mime};base64,{b64}"
             target_model = "qwen3-tts-vc-2026-01-22"
-            url = "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization"
+            url = f"{_http_base()}/services/audio/tts/customization"
             payload = {
                 "model": "qwen-voice-enrollment",
                 "input": {
@@ -174,6 +195,7 @@ def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_use
             try:
                 import dashscope  # type: ignore
                 from dashscope.audio.tts_v2 import VoiceEnrollmentService  # type: ignore
+                _apply_region_to_sdk()
                 dashscope.api_key = api_key
                 public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
                 if not public_base:
@@ -243,6 +265,7 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
         # ─── Qwen-TTS 合成 ───
         if use_clone and provider == "qwen_tts":
             import dashscope, base64  # type: ignore
+            _apply_region_to_sdk()
             dashscope.api_key = api_key
             model = target_model or "qwen3-tts-vc-2026-01-22"
             resp = dashscope.MultiModalConversation.call(
@@ -258,6 +281,7 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
         # ─── CosyVoice 合成（克隆或预制） ───
         import dashscope  # type: ignore
         from dashscope.audio.tts_v2 import SpeechSynthesizer  # type: ignore
+        _apply_region_to_sdk()
         dashscope.api_key = api_key
         cosy_voice = voice_id if (use_clone and provider == "dashscope") else params.get("base_voice", "longxiaochun")
         cosy_model = target_model if (use_clone and provider == "dashscope") else "cosyvoice-v1"
