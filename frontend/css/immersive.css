@@ -2,7 +2,7 @@
 
 /* 背景兜底渐变：若 WebGL 不可用，仍能看到太阳般的氛围 */
 html, body {
-  background: radial-gradient(ellipse 90% 70% at 50% -20%,
+  background: radial-gradient(ellipse 90% 70% at 50% 25%,
     #fff7c2 0%,
     #ffd17a 18%,
     #ff8e8a 32%,

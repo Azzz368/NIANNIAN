@@ -40,24 +40,24 @@
         uv.x *= uResolution.x / uResolution.y;
 
         // 光晕中心：大幅上移到屏幕外，只露出底部柔光
-        vec2 center = vec2(0.0, 1.4);
+        vec2 center = vec2(0.0, 0.5);
         vec2 p = uv - center;
 
         float dist = length(p);
         float angle = atan(p.y, p.x);
 
-        // 基础半径放大，配合更高的中心位置
-        float baseRadius = 0.85;
-        float idleBreath = sin(uTime * 1.8) * 0.025;
-        float voicePulse = uVolume * 1.2;          // 主缩放：跟随 AI 音量
+        // 基础半径（已缩小约 50%）
+        float baseRadius = 0.42;
+        float idleBreath = sin(uTime * 1.8) * 0.012;
+        float voicePulse = uVolume * 0.55;          // 主缩放：跟随 AI 音量
         float targetRadius = baseRadius + idleBreath + voicePulse;
 
         // 多层涟漪：低频大波 + 高频小波（仅在 AI 说话时显现）
-        float ripple1 = sin(dist * 18.0 - uTime * 5.0) * 0.025 * uVolume;
-        float ripple2 = sin(dist * 42.0 - uTime * 9.0) * 0.012 * uVolume;
+        float ripple1 = sin(dist * 22.0 - uTime * 5.0) * 0.022 * uVolume;
+        float ripple2 = sin(dist * 50.0 - uTime * 9.0) * 0.010 * uVolume;
         // 边缘扰动噪声（让光环呼吸时不那么"规则"）
         float n = noise(vec2(angle * 3.0 + uTime * 0.7, uTime * 0.4));
-        float edgeWobble = (n - 0.5) * 0.04 * (0.4 + uVolume * 1.5);
+        float edgeWobble = (n - 0.5) * 0.03 * (0.4 + uVolume * 1.5);
 
         float dEff = dist + ripple1 + ripple2 + edgeWobble;
 
@@ -127,19 +127,31 @@
     var currentVolume = 0;
     var clock = new THREE.Clock();
 
+    // 临时调试：右上角显示 AI 音量条（确认数据是否流通）
+    var dbg = document.createElement('div');
+    dbg.id = '__volDbg';
+    dbg.style.cssText = 'position:fixed;top:8px;right:8px;width:140px;height:10px;background:rgba(0,0,0,0.25);border:1px solid #fff8;z-index:9999;pointer-events:none;';
+    var dbgBar = document.createElement('div');
+    dbgBar.style.cssText = 'height:100%;width:0;background:linear-gradient(90deg,#ffeb3b,#ff5722);transition:width 0.05s;';
+    dbg.appendChild(dbgBar);
+    document.body.appendChild(dbg);
+
     function render() {
       requestAnimationFrame(render);
       var dt = clock.getDelta();
       material.uniforms.uTime.value += dt;
 
-      // 放大 AI 音量驱动：rms 一般在 0.02 ~ 0.2 之间，要放大并做平滑
+      // AI 音量驱动：rms 通常 0.005~0.15，需要强放大
       var raw = window.aiActiveVolume || 0;
-      var targetVol = Math.min(1.5, Math.pow(raw, 0.55) * 4.5);
+      var targetVol = Math.min(1.5, Math.pow(raw, 0.4) * 6.0);
 
       // 攻击快、衰减慢，更像音频包络（envelope follower）
       var speed = (targetVol > currentVolume) ? 22.0 : 5.0;
       currentVolume += (targetVol - currentVolume) * Math.min(1.0, dt * speed);
       material.uniforms.uVolume.value = currentVolume;
+
+      // 调试条
+      if (dbgBar) dbgBar.style.width = Math.min(100, currentVolume * 80).toFixed(1) + '%';
 
       // 同步到 CSS：让文字也跟随轻微缩放发光
       var aiText = document.getElementById('immersiveAiText');
