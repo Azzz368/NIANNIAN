@@ -1,0 +1,94 @@
+/* Immersive Chat Styles */
+
+/* 背景兜底渐变：若 WebGL 不可用，仍能看到太阳般的氛围 */
+html, body {
+  background: radial-gradient(circle at 50% 50%,
+    #fff7c2 0%,
+    #ffd17a 12%,
+    #ff8e8a 24%,
+    #ffd4b8 38%,
+    #f6e7c5 60%,
+    #c9e6c4 100%) !important;
+}
+#silkCanvas { z-index: 0 !important; }
+
+.immersive-chat {
+  position: absolute;
+  bottom: 5vh;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.ai-text-container {
+  position: absolute;
+  bottom: 30vh; /* Above user text */
+  width: 80%;
+  text-align: center;
+}
+
+.immersive-ai-text {
+  font-size: 1.6rem;
+  color: #3b2c15;
+  font-family: 'Songti SC', serif;
+  text-shadow: 0 0 10px rgba(255,255,255,0.8), 0 0 20px rgba(255,255,255,0.5);
+  line-height: 1.4;
+  transition: all 0.3s ease;
+}
+
+.user-text-container {
+  position: absolute;
+  bottom: 20vh;
+  width: 80%;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.immersive-user-text {
+  font-size: 1.1rem;
+  color: #554433;
+  font-weight: 300;
+  line-height: 1.4;
+}
+
+.immersive-controls {
+  position: absolute;
+  bottom: 5vh;
+  pointer-events: auto;
+}
+
+.big-voice-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(196, 150, 74, 0.5);
+  color: #8a7654;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(4px);
+}
+
+.big-voice-btn:hover {
+  background: rgba(255, 255, 255, 0.6);
+  transform: scale(1.05);
+}
+
+.big-voice-btn.recording {
+  background: rgba(196, 150, 74, 0.6);
+  color: #fff;
+  animation: pulseBtn 1.5s infinite;
+}
+
+@keyframes pulseBtn {
+  0% { box-shadow: 0 0 0 0 rgba(196, 150, 74, 0.4); }
+  70% { box-shadow: 0 0 0 20px rgba(196, 150, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(196, 150, 74, 0); }
+}

@@ -1,101 +1,111 @@
-// silk-bg.js — Three.js 金纹丝绸背景（增强对比版）
+// immersive-sun-bg.js - Replacement for silk-bg.js
 (function () {
   if (typeof window === 'undefined') return;
   function start() {
     var canvas = document.getElementById('silkCanvas');
-    if (!canvas) { console.warn('[silk] canvas #silkCanvas not found'); return; }
-    if (typeof THREE === 'undefined') {
-      console.error('[silk] THREE 未加载，回退到 CSS 渐变');
-      document.body.style.background = 'linear-gradient(135deg,#F4ECDB 0%,#EFE3C9 50%,#F4ECDB 100%)';
-      return;
-    }
+    if (!canvas) { return; }
+    if (typeof THREE === 'undefined') { return; }
+
     var renderer;
     try {
       renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
     } catch (e) {
-      console.error('[silk] WebGL 不可用', e);
-      document.body.style.background = 'linear-gradient(135deg,#F4ECDB 0%,#EFE3C9 50%,#F4ECDB 100%)';
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setClearColor(0xF4ECDB, 1);
 
-    var scene  = new THREE.Scene();
-    var camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
-    camera.position.z = 1;
+    var scene = new THREE.Scene();
+    var camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-    var geo = new THREE.PlaneGeometry(2, 2, 220, 220);
+    var fragmentShader = `
+      uniform float uTime;
+      uniform float uVolume;
+      uniform vec2 uResolution;
 
-    var vsh = [
-      'uniform float uTime;',
-      'varying vec2 vUv;',
-      'varying float vWave;',
-      'vec2 hash2(vec2 p){',
-      '  p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));',
-      '  return -1.0 + 2.0*fract(sin(p)*43758.5453);',
-      '}',
-      'float noise(vec2 p){',
-      '  vec2 i=floor(p); vec2 f=fract(p);',
-      '  vec2 u=f*f*(3.0-2.0*f);',
-      '  return mix(mix(dot(hash2(i),f), dot(hash2(i+vec2(1,0)),f-vec2(1,0)),u.x),',
-      '             mix(dot(hash2(i+vec2(0,1)),f-vec2(0,1)), dot(hash2(i+vec2(1,1)),f-vec2(1,1)),u.x), u.y);',
-      '}',
-      'void main(){',
-      '  vUv = uv;',
-      '  vec3 pos = position;',
-      '  float t = uTime * 0.25;',
-      '  float w = noise(vec2(pos.x*2.2 + t*0.55, pos.y*1.6 + t*0.38)) * 0.07',
-      '          + noise(vec2(pos.x*4.0 - t*0.32, pos.y*3.0 + t*0.50)) * 0.035',
-      '          + noise(vec2(pos.x*8.0 + t*0.85, pos.y*7.0 - t*0.27)) * 0.012;',
-      '  pos.z += w; vWave = w;',
-      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);',
-      '}'
-    ].join('\n');
+      void main() {
+        vec2 uv = gl_FragCoord.xy / uResolution.xy;
+        uv = uv * 2.0 - 1.0;
+        uv.x *= uResolution.x / uResolution.y;
 
-    // 关键：拉大颜色对比 → 暖米黄底 + 明显金色丝纹
-    var fsh = [
-      'uniform float uTime;',
-      'varying vec2 vUv;',
-      'varying float vWave;',
-      'void main(){',
-      '  vec3 cBase  = vec3(0.957, 0.925, 0.855);',  // 暖米色
-      '  vec3 cWarm  = vec3(0.918, 0.855, 0.722);',  // 浅金黄
-      '  vec3 cGold  = vec3(0.812, 0.643, 0.345);',  // 真金色
-      '  vec3 cDeep  = vec3(0.694, 0.510, 0.231);',  // 暗金
-      '  vec3 cSheen = vec3(0.996, 0.972, 0.910);',  // 高光丝白
-      '  float t = uTime * 0.16;',
-      '  float stripe = sin((vUv.y*9.0 + vUv.x*4.0) + t + vWave*22.0) * 0.5 + 0.5;',
-      '  float ripple = sin(vUv.x*16.0 - t*0.8 + vWave*30.0) * 0.5 + 0.5;',
-      '  float diag   = sin((vUv.x + vUv.y)*6.0 + t*0.45) * 0.5 + 0.5;',
-      '  float sheen  = smoothstep(0.55, 1.0, sin(vUv.x*2.5 - vUv.y*1.8 + t*0.6)*0.5+0.5);',
-      '  vec3 col = mix(cBase, cWarm, stripe * 0.85);',
-      '  col = mix(col, cGold, ripple * 0.32);',
-      '  col = mix(col, cDeep, diag * 0.10);',
-      '  col = mix(col, cSheen, sheen * 0.55);',
-      '  float dist = distance(vUv, vec2(0.5));',
-      '  col *= 1.0 - smoothstep(0.55, 1.05, dist) * 0.25;',
-      '  gl_FragColor = vec4(col, 1.0);',
-      '}'
-    ].join('\n');
+        float dist = length(uv);
+        float targetRadius = 0.4 + uVolume * 1.5;
+        targetRadius += sin(uTime * 1.5) * 0.015;
 
-    var mat = new THREE.ShaderMaterial({
-      vertexShader: vsh, fragmentShader: fsh,
-      uniforms: { uTime: { value: 0 } }
+        float ripple = sin(dist * 30.0 - uTime * 6.0) * 0.01 * uVolume;
+        dist += ripple;
+
+        vec3 bgColor = mix(vec3(0.5, 0.8, 0.5), vec3(0.85, 0.95, 0.85), clamp(dist*0.5, 0.0, 1.0));
+
+        vec3 colCore = vec3(1.0, 0.95, 0.2);
+        vec3 colMid1 = vec3(1.0, 0.6, 0.2);
+        vec3 colMid2 = vec3(1.0, 0.4, 0.45);
+        vec3 colGlow = vec3(1.0, 0.98, 0.98);
+
+        float d = dist / targetRadius;
+        vec3 color = bgColor;
+        if (d < 1.5) {
+            float fCore = smoothstep(0.3, 0.0, d);
+            float fMid1 = smoothstep(0.6, 0.2, d);
+            float fMid2 = smoothstep(0.9, 0.5, d);
+            float fGlow = smoothstep(1.5, 0.8, d);
+
+            vec3 sunColor = mix(colGlow, colMid2, fMid2);
+            sunColor = mix(sunColor, colMid1, fMid1);
+            sunColor = mix(sunColor, colCore, fCore);
+
+            color = mix(bgColor, sunColor, fGlow);
+        }
+
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+
+    var vertexShader = `
+      void main() {
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    var material = new THREE.ShaderMaterial({
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      uniforms: {
+        uTime: { value: 0 },
+        uVolume: { value: 0 },
+        uResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+      }
     });
-    scene.add(new THREE.Mesh(geo, mat));
 
-    function resize() { renderer.setSize(window.innerWidth, window.innerHeight, false); }
-    resize();
+    var plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+    scene.add(plane);
+
+    var resize = function () {
+      var w = window.innerWidth, h = window.innerHeight;
+      renderer.setSize(w, h);
+      material.uniforms.uResolution.value.set(w, h);
+    };
     window.addEventListener('resize', resize);
+    resize();
 
-    function animate(t) {
-      requestAnimationFrame(animate);
-      mat.uniforms.uTime.value = t * 0.001;
+    var currentVolume = 0;
+    var clock = new THREE.Clock();
+
+    function render() {
+      requestAnimationFrame(render);
+      var dt = clock.getDelta();
+      material.uniforms.uTime.value += dt;
+
+      var targetVol = window.aiActiveVolume || 0;
+      targetVol = Math.pow(targetVol, 0.8) * 1.2;
+      
+      currentVolume += (targetVol - currentVolume) * (dt * 15.0);
+      material.uniforms.uVolume.value = currentVolume;
+
       renderer.render(scene, camera);
     }
-    animate(0);
-    console.log('[silk] Three.js 金纹丝绸背景已启动 (vertices=' + (221*221) + ')');
+    render();
   }
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
   } else {

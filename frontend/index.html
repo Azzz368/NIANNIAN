@@ -6,6 +6,7 @@
 <title>念念 · 追思影像平台</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="stylesheet" href="css/index-hero.css">
+<link rel="stylesheet" href="css/immersive.css">
 <style>
   /* 顶部账号条 */
   .topnav-bar{position:fixed;top:14px;right:18px;z-index:20;display:flex;align-items:center;gap:10px;font-size:.82rem;color:#8a7654}
@@ -48,7 +49,7 @@
 <canvas id="silkCanvas"></canvas>
 
 <section class="hero-agent">
-  <div class="hero-title-wrap">
+  <div class="hero-title-wrap" style="display: none;">
     <div class="hero-title-eyebrow">NianNian · Memorial Atelier</div>
     <h1>让记忆<br><em>永远留存</em></h1>
     <div class="title-ornament">
@@ -59,7 +60,8 @@
     <p class="hero-subtitle">和念念聊聊，把对 Ta 的思念轻轻说出来<br>我们一同将这些温柔的话语，化作可以反复重温的影像</p>
   </div>
 
-  <div class="agent-chat-card">
+  <!-- Hide original chat card -->
+  <div class="agent-chat-card" style="display: none !important;">
     <div class="agent-chat-header">
       <div class="agent-orb">念</div>
       <div class="agent-info">
@@ -108,7 +110,25 @@
     </div>
   </div>
 
-  <div class="scroll-hint" onclick="document.getElementById('navSection').scrollIntoView({behavior:'smooth'})">
+  <!-- New Immersive UI -->
+  <div id="immersiveChat" class="immersive-chat">
+    <div class="ai-text-container">
+      <div id="immersiveAiText" class="immersive-ai-text">欢迎，请按下方的语音按键开始交流。</div>
+    </div>
+    <div class="user-text-container">
+      <div id="immersiveUserText" class="immersive-user-text"></div>
+    </div>
+    <div class="immersive-controls">
+      <button class="btn-icon big-voice-btn" id="immersiveVoiceBtn" type="button" title="长按说话" aria-label="语音输入">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="28" height="28">
+          <rect x="9" y="2" width="6" height="11" rx="3"/>
+          <path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="scroll-hint" style="display:none;" onclick="document.getElementById('navSection').scrollIntoView({behavior:'smooth'})">
     <span>探索更多</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
   </div>

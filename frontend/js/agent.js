@@ -60,6 +60,11 @@
   }
 
   function appendBubble(role, text){
+    if(document.getElementById('immersiveChat')) {
+      if(role === 'user') document.getElementById('immersiveUserText').textContent = text;
+      else document.getElementById('immersiveAiText').textContent = text;
+    }
+
     var list = $('agentMessages');
     var wrap = document.createElement('div');
     wrap.className = 'msg-row ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -312,7 +317,7 @@
     // ─── 停止检测 state（服务端 VAD 已设为 7s 静音，这里只做 UI 渐弱提示 + 关键词快捷提交）─
     state.committing = false;
     state.fadeActive = false;
-    state.aiSpeaking = false;
+    state.aiSpeaking = false; window.aiActiveVolume=0;
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
@@ -416,7 +421,12 @@
     if (t === 'response.audio_transcript.delta' && msg.delta) {
       if (!state.liveAiBubble) { state.liveAiBubble = appendBubble('ai', ''); state.liveAiText = ''; }
       state.liveAiText += msg.delta;
-      state.liveAiBubble.querySelector('.bubble-text').textContent = state.liveAiText;
+      
+    state.liveAiBubble.querySelector('.bubble-text').textContent = state.liveAiText;
+    if(document.getElementById('immersiveAiText')) {
+      document.getElementById('immersiveAiText').textContent = state.liveAiText;
+    }
+
       scrollBottom();
       return;
     }
@@ -430,7 +440,7 @@
       try {
         var i16 = base64ToInt16(msg.delta);
         var f32 = int16ToFloat32(i16);
-        var buf = state.playCtx.createBuffer(1, f32.length, 24000);
+        var sum=0; for(var _i=0; _i<f32.length; _i++) sum+=f32[_i]*f32[_i]; window.aiActiveVolume=Math.sqrt(sum/f32.length); var buf = state.playCtx.createBuffer(1, f32.length, 24000);
         buf.copyToChannel(f32, 0);
         var src = state.playCtx.createBufferSource();
         src.buffer = buf; src.connect(state.playCtx.destination);
@@ -461,7 +471,7 @@
     if (state.audioCtx) { try { state.audioCtx.close(); } catch(e){} state.audioCtx = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
-    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null;
+    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
     cleanupLive();
@@ -737,4 +747,31 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+})();
+
+// 沉浸式语音按钮：仅做 DOM 层桥接，复用现有 modeLive / agentVoice 逻辑
+(function(){
+  function bind(){
+    var immersiveBtn = document.getElementById('immersiveVoiceBtn');
+    if (!immersiveBtn) return;
+    var aiText = document.getElementById('immersiveAiText');
+    var isLive = false;
+    immersiveBtn.addEventListener('click', function(){
+      var modeLive = document.getElementById('modeLive');
+      var modeText = document.getElementById('modeText');
+      if (!isLive) {
+        if (modeLive) modeLive.click();
+        immersiveBtn.classList.add('recording');
+        if (aiText) aiText.textContent = '念念正在倾听…';
+        isLive = true;
+      } else {
+        if (modeText) modeText.click();
+        immersiveBtn.classList.remove('recording');
+        if (aiText) aiText.textContent = '已结束。再次点击重新开始。';
+        isLive = false;
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
 })();
