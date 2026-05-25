@@ -39,17 +39,17 @@
         uv = uv * 2.0 - 1.0;
         uv.x *= uResolution.x / uResolution.y;
 
-        // 光晕中心整体上移
-        vec2 center = vec2(0.0, 0.28);
+        // 光晕中心：大幅上移到屏幕外，只露出底部柔光
+        vec2 center = vec2(0.0, 1.4);
         vec2 p = uv - center;
 
         float dist = length(p);
         float angle = atan(p.y, p.x);
 
-        // 基础半径 + 音量驱动的呼吸 + 待机时的轻微呼吸
-        float baseRadius = 0.32;
-        float idleBreath = sin(uTime * 1.8) * 0.012;
-        float voicePulse = uVolume * 0.55;          // 主缩放：跟随 AI 音量
+        // 基础半径放大，配合更高的中心位置
+        float baseRadius = 0.85;
+        float idleBreath = sin(uTime * 1.8) * 0.025;
+        float voicePulse = uVolume * 1.2;          // 主缩放：跟随 AI 音量
         float targetRadius = baseRadius + idleBreath + voicePulse;
 
         // 多层涟漪：低频大波 + 高频小波（仅在 AI 说话时显现）

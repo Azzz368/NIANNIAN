@@ -2,12 +2,12 @@
 
 /* 背景兜底渐变：若 WebGL 不可用，仍能看到太阳般的氛围 */
 html, body {
-  background: radial-gradient(circle at 50% 35%,
+  background: radial-gradient(ellipse 90% 70% at 50% -20%,
     #fff7c2 0%,
-    #ffd17a 10%,
-    #ff8e8a 22%,
-    #ffd4b8 36%,
-    #f6e7c5 60%,
+    #ffd17a 18%,
+    #ff8e8a 32%,
+    #ffd4b8 48%,
+    #f6e7c5 70%,
     #c9e6c4 100%) !important;
 }
 #silkCanvas { z-index: 0 !important; }
@@ -26,7 +26,7 @@ html, body {
 
 .ai-text-container {
   position: absolute;
-  bottom: 38vh; /* 跟随光晕上移 */
+  bottom: 32vh;
   width: 80%;
   text-align: center;
 }

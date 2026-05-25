@@ -301,6 +301,28 @@
     try { state.playCtx = new AudioCtx({ sampleRate: 24000 }); } catch(e) { state.playCtx = new AudioCtx(); }
     state.playTime = 0;
 
+    // AnalyserNode 实时跟踪 AI 输出音量（驱动光晕动效）
+    try {
+      state.playAnalyser = state.playCtx.createAnalyser();
+      state.playAnalyser.fftSize = 1024;
+      state.playAnalyser.smoothingTimeConstant = 0.3;
+      state.playAnalyser.connect(state.playCtx.destination);
+      state._volBuf = new Float32Array(state.playAnalyser.fftSize);
+      if (!state._volRAF) {
+        var sampleVol = function(){
+          if (!state.playAnalyser) { state._volRAF = null; return; }
+          try {
+            state.playAnalyser.getFloatTimeDomainData(state._volBuf);
+            var _s = 0, _n = state._volBuf.length;
+            for (var _i=0; _i<_n; _i++) _s += state._volBuf[_i] * state._volBuf[_i];
+            window.aiActiveVolume = Math.sqrt(_s / _n);
+          } catch(e){}
+          state._volRAF = requestAnimationFrame(sampleVol);
+        };
+        state._volRAF = requestAnimationFrame(sampleVol);
+      }
+    } catch(e) { console.warn('[analyser] init failed', e); }
+
     setLiveStatus('正在连接 Qwen-Omni-Realtime...', true);
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var qs = [];
@@ -443,7 +465,7 @@
         var sum=0; for(var _i=0; _i<f32.length; _i++) sum+=f32[_i]*f32[_i]; window.aiActiveVolume=Math.sqrt(sum/f32.length); var buf = state.playCtx.createBuffer(1, f32.length, 24000);
         buf.copyToChannel(f32, 0);
         var src = state.playCtx.createBufferSource();
-        src.buffer = buf; src.connect(state.playCtx.destination);
+        src.buffer = buf; src.connect(state.playAnalyser || state.playCtx.destination);
         var now = state.playCtx.currentTime;
         var startAt = Math.max(state.playTime, now + 0.02);
         src.start(startAt);
@@ -469,6 +491,8 @@
     if (state.procNode) { try { state.procNode.disconnect(); } catch(e){} state.procNode = null; }
     if (state.micNode)  { try { state.micNode.disconnect();  } catch(e){} state.micNode  = null; }
     if (state.audioCtx) { try { state.audioCtx.close(); } catch(e){} state.audioCtx = null; }
+    if (state._volRAF) { cancelAnimationFrame(state._volRAF); state._volRAF = null; }
+    if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; window.aiActiveVolume=0;
