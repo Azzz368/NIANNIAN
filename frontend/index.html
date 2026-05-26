@@ -155,19 +155,19 @@
     <div class="premium-grid">
 
       <div class="premium-card">
-        <div class="pcard-icon">念</div>
+        <div class="pcard-icon pcard-link" data-href="memorial.html" style="cursor:pointer" title="点击进入：念念影像制作">念</div>
         <div class="pcard-title">深度对话 · 智能建档</div>
         <div class="pcard-body">念念不只记录姓名与日期。<br>通过温柔的对话，提炼气味、习惯、口头禅——建立只属于 Ta 的专属档案。</div>
       </div>
 
       <div class="premium-card">
-        <div class="pcard-icon">影</div>
+        <div class="pcard-icon pcard-link" data-href="deep_search.html" style="cursor:pointer" title="点击进入：AI 深度搜索">影</div>
         <div class="pcard-title">影像制作 · 全自动流程</div>
         <div class="pcard-body">从照片到叙事配乐，从旁白到字幕——六道工序全部自动完成，<br>交付一部有温度的追思短片。</div>
       </div>
 
       <div class="premium-card">
-        <div class="pcard-icon">存</div>
+        <div class="pcard-icon pcard-link" data-href="dialogue.html" style="cursor:pointer" title="点击进入：数字人对话">存</div>
         <div class="pcard-title">永久留存 · 随时重温</div>
         <div class="pcard-body">影像和档案永久云端保存，<br>家人可以随时通过数字人与 Ta 重新对话，<br>记忆不会随时光消逝。</div>
       </div>
@@ -184,40 +184,7 @@
   </div>
 </section>
 
-<section class="nav-section" id="navSection">
-  <div class="container">
-    <div class="topbar" style="margin-bottom:48px;">
-      <div class="topbar-logo">
-        <div class="topbar-orb">念</div>
-        <div>
-          <div class="topbar-name">念念</div>
-          <div class="topbar-sub">NianNian Memorial Studio</div>
-        </div>
-      </div>
-      <div class="topbar-badge">追思影像制作平台</div>
-    </div>
-
-    <div class="home-grid">
-      <a class="home-card" href="memorial.html">
-        <div class="home-card-icon">M</div>
-        <div class="home-card-title">念念影像制作</div>
-        <div class="home-card-desc">填写信息 · 与念念 AI 对话 · 自动生成完整追思影像（MV01-MV06）</div>
-      </a>
-      <a class="home-card" href="deep_search.html">
-        <div class="home-card-icon">S</div>
-        <div class="home-card-title">AI 深度搜索</div>
-        <div class="home-card-desc">联网搜索人物公开资料，自动整理为表单字段（适合公众人物）</div>
-      </a>
-      <a class="home-card" href="dialogue.html">
-        <div class="home-card-icon">D</div>
-        <div class="home-card-title">数字人对话</div>
-        <div class="home-card-desc">与已建档的逝者进行温暖对话，留存珍贵记忆</div>
-      </a>
-    </div>
-
-    <div class="footer-credit">Powered by FastAPI · 302.ai · Alibaba Qwen-Omni-Realtime · Three.js</div>
-  </div>
-</section>
+<section class="nav-section" id="navSection" style="display:none"></section>
 
 <!-- 上传弹窗 -->
 <div class="upload-modal" id="uploadModal">
@@ -249,8 +216,8 @@
 <!-- 资料库变动提示 -->
 <div class="dossier-toast" id="dossierToast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.min.js"></script>
-<script src="js/silk-bg.js"></script>
+<script src="js/three.min.js"></script>
+<script src="js/silk-bg.js?v=2026052607"></script>
 <script src="js/auth.js"></script>
 <script src="js/api.js"></script>
 <script src="js/agent.js"></script>
@@ -390,6 +357,30 @@
   }
 })();
 </script>
+
+<script>
+// 念/影/存 卡片点击导航
+document.querySelectorAll('.pcard-link').forEach(function(el) {
+  el.addEventListener('click', function() {
+    var href = this.getAttribute('data-href');
+    if (href) window.location.href = href;
+  });
+});
+</script>
+
+<style>
+.pcard-link {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+}
+.pcard-link:hover {
+  transform: scale(1.12);
+  filter: brightness(1.15);
+  box-shadow: 0 8px 32px rgba(255,180,80,0.35);
+}
+.pcard-link:active {
+  transform: scale(0.96);
+}
+</style>
 
 </body>
 </html>
