@@ -110,7 +110,8 @@
 
         // 大气散射效果 (Atmospheric scattering)
         // 即使没有AI说话，外围也有一层非常柔和的泛光
-        float atmosphericGlow = exp(-dEff * 1.5) * (0.15 + voiceEnergy * 0.3);
+        // 整体亮度降低 20%：0.15→0.12, 0.3→0.24
+        float atmosphericGlow = exp(-dEff * 1.5) * (0.12 + voiceEnergy * 0.24);
         color += mix(colMid1, vec3(1.0), 0.5) * atmosphericGlow;
 
         // 内部光核
@@ -124,11 +125,11 @@
             sunColor = mix(sunColor, colMid1, fMid1);
             sunColor = mix(sunColor, colCore, fCore);
 
-            // 当音量大时，核心增加额外的曝光（类似于绽放效果）
-            sunColor += vec3(voiceEnergy * 0.4) * fCore;
+            // 当音量大时，核心增加额外的曝光（类似于绽放效果），降低 20%：0.4→0.32
+            sunColor += vec3(voiceEnergy * 0.32) * fCore;
 
-            // 平滑地将太阳颜色盖在背景上
-            color = mix(color, sunColor, fGlow * 0.9);
+            // 平滑地将太阳颜色盖在背景上，混合权重降低 20%：0.9→0.72
+            color = mix(color, sunColor, fGlow * 0.72);
         }
 
         // 增加一点非常微妙的全局胶片曝光噪声防色带
