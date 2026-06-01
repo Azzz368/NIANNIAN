@@ -134,14 +134,6 @@
 
   // ── 素材 ──
   function renderAssets(){
-    // 声音工坊入口：附带当前 memorial_id，并展示统计
-    var entry = $('voiceStudioEntry');
-    if (entry && state.currentId) {
-      entry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(state.currentId);
-      var audioCount = (state.assets || []).filter(function(a){ return a.kind === 'audio'; }).length;
-      var voiceMeta = $('voiceStudioMeta');
-      if (voiceMeta) voiceMeta.textContent = audioCount + ' 个音频样本 · 点击进入工坊管理克隆';
-    }
     var ul = $('assetsList'); ul.innerHTML = '';
     if (!state.assets.length) {
       ul.innerHTML = '<li style="grid-column:1/-1;color:#8a7654;padding:30px;text-align:center">还没有素材。在聊天页上传后，文件会出现在这里。</li>';
@@ -149,10 +141,7 @@
     }
     state.assets.forEach(function(a){
       var li = document.createElement('li');
-      // 资产 URL 必须带 token（img/audio 不会发 Authorization header）
-      var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
-      var aUrl = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
-      var thumb = (a.kind === 'image') ? '<img src="' + aUrl + '" alt="">' : iconForKind(a.kind);
+      var thumb = (a.kind === 'image') ? '<img src="' + a.url + '" alt="">' : iconForKind(a.kind);
       var tags = (a.tags || []).map(function(t){return '<span>' + escapeHtml(t) + '</span>';}).join('');
       li.innerHTML =
         '<div class="asset-thumb">' + thumb + '</div>' +

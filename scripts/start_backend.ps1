@@ -3,8 +3,7 @@
 #   .\start_backend.ps1
 
 $ErrorActionPreference = "Stop"
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$root = Split-Path -Parent $scriptDir
+$root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $root
 
 # 自动加载 .env（与 Streamlit 共用）
