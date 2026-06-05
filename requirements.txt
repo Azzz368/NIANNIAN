@@ -1,4 +1,4 @@
-# 念念 AI · 追思影像平台 依赖清单
+# 念念 AI · 追思影僝平坰 依赖清坕
 streamlit>=1.35.0
 streamlit-cropper>=0.3.1
 openai>=1.30.0
@@ -16,3 +16,6 @@ python-multipart>=0.0.9
 bcrypt>=4.1.0
 websockets>=12.0
 dashscope>=1.20.0
+python-docx
+weasyprint
+beautifulsoup4

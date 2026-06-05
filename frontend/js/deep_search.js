@@ -81,16 +81,37 @@ async function doSearch() {
 
 async function applyToForm() {
   if (!state.result || !state.result.fields) { toast('暂无可填入的数据'); return; }
-  // 没有 session 则先创建
+  const fields = state.result.fields;
   let sid = getSessionId();
-  if (!sid) {
-    const r = await apiPost('/intake/submit', { form_data: state.result.fields });
-    setSessionId(r.session_id);
-  } else {
-    await apiPost('/intake/apply-fields', { session_id: sid, fields: state.result.fields });
+  const params = new URLSearchParams(window.location.search);
+  const target = params.get('target') || 'memorial';
+  const redirectTo = target === 'biography' ? 'biography.html' : 'memorial.html';
+  const applyEndpoint = target === 'biography' ? '/intake/apply-fields' : '/intake/apply-fields';
+  try {
+    const payload = { fields, target };
+    window.localStorage.setItem('NN_DEEP_SEARCH_FILL', JSON.stringify(payload));
+    if (!sid) {
+      const r = await apiPost('/intake/submit', { form_data: fields });
+      sid = r.session_id;
+      setSessionId(sid);
+    } else {
+      try {
+        await apiPost(applyEndpoint, { session_id: sid, fields });
+      } catch (e) {
+        if (String(e.message || '').includes('404')) {
+          const r = await apiPost('/intake/submit', { session_id: sid, form_data: fields });
+          sid = r.session_id || sid;
+          setSessionId(sid);
+        } else {
+          throw e;
+        }
+      }
+    }
+    toast('已填入表单，正在跳转...');
+    setTimeout(() => { window.location.href = redirectTo; }, 700);
+  } catch (e) {
+    toast('填入表单失败：' + e.message);
   }
-  toast('已填入表单，正在跳转...');
-  setTimeout(() => { window.location.href = 'memorial.html'; }, 700);
 }
 
 function reset() {

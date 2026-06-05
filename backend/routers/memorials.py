@@ -11,6 +11,8 @@ class CreateReq(BaseModel):
     name: str
     relation: str = ""
     note: str = ""
+    birth_date: Optional[str] = None
+    death_date: Optional[str] = None
 
 class UpdateMetaReq(BaseModel):
     name: Optional[str] = None
@@ -25,7 +27,14 @@ def list_(user = Depends(security.get_current_user)):
 
 @router.post("")
 def create_(req: CreateReq, user = Depends(security.get_current_user)):
-    m = storage.create_memorial(user["user_id"], req.name, req.relation, req.note)
+    m = storage.ensure_memorial_for_person(
+        user["user_id"],
+        req.name,
+        req.birth_date or "",
+        req.death_date or "",
+        relation=req.relation,
+        note=req.note,
+    )
     return {"memorial": m}
 
 @router.get("/{mid}")

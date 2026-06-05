@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>念念传记写作 · 念念</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="topbar">
+            <div class="topbar-logo">
+                <div class="topbar-orb">念</div>
+                <div>
+                    <div class="topbar-name">念念</div>
+                    <div class="topbar-sub">传记写作平台</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <a class="btn btn-ghost" href="index.html">返回主页</a>
+                <div class="topbar-badge">念念传记写作</div>
+            </div>
+        </div>
+
+        <div class="steps-row" id="stepsRow"></div>
+
+        <section id="step1">
+            <div class="card" style="padding:14px 22px; margin-bottom:18px;">
+                <details open>
+                    <summary style="cursor:pointer;color:var(--muted-l);font-size:.85rem;">测试模式：一键填入示例数据</summary>
+                    <div style="margin-top:10px;">
+                        <p class="text-muted" style="margin-bottom:10px;">点击后自动填入测试数据并直接进入下一步。</p>
+                        <button class="btn" id="btnFillTest" type="button">填入全部测试数据（陈文斌示例）</button>
+                <button class="btn btn-secondary" id="btnLoadDebug" type="button" style="margin-left:8px;">加载调试模式</button>
+                    </div>
+                </details>
+            </div>
+
+            <div class="ds-entry">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:240px;">
+                        <div class="ds-entry-title">AI · 深度搜索</div>
+                        <div class="ds-entry-text">若逝者为公众人物或已有网络资料，可使用 AI 搜索自动补全逝者信息，并一键填入表单。</div>
+                    </div>
+                    <a class="btn btn-primary" href="deep_search.html?target=biography">打开 AI 深度搜索</a>
+                </div>
+            </div>
+
+            <div class="step-header">
+                <div class="step-eyebrow">Step 1 · 基本信息</div>
+                <div class="step-title">请告诉我们逝者的基本信息</div>
+                <div class="step-desc">填写的信息将作为传记生成的核心素材。</div>
+            </div>
+
+            <div class="card">
+                <div class="section-label">逝者信息</div>
+                <div class="form-grid">
+                    <div class="field"><label>逝者姓名 *</label><input type="text" id="f_deceased_name"
+                            placeholder="例如：张建国"></div>
+                    <div class="field">
+                        <label>性别</label>
+                        <div class="radio-row">
+                            <label><input type="radio" name="gender" value="男" checked>男</label>
+                            <label><input type="radio" name="gender" value="女">女</label>
+                            <label><input type="radio" name="gender" value="不便告知">不便告知</label>
+                        </div>
+                    </div>
+                    <div class="field"><label>出生日期</label><input type="text" id="f_birth_date"
+                            placeholder="如：1948年10月15日"></div>
+                    <div class="field"><label>逝世日期</label><input type="text" id="f_death_date"
+                            placeholder="如：2024年4月20日"></div>
+                    <div class="field" style="grid-column:1/-1;"><label>职业 / 身份</label><input type="text"
+                            id="f_occupation" placeholder="如：退休工程师"></div>
+                </div>
+            </div>
+
+            <div class="btn-row" style="justify-content:flex-end;">
+                <button class="btn btn-primary" id="btnToStep2">下一步：补充回忆 →</button>
+            </div>
+        </section>
+
+        <section id="step2" class="hidden">
+            <div class="step-header">
+                <div class="step-eyebrow">Step 2 · 回忆 & 风格</div>
+                <div class="step-title">把对他 / 她最珍贵的记忆告诉我们</div>
+                <div class="step-desc">传记将基于您的回忆与情感线索生成。</div>
+            </div>
+
+            <div class="card">
+                <div class="section-label">家庭回忆与生平故事 *</div>
+                <div class="field"><textarea id="f_family_memory_text" rows="10"
+                        placeholder="可包含：性格、爱好、人生重要节点、令您难忘的小事..."></textarea></div>
+                <div class="text-muted" style="margin-top:6px;">建议 300 字以上，越详细传记越打动人。</div>
+            </div>
+
+
+            <div class="card">
+                <div class="section-label">照片上传（选填）</div>
+                <label id="uploadZone" class="upload-zone">
+                    点击或拖拽上传照片 / 视频<br />
+                    <span class="text-muted">可用于生成传记展示素材</span>
+                    <input type="file" id="upload_input" class="upload-input" multiple accept="image/*,video/*">
+                </label>
+                <div class="upload-list" id="uploadList"></div>
+            </div>
+
+            <div class="btn-row" style="justify-content:space-between;">
+                <button class="btn" id="btnBackTo1">← 上一步</button>
+                <button class="btn btn-primary" id="btnToStep3">下一步：开始生成传记 →</button>
+            </div>
+        </section>
+
+        <section id="step3" class="hidden">
+            <div class="step-header">
+                <div class="step-eyebrow">Step 3 · 生成传记</div>
+                <div class="step-desc">生成完成后，可在线修改并下载到本地。</div>
+            </div>
+
+            <div class="card">
+                <div class="section-label">生成进度</div>
+                <div class="bio-progress-row">
+                    <div id="bioProgress" class="bio-progress">
+                        <div class="progress-label">生成进度：<span id="bioProgressLabel">初始化...</span></div>
+                        <div class="progress-bar">
+                            <div id="bioProgressBar" class="progress-fill"></div>
+                        </div>
+                    </div>
+                    <div class="bio-progress-actions" id="bioProgressActions">
+                        <button class="btn btn-ghost btn-icon" id="btnPauseBio" type="button" title="暂停">⏸</button>
+                        <button class="btn btn-ghost btn-icon" id="btnCancelBio" type="button" title="取消">×</button>
+                        <button class="btn btn-ghost btn-icon" id="btnRefreshBio" type="button" title="重新生成">⟳</button>
+                    </div>
+                </div>
+                <div id="bioStepBubble" class="bio-step-bubble hidden" aria-live="polite"></div>
+            </div>
+
+            <div class="card bio-result-card hidden" id="bioResult">
+                <div class="bio-result-header-actions" style="display:flex;justify-content:space-between;gap:10px;margin-bottom:14px;position:relative;align-items:center;">
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        <button class="btn btn-ghost" id="btnToggleEdit" type="button">编辑</button>
+                        <div id="editHint" class="text-muted" style="font-size:.85rem;">支持直接修改传记正文，修改后可直接导出。</div>
+                    </div>
+                    <div style="position:relative;">
+                        <button class="btn btn-primary" id="btnExportMenu" type="button">导出 ▾</button>
+                        <div id="exportMenu" class="export-menu hidden" style="position:absolute;right:0;top:calc(100% + 8px);background:#fff;border:1px solid #e5e5e5;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);overflow:hidden;z-index:20;min-width:160px;">
+                            <button class="export-menu-item" id="btnExportPDF" type="button" style="display:block;width:100%;padding:12px 16px;border:0;background:#fff;text-align:left;cursor:pointer;">导出为 PDF</button>
+                            <button class="export-menu-item" id="btnExportDOCX" type="button" style="display:block;width:100%;padding:12px 16px;border:0;background:#fff;text-align:left;cursor:pointer;">导出为 Word</button>
+                            <button class="export-menu-item" id="btnExportHTML" type="button" style="display:block;width:100%;padding:12px 16px;border:0;background:#fff;text-align:left;cursor:pointer;">导出为 HTML</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="field" id="bioEditorWrap" style="display:none;margin-bottom:16px;">
+                    <label style="display:block;margin-bottom:8px;font-weight:600;">在线编辑传记 Markdown</label>
+                    <textarea id="bioEditor" rows="18" style="width:100%;min-height:320px;resize:vertical;line-height:1.7;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></textarea>
+                </div>
+                <div id="bioContent" class="bio-html bio-prose-classic"></div>
+            </div>
+
+            <div class="btn-row" style="justify-content:flex-start;">
+                <button class="btn" id="btnBackTo2">← 上一步</button>
+            </div>
+        </section>
+
+        <style>
+            .bio-prose-classic {
+                max-width: 860px;
+                margin: 0 auto;
+                color: #24211d;
+                font-family: "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+                font-size: 17px;
+                line-height: 1.88;
+                letter-spacing: .01em;
+            }
+            .bio-title-center,
+            .bio-prose-classic .bio-title,
+            .bio-prose-classic h1,
+            .bio-prose-classic h2,
+            .bio-prose-classic h3 {
+                text-align: center;
+                margin-left: auto;
+                margin-right: auto;
+            }
+            .bio-prose-classic .bio-title {
+                color: #2f281f;
+                line-height: 1.35;
+                letter-spacing: .06em;
+            }
+            .bio-prose-classic h1,
+            .bio-prose-classic .bio-title:first-child {
+                font-size: 2.15rem;
+                margin: 1.2rem auto 1.8rem;
+            }
+            .bio-prose-classic h2,
+            .bio-prose-classic .bio-title:not(:first-child) {
+                font-size: 1.55rem;
+                margin: 2.4rem auto 1.2rem;
+                padding-bottom: .55rem;
+                border-bottom: 1px solid rgba(139, 111, 69, .22);
+            }
+            .bio-prose-classic h3 {
+                font-size: 1.2rem;
+                margin: 1.8rem auto .9rem;
+            }
+            .bio-prose-classic p {
+                margin: 0 0 1.05rem;
+                text-align: justify;
+                text-indent: 2em;
+            }
+            .bio-prose-classic blockquote {
+                margin: 1.2rem 0;
+                padding: .85rem 1.15rem;
+                border-left: 4px solid #c5a46f;
+                background: #fbf7ef;
+                color: #5f5346;
+                font-style: italic;
+                border-radius: 0 12px 12px 0;
+            }
+            .bio-prose-classic ul,
+            .bio-prose-classic ol {
+                margin: 0 0 1.1rem 1.4rem;
+                padding-left: 1.2rem;
+            }
+            .bio-prose-classic li { margin-bottom: .35rem; }
+            .bio-prose-classic .bio-image {
+                margin: 1.5rem auto;
+                text-align: center;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                clear: both;
+            }
+            .bio-prose-classic .bio-image img {
+                display: block;
+                max-width: 100%;
+                max-height: 50vh;
+                width: auto;
+                height: auto;
+                object-fit: contain;
+                margin: 0 auto;
+                border-radius: 12px;
+                box-shadow: 0 14px 34px rgba(48, 38, 26, .13);
+            }
+            .bio-prose-classic .bio-image.wrap-left {
+                float: left;
+                clear: none;
+                width: min(42%, 340px);
+                margin: .35rem 1.45rem .9rem 0;
+            }
+            .bio-prose-classic .bio-image.wrap-left img {
+                max-width: 100%;
+                max-height: 45vh;
+            }
+            .bio-prose-classic .bio-image-caption {
+                margin-top: .55rem;
+                text-align: center;
+                color: #7b7064;
+                font-size: .92rem;
+                font-style: italic;
+                line-height: 1.55;
+            }
+            .bio-prose-classic::after {
+                content: "";
+                display: block;
+                clear: both;
+            }
+            @media (max-width: 720px) {
+                .bio-prose-classic .bio-image.wrap-left {
+                    float: none;
+                    width: auto;
+                    margin: 1.5rem auto;
+                }
+                .bio-prose-classic p { text-indent: 0; }
+            }
+            .bio-step-bubble {
+                margin-top: 14px;
+                padding: 14px 16px;
+                border-radius: 16px;
+                background: linear-gradient(180deg, #fffaf0 0%, #fff2dc 100%);
+                border: 1px solid #ead8b0;
+                color: #6f5732;
+                box-shadow: 0 10px 24px rgba(166, 133, 79, 0.12);
+                line-height: 1.75;
+                white-space: pre-wrap;
+            }
+            .bio-step-bubble.hidden { display: none; }
+            .bio-step-bubble .bubble-title {
+                display: block;
+                font-weight: 700;
+                margin-bottom: 6px;
+                color: #8a6731;
+            }
+        </style>
+
+        <div class="upload-modal" id="uploadModal">
+            <div class="upload-modal-card">
+                <h3>这是什么？</h3>
+                <div class="sub">告诉念念这个照片是什么、什么时候的、有什么故事 · 念念会自动打标签存进资料库</div>
+                <div class="upload-preview" id="uploadPreview"></div>
+                <textarea id="uploadDesc" placeholder="例如：这是爸爸 2008 年在老家院子里拍的，他最喜欢这件灰呢大衣..."></textarea>
+                <div class="acts">
+                    <button id="uploadCancel" type="button">取消</button>
+                    <button class="primary" id="uploadConfirm" type="button">上传</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/biography.js"></script>
+</body>
+
+</html>

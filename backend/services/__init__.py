@@ -10,3 +10,8 @@ if str(_ROOT) not in sys.path:
 
 # 暴露常用对象，供 service_manager 引用
 ROOT_DIR = _ROOT
+
+# 导出服务模块
+from . import service_manager, session_store
+
+__all__ = ['service_manager', 'session_store', 'ROOT_DIR']
