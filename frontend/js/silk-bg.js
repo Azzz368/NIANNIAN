@@ -1,4 +1,4 @@
-// immersive-sun-bg.js — sun glow + fbm flow + tunable panel (v4)
+// immersive-sun-bg.js — sun glow + fbm flow (v4)
 (function () {
   if (typeof window === 'undefined') return;
   console.log('%c[silk-bg] v4 LOADED — tunable panel', 'background:#ff6b6b;color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold');
@@ -20,37 +20,6 @@
     bgFlowAmp: 0.11, bgFlowSpeed: 0.05, bgMixGain: 0.42, ditherAmp: 0.02,
     colCore: '#fffffa', colMid1: '#f9d6a4', colMid2: '#ecd8a1', colGlow: '#fffaf5',
     bgWarm: '#f0f2fa', bgCool: '#ffeacc', ringColor: '#ffffff'
-  };
-
-  var GROUPS = [
-    ['Sphere',     ['centerX','centerY','baseRadius']],
-    ['Breath',     ['breathAmp1','breathSpeed1','breathAmp2','breathSpeed2']],
-    ['Ripple',     ['flowOffsetScale','flowSpeed','rippleFreq1','rippleSpeed1','rippleFreq2','rippleSpeed2','rippleIdleAmp','rippleVoiceAmp']],
-    ['Edge',       ['edgeWobbleAmp','edgeWobbleVoice','edgeWobbleSpeedT','edgeWobbleSpeedR','edgeAngularFreq']],
-    ['Atmosphere', ['atmosphericBase','atmosphericVoice','atmosphericDecay']],
-    ['Core',       ['coreFalloff1','coreFalloff2','coreFalloff3','coreGlowInner','coreGlowOuter','coreMixWeight','coreBloomVoice']],
-    ['Volume',     ['voiceRadiusGain','volumeGain','volumeBias','volumePow','volumeMax','attackSpeed','decaySpeed']],
-    ['Ring',       ['ringRadiusMul','ringVoiceExpand','ringWidthBase','ringWidthVoice','ringNoiseAmp','ringOpacityBase','ringOpacityVoice']],
-    ['Background', ['bgFlowAmp','bgFlowSpeed','bgMixGain','ditherAmp']],
-    ['Colors',     ['colCore','colMid1','colMid2','colGlow','bgWarm','bgCool','ringColor']]
-  ];
-
-  var RANGES = {
-    centerX:[-1,1,0.01], centerY:[-1,1,0.01], baseRadius:[0.05,1.2,0.01],
-    breathAmp1:[0,0.3,0.005], breathSpeed1:[0,5,0.05], breathAmp2:[0,0.3,0.005], breathSpeed2:[0,5,0.05],
-    flowOffsetScale:[0,0.6,0.005], flowSpeed:[0,2,0.01],
-    rippleFreq1:[0,80,0.5], rippleSpeed1:[0,15,0.1], rippleFreq2:[0,120,0.5], rippleSpeed2:[0,20,0.1],
-    rippleIdleAmp:[0,0.1,0.001], rippleVoiceAmp:[0,0.2,0.001],
-    edgeWobbleAmp:[0,0.3,0.005], edgeWobbleVoice:[0,0.6,0.005], edgeWobbleSpeedT:[0,3,0.02], edgeWobbleSpeedR:[0,3,0.02],
-    edgeAngularFreq:[0,20,0.1],
-    atmosphericBase:[0,1,0.005], atmosphericVoice:[0,2,0.01], atmosphericDecay:[0,6,0.05],
-    coreFalloff1:[0.05,2,0.01], coreFalloff2:[0.05,3,0.01], coreFalloff3:[0.05,4,0.01],
-    coreGlowInner:[0,4,0.02], coreGlowOuter:[0,8,0.05], coreMixWeight:[0,1.5,0.01], coreBloomVoice:[0,2,0.01],
-    voiceRadiusGain:[0,2,0.01], volumeGain:[0,15,0.1], volumeBias:[-2,2,0.01], volumePow:[0.05,2,0.01], volumeMax:[0.2,3,0.05],
-    attackSpeed:[1,60,0.5], decaySpeed:[0.5,40,0.5],
-    ringRadiusMul:[0.5,3,0.01], ringVoiceExpand:[0,1,0.005], ringWidthBase:[0,0.3,0.002], ringWidthVoice:[0,0.5,0.002],
-    ringNoiseAmp:[0,0.3,0.002], ringOpacityBase:[0,1,0.01], ringOpacityVoice:[0,1.5,0.01],
-    bgFlowAmp:[0,0.6,0.005], bgFlowSpeed:[0,1,0.01], bgMixGain:[0,2,0.01], ditherAmp:[0,0.1,0.001]
   };
 
   var COLOR_KEYS = ['colCore','colMid1','colMid2','colGlow','bgWarm','bgCool','ringColor'];
@@ -247,159 +216,8 @@
       renderer.render(scene, camera);
     }
     render();
-
-    buildPanel(syncUniforms);
   }
 
-  function buildPanel(syncUniforms) {
-    if (document.getElementById('silkbgPanel')) return;
-
-    var style = document.createElement('style');
-    style.textContent = [
-      '#silkbgPanel{position:fixed;top:12px;right:12px;width:340px;max-height:88vh;overflow-y:auto;',
-      '  background:rgba(20,20,28,.92);color:#eef1f7;font:12px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;',
-      '  border-radius:10px;padding:10px 12px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:99999;',
-      '  backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.08);display:none;}',
-      '#silkbgPanel.open{display:block;}',
-      '#silkbgPanel h4{margin:10px 0 6px;font-size:11px;letter-spacing:.5px;color:#ffb359;text-transform:uppercase;font-weight:600;}',
-      '#silkbgPanel h4:first-of-type{margin-top:4px;}',
-      '#silkbgPanel .row{display:flex;align-items:center;gap:8px;margin:3px 0;}',
-      '#silkbgPanel .row label{flex:0 0 110px;font-size:11px;color:#aab3c5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
-      '#silkbgPanel .row input[type=range]{flex:1;height:14px;}',
-      '#silkbgPanel .row .val{flex:0 0 56px;text-align:right;font:11px/1 SF Mono,Consolas,monospace;color:#9be7c4;}',
-      '#silkbgPanel .row input[type=color]{width:48px;height:22px;border:0;background:transparent;cursor:pointer;padding:0;}',
-      '#silkbgPanel .toolbar{display:flex;gap:6px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.1);position:sticky;top:0;background:rgba(20,20,28,.95);z-index:2;}',
-      '#silkbgPanel button{flex:1;padding:6px 8px;background:#3b82f6;border:0;border-radius:5px;color:#fff;font-size:11px;cursor:pointer;font-weight:600;}',
-      '#silkbgPanel button.sec{background:#475569;}',
-      '#silkbgPanel button.close{flex:0 0 28px;background:#64748b;}',
-      '#silkbgPanel button:hover{filter:brightness(1.15);}',
-      '#silkbgPanel .hint{font-size:10px;color:#7b8294;margin-top:8px;text-align:center;}',
-      '#silkbgToggle{position:fixed;top:12px;right:12px;width:36px;height:36px;border-radius:50%;',
-      '  background:rgba(20,20,28,.85);color:#ffb359;border:1px solid rgba(255,255,255,.18);',
-      '  font-size:18px;cursor:pointer;z-index:99998;display:flex;align-items:center;justify-content:center;',
-      '  box-shadow:0 4px 12px rgba(0,0,0,.3);}',
-      '#silkbgToggle:hover{background:rgba(40,40,52,.95);transform:scale(1.05);}'
-    ].join('');
-    document.head.appendChild(style);
-
-    var toggle = document.createElement('button');
-    toggle.id = 'silkbgToggle';
-    toggle.title = 'Halo debug panel (toggle with ` key)';
-    toggle.textContent = '\u2699';
-    document.body.appendChild(toggle);
-
-    var panel = document.createElement('div');
-    panel.id = 'silkbgPanel';
-    document.body.appendChild(panel);
-
-    var toolbar = document.createElement('div');
-    toolbar.className = 'toolbar';
-    toolbar.innerHTML =
-      '<button id="silkbgReset" class="sec">↺ 重置</button>' +
-      '<button id="silkbgExport">📋 导出 JSON</button>' +
-      '<button id="silkbgClose" class="close">×</button>';
-    panel.appendChild(toolbar);
-
-    var rows = {};
-
-    GROUPS.forEach(function (group) {
-      var h4 = document.createElement('h4');
-      h4.textContent = group[0];
-      panel.appendChild(h4);
-      group[1].forEach(function (key) {
-        var row = document.createElement('div');
-        row.className = 'row';
-        var label = document.createElement('label');
-        label.textContent = key;
-        label.title = key;
-        row.appendChild(label);
-
-        var input, val;
-        if (COLOR_KEYS.indexOf(key) >= 0) {
-          input = document.createElement('input');
-          input.type = 'color';
-          input.value = PARAMS[key];
-          row.appendChild(input);
-          val = document.createElement('span');
-          val.className = 'val';
-          val.textContent = PARAMS[key];
-          row.appendChild(val);
-          input.addEventListener('input', function () {
-            PARAMS[key] = input.value;
-            val.textContent = input.value;
-            syncUniforms(); savePersist();
-          });
-        } else {
-          var r = RANGES[key] || [0, 1, 0.01];
-          input = document.createElement('input');
-          input.type = 'range';
-          input.min = r[0]; input.max = r[1]; input.step = r[2];
-          input.value = PARAMS[key];
-          row.appendChild(input);
-          val = document.createElement('span');
-          val.className = 'val';
-          val.textContent = (+PARAMS[key]).toFixed(3);
-          row.appendChild(val);
-          input.addEventListener('input', function () {
-            var v = parseFloat(input.value);
-            PARAMS[key] = v;
-            val.textContent = v.toFixed(3);
-            syncUniforms(); savePersist();
-          });
-        }
-        rows[key] = { input: input, val: val };
-        panel.appendChild(row);
-      });
-    });
-
-    var hint = document.createElement('div');
-    hint.className = 'hint';
-    hint.textContent = '按 ` 键 (Tab 上方) 切换面板 · 修改自动保存';
-    panel.appendChild(hint);
-
-    function openPanel() { panel.classList.add('open'); toggle.style.display = 'none'; }
-    function closePanel() { panel.classList.remove('open'); toggle.style.display = 'flex'; }
-
-    document.getElementById('silkbgClose').onclick = closePanel;
-    toggle.onclick = openPanel;
-    document.addEventListener('keydown', function (e) {
-      if (e.key === '`' || e.key === '~') {
-        if (panel.classList.contains('open')) closePanel(); else openPanel();
-      }
-    });
-
-    document.getElementById('silkbgReset').onclick = function () {
-      if (!confirm('恢复全部默认值？')) return;
-      Object.keys(DEFAULTS).forEach(function (k) { PARAMS[k] = DEFAULTS[k]; });
-      Object.keys(rows).forEach(function (k) {
-        rows[k].input.value = PARAMS[k];
-        rows[k].val.textContent = COLOR_KEYS.indexOf(k) >= 0 ? PARAMS[k] : (+PARAMS[k]).toFixed(3);
-      });
-      syncUniforms(); savePersist();
-    };
-
-    document.getElementById('silkbgExport').onclick = function () {
-      var pretty = JSON.stringify(PARAMS, null, 2);
-      var done = function () {
-        var btn = document.getElementById('silkbgExport');
-        var old = btn.textContent; btn.textContent = '✓ 已复制';
-        setTimeout(function () { btn.textContent = old; }, 1500);
-      };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(pretty).then(done).catch(function () {
-          console.log('[silk-bg] PARAMS:\n' + pretty);
-          alert('已打印到控制台 (F12)');
-        });
-      } else {
-        console.log('[silk-bg] PARAMS:\n' + pretty);
-        alert('已打印到控制台 (F12)');
-      }
-    };
-
-    window.silkbgParams = PARAMS;
-    window.silkbgSync = syncUniforms;
-    console.log('[silk-bg] panel ready. Press ` to open, or click top-right gear.');
-  }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', waitForThree);
