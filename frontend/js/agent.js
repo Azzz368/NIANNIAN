@@ -767,6 +767,77 @@
         if (state.mode === 'text') sendMessage('你好，我想制作一部追思影像');
       }, 800);
     }
+
+    // ChatGPT 默认对话按钮
+    var chatBtn = document.getElementById('defaultChatBtn');
+    if (chatBtn) {
+        chatBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if(!AgentSession.isConnected) {
+                console.log("Connect via default chat button");
+                startSession();
+            } else {
+                AgentSession.ws.close();
+            }
+        });
+    }
+    
+    // Add enter key and click handler for immersive text input
+    var immersiveTextInput = document.getElementById('immersiveTextInput');
+    var immersiveSendBtn = document.getElementById('immersiveSendBtn');
+    
+    function sendImmersiveText() {
+        if (!immersiveTextInput) return;
+        var text = immersiveTextInput.value.trim();
+        if (text) {
+            // Check if connected
+            if (!AgentSession.isConnected) {
+                startSession();
+                // Wait briefly for connection before sending
+                setTimeout(() => {
+                    if (AgentSession.isConnected && AgentSession.ws) {
+                        AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
+                        appendUserText(text);
+                        immersiveTextInput.value = '';
+                    }
+                }, 1000);
+            } else {
+                AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
+                appendUserText(text);
+                immersiveTextInput.value = '';
+            }
+        }
+    }
+    
+    if (immersiveSendBtn) {
+        immersiveSendBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            sendImmersiveText();
+        });
+    }
+    
+    if (immersiveTextInput) {
+        immersiveTextInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendImmersiveText();
+            }
+        });
+    }
+
+    // 录音状态重置
+    var origPlaceholder = inp.placeholder || '';
+    var resetRecordingState = function(){
+      state.isRecording = false;
+      if (vBtn) { vBtn.classList.remove('recording'); vBtn.title = '按住说话'; }
+      inp.classList.remove('is-listening');
+      inp.placeholder = origPlaceholder;
+    };
+    // 处理页面离开/刷新
+    window.addEventListener('beforeunload', function(){
+      if (state.mode === 'live') stopLiveMode();
+      else if (state.isRecording) stopHoldRecording();
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -4,22 +4,22 @@
   console.log('%c[silk-bg] v4 LOADED — tunable panel', 'background:#ff6b6b;color:#fff;padding:2px 8px;border-radius:3px;font-weight:bold');
 
   var DEFAULTS = {
-    centerX: 0.00, centerY: 0.50, baseRadius: 0.42,
-    breathAmp1: 0.050, breathSpeed1: 1.20, breathAmp2: 0.035, breathSpeed2: 0.55,
-    flowOffsetScale: 0.12, flowSpeed: 0.25,
-    rippleFreq1: 16.0, rippleSpeed1: 3.5, rippleFreq2: 32.0, rippleSpeed2: 6.0,
+    centerX: 0.89, centerY: 1.00, baseRadius: 0.33,
+    breathAmp1: 0.035, breathSpeed1: 0.75, breathAmp2: 0.07, breathSpeed2: 0.30,
+    flowOffsetScale: 0.06, flowSpeed: 0.51,
+    rippleFreq1: 9.0, rippleSpeed1: 5.9, rippleFreq2: 44.0, rippleSpeed2: 6.0,
     rippleIdleAmp: 0.012, rippleVoiceAmp: 0.025,
     edgeWobbleAmp: 0.06, edgeWobbleVoice: 0.15, edgeWobbleSpeedT: 0.30, edgeWobbleSpeedR: 0.60, edgeAngularFreq: 4.0,
     atmosphericBase: 0.12, atmosphericVoice: 0.24, atmosphericDecay: 1.50,
     coreFalloff1: 0.40, coreFalloff2: 0.70, coreFalloff3: 1.10,
-    coreGlowInner: 0.80, coreGlowOuter: 2.00, coreMixWeight: 0.72, coreBloomVoice: 0.32,
-    voiceRadiusGain: 0.50, volumeGain: 4.50, volumeBias: 0.25, volumePow: 0.45, volumeMax: 1.20,
-    attackSpeed: 18.0, decaySpeed: 4.0,
-    ringRadiusMul: 1.55, ringVoiceExpand: 0.25, ringWidthBase: 0.04, ringWidthVoice: 0.06,
+    coreGlowInner: 1.12, coreGlowOuter: 2.00, coreMixWeight: 0.79, coreBloomVoice: 0.57,
+    voiceRadiusGain: 0.50, volumeGain: 4.50, volumeBias: 0.06, volumePow: 0.45, volumeMax: 1.05,
+    attackSpeed: 18.0, decaySpeed: 5.5,
+    ringRadiusMul: 1.64, ringVoiceExpand: 0.165, ringWidthBase: 0.03, ringWidthVoice: 0.06,
     ringNoiseAmp: 0.05, ringOpacityBase: 0.25, ringOpacityVoice: 0.45,
-    bgFlowAmp: 0.10, bgFlowSpeed: 0.05, bgMixGain: 0.45, ditherAmp: 0.02,
-    colCore: '#fffa80', colMid1: '#ffb359', colMid2: '#ff8094', colGlow: '#fffaf5',
-    bgWarm: '#f0f2fa', bgCool: '#d1e5f7', ringColor: '#ffffff'
+    bgFlowAmp: 0.11, bgFlowSpeed: 0.05, bgMixGain: 0.42, ditherAmp: 0.02,
+    colCore: '#fffffa', colMid1: '#f9d6a4', colMid2: '#ecd8a1', colGlow: '#fffaf5',
+    bgWarm: '#f0f2fa', bgCool: '#ffeacc', ringColor: '#ffffff'
   };
 
   var GROUPS = [
