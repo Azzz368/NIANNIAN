@@ -244,11 +244,55 @@ _FILL_SYSTEM = """根据已整理资料，提取以下字段，严格输出 JSON
 
 
 def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
-    """调用 302.ai 联网搜索，返回 (organized_text, used_model)。失败降级到知识库模式。"""
+    """优先使用 DashScope qwen-plus（联网搜索能力强），失败降级 302.ai → 知识库。"""
     user_msg = f"请帮我搜索并整理：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
 
+    # ── 1) 首选：DashScope qwen-plus（阿里通义千问，联网搜索质量高）──
+    try:
+        import os as _os
+        import dashscope  # type: ignore
+        api_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
+        if api_key:
+            dashscope.api_key = api_key
+            # 使用国际区或国内区（默认国内）
+            region = _os.environ.get("DASHSCOPE_REGION", "").strip().lower()
+            if region == "intl":
+                dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
+
+            messages: Any = [
+                {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                {"role": "user",   "content": user_msg},
+            ]
+            # qwen-plus 支持联网搜索 enable_search=True
+            resp = dashscope.Generation.call(  # type: ignore[arg-type]
+                api_key=api_key,
+                model="qwen-plus",
+                messages=messages,
+                result_format="message",
+                enable_search=True,
+                temperature=0.4,
+                max_tokens=1400,
+            )
+            # 兼容两种返回结构
+            if resp and getattr(resp, "status_code", 200) == 200:
+                output = getattr(resp, "output", None) or {}
+                if isinstance(output, dict):
+                    choices = output.get("choices") or []
+                    if choices:
+                        msg = choices[0].get("message", {}) or {}
+                        content = (msg.get("content") or "").strip()
+                        if content:
+                            return {"organized": content, "model": "qwen-plus（联网）", "fallback": False}
+                # text 字段兜底
+                text = (getattr(output, "text", "") if hasattr(output, "text") else output.get("text", "")) if output else ""
+                if text:
+                    return {"organized": text.strip(), "model": "qwen-plus（联网）", "fallback": False}
+    except Exception as e:
+        print(f"[deep_search] qwen-plus failed: {e}")
+
+    # ── 2) 次选：302.ai perplexity sonar 系列 ──
     for model in _SEARCH_MODELS:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -266,7 +310,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
         except Exception:
             continue
 
-    # 降级
+    # ── 3) 降级：纯知识库模式（无联网）──
     kb_prefix = (
         "【提示：联网搜索模型暂时不可用，以下内容来自 AI 知识库，"
         "可能存在知识截止日期限制，建议核实后再填写。】\n\n"
