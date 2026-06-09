@@ -787,37 +787,22 @@
     // Add enter key and click handler for immersive text input
     var immersiveTextInput = document.getElementById('immersiveTextInput');
     var immersiveSendBtn = document.getElementById('immersiveSendBtn');
-    
+
     function sendImmersiveText() {
-        if (!immersiveTextInput) return;
-        var text = immersiveTextInput.value.trim();
-        if (text) {
-            // Check if connected
-            if (!AgentSession.isConnected) {
-                startSession();
-                // Wait briefly for connection before sending
-                setTimeout(() => {
-                    if (AgentSession.isConnected && AgentSession.ws) {
-                        AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
-                        appendUserText(text);
-                        immersiveTextInput.value = '';
-                    }
-                }, 1000);
-            } else {
-                AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
-                appendUserText(text);
-                immersiveTextInput.value = '';
-            }
-        }
+      if (!immersiveTextInput) return;
+      var text = immersiveTextInput.value.trim();
+      if (!text) return;
+      immersiveTextInput.value = '';
+      sendMessage(text);
     }
-    
+
     if (immersiveSendBtn) {
         immersiveSendBtn.addEventListener('click', function(e) {
             e.stopPropagation();
             sendImmersiveText();
         });
     }
-    
+
     if (immersiveTextInput) {
         immersiveTextInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {

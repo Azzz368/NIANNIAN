@@ -258,7 +258,7 @@
 
       </button>
 
-      <button class="session-panel-btn" id="immersiveSessionBtn" type="button" title="会话 · 人物管理 · 深度搜索" aria-label="会话面板">
+      <button class="session-panel-btn" id="immersiveSessionBtn" type="button" title="会话 · 人物管理 · 深度搜索" aria-label="会话面板" onclick="var p=document.getElementById('sessionPanel');if(p)p.classList.toggle('open')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
           <path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 004 17V4.5A2.5 2.5 0 016.5 2H20v20M4 19.5V22"/>
         </svg>
@@ -450,7 +450,7 @@
 
 <script src="js/api.js"></script>
 
-<script src="js/agent.js?v=2026060903"></script>
+<script src="js/agent.js?v=2026060904"></script>
 
 
 
@@ -776,7 +776,7 @@ document.querySelectorAll('.pcard-link').forEach(function(el) {
 <div id="sessionPanel" class="session-panel">
   <div class="session-panel-header">
     <span class="session-panel-title">会话中心</span>
-    <button id="sessionPanelClose" class="session-panel-close" type="button">&#215;</button>
+    <button id="sessionPanelClose" class="session-panel-close" type="button" onclick="document.getElementById('sessionPanel').classList.remove('open')">&#215;</button>
   </div>
   <div class="session-panel-body">
     <div class="session-section">
