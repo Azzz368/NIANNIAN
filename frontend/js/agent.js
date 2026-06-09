@@ -692,7 +692,8 @@
     renderTopnav();
     loadMemorials();
 
-    $('agentSend').addEventListener('click', function(){
+    var agentSendBtn = $('agentSend');
+    if (agentSendBtn) agentSendBtn.addEventListener('click', function(){
       var t = inp.value.trim();
       if (!t) return;
       inp.value = '';
@@ -984,6 +985,110 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+
+  // 暴露 sendMessage 给外部 IIFE（会话面板深度搜索发送）
+  window._nianSendMessage = function(text) { sendMessage(text); };
+})();
+
+// ── Session Panel 独立初始化
+(function() {
+  function bindSessionPanel() {
+    var panel = document.getElementById('sessionPanel');
+    var openBtn = document.getElementById('immersiveSessionBtn');
+    var closeBtn = document.getElementById('sessionPanelClose');
+    if (!panel || !openBtn) { console.warn('[sessionPanel] 元素缺失'); return; }
+
+    function openPanel() { panel.classList.add('open'); }
+    function closePanel() { panel.classList.remove('open'); }
+
+    openBtn.addEventListener('click', function(e) { e.stopPropagation(); openPanel(); });
+    if (closeBtn) closeBtn.addEventListener('click', closePanel);
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closePanel();
+    });
+    document.addEventListener('click', function(e) {
+      if (panel.classList.contains('open') && !panel.contains(e.target) && !openBtn.contains(e.target)) closePanel();
+    });
+
+    // 人物切换
+    var spSel = document.getElementById('sessionMemSelect');
+    if (spSel) {
+      spSel.addEventListener('change', function() {
+        var mid = spSel.value;
+        if (window.NianAuth && window.NianAuth.setActiveMemorialId) window.NianAuth.setActiveMemorialId(mid);
+        var mainSel = document.getElementById('memSelect');
+        if (mainSel) mainSel.value = mid;
+        var msgs = document.getElementById('agentMessages'); if (msgs) msgs.innerHTML = '';
+      });
+    }
+
+    // 深度搜索
+    var dsBtn = document.getElementById('sessionSearchBtn');
+    var dsInput = document.getElementById('sessionSearchInput');
+    var dsExtra = document.getElementById('sessionSearchExtra');
+    var dsResult = document.getElementById('sessionSearchResult');
+
+    function doSearch() {
+      if (!dsInput) return;
+      var q = dsInput.value.trim();
+      if (!q) { alert('\u8bf7\u8f93\u5165\u8981\u641c\u7d22\u7684\u4eba\u7269\u59d3\u540d'); return; }
+      var ex = dsExtra ? dsExtra.value.trim() : '';
+      if (dsBtn) dsBtn.disabled = true;
+      if (dsResult) {
+        dsResult.className = 'session-search-result show';
+        dsResult.innerHTML = '<div class="session-search-thinking"><span>\uD83D\uDD0D</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
+      }
+      var headers = { 'Content-Type': 'application/json' };
+      var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+      fetch('/api/intake/deep-search', {
+        method: 'POST', headers: headers,
+        body: JSON.stringify({ query: q, extra: ex, session_id: null })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function(data) {
+        if (dsBtn) dsBtn.disabled = false;
+        var text = (data.organized || data.result || '\u672a\u83b7\u53d6\u5230\u7ed3\u679c').trim();
+        if (!dsResult) return;
+        dsResult.innerHTML = '';
+        dsResult.className = 'session-search-result show';
+        var p = document.createElement('p');
+        p.style.cssText = 'margin:0;white-space:pre-wrap;font-size:.81rem;color:#3a2f22;line-height:1.7';
+        p.textContent = text.length > 600 ? text.slice(0, 600) + '...' : text;
+        dsResult.appendChild(p);
+        var applyBtn = document.createElement('button');
+        applyBtn.textContent = '\u53d1\u9001\u7ed9\u5ff5\u5ff5\u53c2\u8003';
+        applyBtn.style.cssText = 'margin-top:10px;padding:7px 0;background:linear-gradient(135deg,#C4964A,#E8C57A);border:none;border-radius:7px;color:#fff;font-size:.82rem;cursor:pointer;width:100%;font-family:inherit';
+        applyBtn.addEventListener('click', function() {
+          var summary = '\u4ee5\u4e0b\u662f\u5173\u4e8e\u300c' + q + '\u300d\u7684\u80cc\u666f\u8d44\u6599\uff0c\u8bf7\u53c2\u8003\uff1a\n' + text.slice(0, 500);
+          var agentInp = document.getElementById('agentInput');
+          var agentSend = document.getElementById('agentSend');
+          if (agentInp && agentSend) {
+            agentInp.value = summary;
+            agentSend.click();
+          } else if (window._nianSendMessage) {
+            window._nianSendMessage(summary);
+          }
+          closePanel();
+        });
+        dsResult.appendChild(applyBtn);
+      }).catch(function(e) {
+        if (dsBtn) dsBtn.disabled = false;
+        if (dsResult) dsResult.innerHTML = '<p style="color:#c0392b;font-size:.82rem;margin:0">\u641c\u7d22\u5931\u8d25\uff1a' + String(e.message || e) + '</p>';
+      });
+    }
+
+    if (dsBtn) dsBtn.addEventListener('click', doSearch);
+    if (dsInput) dsInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+    });
+
+    console.log('[sessionPanel] \u72ec\u7acb\u521d\u59cb\u5316\u5b8c\u6210\u2705');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindSessionPanel);
+  else bindSessionPanel();
 })();
 
 // 沉浸式语音按钮：仅做 DOM 层桥接，复用现有 modeLive / agentVoice 逻辑
