@@ -16,7 +16,7 @@
 
 <link rel="stylesheet" href="css/index-hero.css">
 
-<link rel="stylesheet" href="css/immersive.css">
+<link rel="stylesheet" href="css/immersive.css?v=2026060905">
 
 <style>
 
@@ -258,7 +258,7 @@
 
       </button>
 
-      <button class="session-panel-btn" id="immersiveSessionBtn" type="button" title="会话 · 人物管理 · 深度搜索" aria-label="会话面板" onclick="var p=document.getElementById('sessionPanel');if(p)p.classList.toggle('open')">
+      <button class="session-panel-btn" id="immersiveSessionBtn" type="button" title="会话 · 人物管理 · 深度搜索" aria-label="会话面板" onclick="var p=document.getElementById('sessionPanel');if(p){var o=p.classList.toggle('open');p.style.transform=o?'translateX(0)':'translateX(100%)';}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="22" height="22">
           <path d="M4 19.5A2.5 2.5 0 016.5 17H20M4 19.5A2.5 2.5 0 004 17V4.5A2.5 2.5 0 016.5 2H20v20M4 19.5V22"/>
         </svg>
@@ -773,10 +773,10 @@ document.querySelectorAll('.pcard-link').forEach(function(el) {
 
 
 <!-- Session Panel -->
-<div id="sessionPanel" class="session-panel">
+<div id="sessionPanel" class="session-panel" style="position:fixed;top:0;right:0;width:360px;max-width:92vw;height:100vh;background:rgba(253,248,240,0.97);z-index:9999;transform:translateX(100%);transition:transform 0.32s cubic-bezier(0.4,0,0.2,1);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 40px rgba(0,0,0,0.12);border-left:1px solid rgba(196,150,74,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">
   <div class="session-panel-header">
     <span class="session-panel-title">会话中心</span>
-    <button id="sessionPanelClose" class="session-panel-close" type="button" onclick="document.getElementById('sessionPanel').classList.remove('open')">&#215;</button>
+    <button id="sessionPanelClose" class="session-panel-close" type="button" onclick="var p=document.getElementById('sessionPanel');p.classList.remove('open');p.style.transform='translateX(100%)';">&#215;</button>
   </div>
   <div class="session-panel-body">
     <div class="session-section">
