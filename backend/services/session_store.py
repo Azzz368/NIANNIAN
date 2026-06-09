@@ -41,6 +41,30 @@ def create_session(form_data: Optional[Dict[str, Any]] = None) -> str:
                 "message_count":    0,      # 已分析的消息条数
                 "history":          [],     # [{role, content}]
             },
+            # 人物传记生成子状态（BIO Pipeline）
+            "bio_state": {
+                "extracted_chunks": [],    # BIO01 输出：原始信息块
+                "usable_chunks": [],       # BIO02 输出：过滤后的信息块
+                "info_gaps": [],           # BIO02 输出：信息缺口列表
+                "timeline": [],            # BIO03 输出：时间线结构
+                "bio_draft": "",           # BIO04 输出：传记草稿 (Markdown)
+                "bio_final": "",           # BIO05 输出：最终传记 (Markdown)
+                "bio_json": {},            # BIO05 输出：结构化段落 JSON
+                "quality_assessment": {},  # BIO05 输出：质量评审报告
+                "control": {
+                    "paused": False,
+                    "canceled": False,
+                },
+                "step_status": {           # 各步骤执行状态
+                    "BIO01": "pending",
+                    "BIO02": "pending",
+                    "BIO03": "pending",
+                    "BIO04": "pending",
+                    "BIO05": "pending",
+                    "BIO06": "pending",
+                },
+                "last_error": None,        # 最后一次错误信息
+            },
         }
     return sid
 
@@ -76,6 +100,20 @@ def patch_form(sid: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in fields.items():
             if v not in (None, ""):
                 s["form_data"][k] = v
+        s["updated_at"] = time.time()
+        return s
+
+
+def patch_bio_control(sid: str, paused: Optional[bool] = None, canceled: Optional[bool] = None) -> Dict[str, Any]:
+    with _LOCK:
+        s = _SESSIONS.get(sid)
+        if s is None:
+            raise KeyError(f"session not found: {sid}")
+        control = s["bio_state"].setdefault("control", {"paused": False, "canceled": False})
+        if paused is not None:
+            control["paused"] = paused
+        if canceled is not None:
+            control["canceled"] = canceled
         s["updated_at"] = time.time()
         return s
 

@@ -17,7 +17,7 @@ data/
 """
 import os, json, uuid, time, threading
 from pathlib import Path
-from typing import Any
+from typing import List, Dict, Optional, Any
 from . import oss_sync
 
 _LOCK = threading.RLock()
@@ -58,6 +58,13 @@ def save_binary(p: Path, content: bytes):
     """保存二进制文件（用户上传的资产等）+ 同步推送到 OSS。"""
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(content)
+    oss_sync.push_path(p)
+
+
+def save_text(p: Path, content: str):
+    """保存文本文件并同步推送到 OSS。"""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
     oss_sync.push_path(p)
 
 def now_iso() -> str:
@@ -122,6 +129,105 @@ def user_dir(user_id: str) -> Path:
 def memorial_dir(user_id: str, memorial_id: str) -> Path:
     return user_dir(user_id) / "memorials" / memorial_id
 
+
+def _normalize_year(value: str = "") -> str:
+    import re
+    text = (value or "").strip()
+    m = re.search(r"(\d{4})", text)
+    return m.group(1) if m else ""
+
+
+def normalize_person_key(name: str = "", birth: str = "", passing: str = "") -> tuple[str, str, str]:
+    return (
+        (name or "").strip().lower(),
+        (birth or "").strip(),
+        (passing or "").strip(),
+    )
+
+
+def find_memorial_by_identity(user_id: str, name: str = "", birth: str = "", passing: str = "") -> dict | None:
+    target = normalize_person_key(name, birth, passing)
+    for mem in list_memorials(user_id):
+        meta = get_memorial(user_id, mem.get("memorial_id", "")) or {}
+        meta_name = meta.get("name") or meta.get("subject", {}).get("name", "")
+        dossier = get_dossier(user_id, mem.get("memorial_id", ""))
+        subj = dossier.get("subject", {}) if isinstance(dossier, dict) else {}
+        meta_birth = meta.get("birth_date") or subj.get("birth", "")
+        meta_passing = meta.get("death_date") or subj.get("passing", "")
+        if normalize_person_key(meta_name, meta_birth, meta_passing) == target:
+            return meta
+    return None
+
+
+def ensure_memorial_assets(user_id: str, memorial_id: str) -> None:
+    md = memorial_dir(user_id, memorial_id)
+    md.mkdir(parents=True, exist_ok=True)
+    (md / "assets").mkdir(parents=True, exist_ok=True)
+    if not (md / "meta.json").exists():
+        _write_json(md / "meta.json", {
+            "memorial_id": memorial_id,
+            "user_id": user_id,
+            "name": "未命名",
+            "relation": "",
+            "note": "",
+            "birth_date": "",
+            "death_date": "",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "product_intent": "",
+        })
+    if not (md / "dossier.json").exists():
+        _write_json(md / "dossier.json", default_dossier())
+    if not (md / "assets.json").exists():
+        _write_json(md / "assets.json", {"assets": []})
+    conv = md / "conversations.jsonl"
+    if not conv.exists():
+        conv.touch()
+
+
+def add_dossier_memory(user_id: str, memorial_id: str, title: str, content: str, tags: Optional[list] = None) -> dict:
+    dossier = get_dossier(user_id, memorial_id)
+    if not isinstance(dossier, dict):
+        dossier = default_dossier()
+    memories = dossier.setdefault("memories", [])
+    entry = {
+        "title": title or "回忆",
+        "content": content or "",
+        "source_turn_ids": [],
+        "tags": tags or ["biography"],
+    }
+    memories.insert(0, entry)
+    save_dossier(user_id, memorial_id, dossier)
+    return entry
+
+
+def ensure_memorial_for_person(user_id: str, name: str, birth: str = "", passing: str = "", relation: str = "", note: str = "") -> dict:
+    existing = find_memorial_by_identity(user_id, name, birth, passing)
+    if existing and existing.get("memorial_id"):
+        mid = existing["memorial_id"]
+        ensure_memorial_assets(user_id, mid)
+        update_memorial_meta(user_id, mid, {
+            "name": name or existing.get("name") or "未命名",
+            "birth_date": birth or existing.get("birth_date", ""),
+            "death_date": passing or existing.get("death_date", ""),
+            "relation": relation or existing.get("relation", ""),
+            "note": note or existing.get("note", ""),
+        })
+        return get_memorial(user_id, mid) or existing
+
+    created = create_memorial(user_id, name or "未命名", relation=relation, note=note, birth_date=birth, death_date=passing)
+    mid = created.get("memorial_id")
+    if mid:
+        ensure_memorial_assets(user_id, mid)
+        update_memorial_meta(user_id, mid, {
+            "name": name or "未命名",
+            "birth_date": birth or "",
+            "death_date": passing or "",
+            "relation": relation or "",
+            "note": note or "",
+        })
+    return get_memorial(user_id, mid) or created
+
 # ─── Memorial（纪念对象 / 数字人对象） ────────────────────────────
 def list_memorials(user_id: str) -> list[dict]:
     base = user_dir(user_id) / "memorials"
@@ -140,7 +246,7 @@ def list_memorials(user_id: str) -> list[dict]:
 def get_memorial(user_id: str, memorial_id: str) -> dict | None:
     return _read_json(memorial_dir(user_id, memorial_id) / "meta.json", None)
 
-def create_memorial(user_id: str, name: str, relation: str = "", note: str = "") -> dict:
+def create_memorial(user_id: str, name: str, relation: str = "", note: str = "", birth_date: str = "", death_date: str = "", occupation: str = "") -> dict:
     mid = new_id("m_")
     meta = {
         "memorial_id": mid,
@@ -148,6 +254,8 @@ def create_memorial(user_id: str, name: str, relation: str = "", note: str = "")
         "name": name or "未命名",
         "relation": relation or "",
         "note": note or "",
+        "birth_date": birth_date or "",
+        "death_date": death_date or "",
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "product_intent": "",     # 用户产品倾向：video / biography / digital_human / unsure
@@ -157,7 +265,7 @@ def create_memorial(user_id: str, name: str, relation: str = "", note: str = "")
         md.mkdir(parents=True, exist_ok=True)
         (md / "assets").mkdir(parents=True, exist_ok=True)
         _write_json(md / "meta.json", meta)
-        _write_json(md / "dossier.json", default_dossier(name, relation))
+        _write_json(md / "dossier.json", default_dossier(name, relation, birth_date, death_date))
         (md / "conversations.jsonl").touch()
         _write_json(md / "assets.json", {"assets": []})
     return meta
@@ -169,7 +277,23 @@ def update_memorial_meta(user_id: str, memorial_id: str, patch: dict) -> dict | 
             return None
         meta.update({k: v for k, v in patch.items() if k not in ("memorial_id", "user_id", "created_at")})
         meta["updated_at"] = now_iso()
+        if patch.get("birth_date"):
+            meta["birth_date"] = patch.get("birth_date")
+        if patch.get("death_date"):
+            meta["death_date"] = patch.get("death_date")
         _write_json(memorial_dir(user_id, memorial_id) / "meta.json", meta)
+        dossier = get_dossier(user_id, memorial_id)
+        if isinstance(dossier, dict):
+            subject = dossier.setdefault("subject", {})
+            if patch.get("name"):
+                subject["name"] = patch.get("name")
+            if patch.get("birth_date"):
+                subject["birth"] = patch.get("birth_date")
+            if patch.get("death_date"):
+                subject["passing"] = patch.get("death_date")
+            if patch.get("relation"):
+                subject["relation"] = patch.get("relation")
+            save_dossier(user_id, memorial_id, dossier)
         return meta
 
 def delete_memorial(user_id: str, memorial_id: str) -> bool:
@@ -183,9 +307,9 @@ def delete_memorial(user_id: str, memorial_id: str) -> bool:
     return True
 
 # ─── Dossier（资料库） ────────────────────────────────────────────
-def default_dossier(name: str = "", relation: str = "") -> dict:
+def default_dossier(name: str = "", relation: str = "", birth: str = "", passing: str = "") -> dict:
     return {
-        "subject": {"name": name, "relation": relation, "birth": "", "passing": "", "locations": [], "occupation": ""},
+        "subject": {"name": name, "relation": relation, "birth": birth, "passing": passing, "occupation": "", "locations": [], "occupation_raw": ""},
         "personality": {"keywords": [], "habits": [], "catchphrases": []},
         "relationships": [],          # [{name, relation, note}]
         "memories": [],               # [{title, content, source_turn_ids, tags}]
@@ -303,4 +427,24 @@ def update_asset(user_id: str, memorial_id: str, asset_id: str, patch: dict) -> 
                 a.update(patch)
                 _write_json(p, data)
                 return a
+    return None
+
+
+def delete_asset(user_id: str, memorial_id: str, asset_id: str) -> dict | None:
+    with _LOCK:
+        p = memorial_dir(user_id, memorial_id) / "assets.json"
+        data = _read_json(p, {"assets": []})
+        for idx, a in enumerate(data["assets"]):
+            if a.get("asset_id") == asset_id:
+                asset = data["assets"].pop(idx)
+                _write_json(p, data)
+                stored_name = asset.get("stored_name")
+                if stored_name:
+                    path = memorial_dir(user_id, memorial_id) / "assets" / stored_name
+                    if path.exists():
+                        try:
+                            path.unlink()
+                        except Exception:
+                            pass
+                return asset
     return None

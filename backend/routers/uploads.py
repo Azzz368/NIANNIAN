@@ -197,3 +197,10 @@ def patch_asset(mid: str, aid: str, req: AssetPatchReq, user = Depends(security.
     if not a:
         raise HTTPException(404, "文件不存在")
     return {"asset": a}
+
+@router.delete("/{mid}/assets/{aid}")
+def delete_asset(mid: str, aid: str, user = Depends(security.get_current_user)):
+    asset = storage.delete_asset(user["user_id"], mid, aid)
+    if not asset:
+        raise HTTPException(404, "文件不存在")
+    return {"deleted": True}
