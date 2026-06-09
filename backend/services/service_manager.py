@@ -25,6 +25,7 @@ from llm_client import (  # type: ignore
     generate_video_kling,
 )
 from skill_loader import load_skill  # type: ignore
+from core import storage as core_storage  # type: ignore
 
 ROOT_DIR    = Path(__file__).resolve().parent.parent.parent
 SKILLS_DIR  = ROOT_DIR / "skills"
@@ -35,6 +36,78 @@ FINAL_DIR   = OUTPUTS_DIR / "final_cuts"
 
 for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR):
     _d.mkdir(parents=True, exist_ok=True)
+
+
+def indent_markdown_paragraphs(text: str, indent: str = "　　") -> str:
+    """将 Markdown 文本中每个自然段首行前加上指定缩进。"""
+    import re
+
+    if not text:
+        return text
+
+    parts = re.split(r'(\n\s*\n)', text)
+    output = []
+    for part in parts:
+        if re.fullmatch(r'\n\s*\n', part):
+            output.append(part)
+            continue
+
+        stripped = part.lstrip('\n')
+        if not stripped.strip():
+            output.append(part)
+            continue
+
+        first_line = stripped.splitlines()[0]
+        if re.match(r'^(#{1,6}\s|>\s|[-*+]\s|\d+\.\s|```|\s*$)', first_line):
+            output.append(part)
+            continue
+
+        output.append(re.sub(r'^([ \t]*)(?=\S)', r'\1' + indent, part, count=1, flags=re.MULTILINE))
+
+    return ''.join(output)
+
+
+def normalize_bio_asset(asset: dict) -> dict:
+    """Normalize asset metadata for biography payload."""
+    return {
+        "asset_id": asset.get("asset_id") or asset.get("saved_as") or asset.get("filename") or "",
+        "filename": asset.get("filename") or asset.get("saved_as") or "",
+        "kind": asset.get("kind") or (asset.get("mime", "").split("/")[0] if asset.get("mime") else ""),
+        "description": asset.get("description") or asset.get("summary") or "",
+        "summary": asset.get("summary") or asset.get("description") or "",
+        "tags": asset.get("tags", []),
+        "url": asset.get("url") or asset.get("asset_url") or "",
+        "period": asset.get("period") or asset.get("time_period") or "",
+        "usable_for": asset.get("usable_for", []),
+    }
+
+
+def get_biography_assets(s: dict) -> List[dict]:
+    """Collect asset metadata from session and memorial storage for biography generation."""
+    assets: List[dict] = []
+    seen: set[str] = set()
+    form = s.get("form_data", {}) or {}
+
+    for asset in s.get("assets", []) or []:
+        norm = normalize_bio_asset(asset)
+        if norm["url"] and norm["asset_id"] not in seen:
+            assets.append(norm)
+            seen.add(norm["asset_id"])
+
+    user_id = form.get("user_id")
+    memorial_id = form.get("memorial_id")
+    if user_id and memorial_id:
+        try:
+            stored_assets = core_storage.list_assets(user_id, memorial_id)
+            for asset in stored_assets:
+                norm = normalize_bio_asset(asset)
+                if norm["url"] and norm["asset_id"] not in seen:
+                    assets.append(norm)
+                    seen.add(norm["asset_id"])
+        except Exception:
+            pass
+
+    return assets
 
 
 # ── 测试数据 ───────────────────────────────────────────────────────────────
@@ -699,3 +772,275 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"视频未返回 URL：{res}"}
     scene["_video_url"] = url
     return {"url": url}
+
+
+# ── 人物传记生成 Pipeline（BIO01~BIO05）────────────────────────────────
+BIO_FILES = {
+    "BIO01": "BIO01-media-extract.md",
+    "BIO02": "BIO02-info-audit.md",
+    "BIO03": "BIO03-timeline-rebuild.md",
+    "BIO04": "BIO04-biography-writer.md",
+    "BIO05": "BIO05-quality-review.md",
+    "BIO06": "BIO06-layout-css.md",
+}
+BIO_ORDER = ["BIO01", "BIO02", "BIO03", "BIO04", "BIO05", "BIO06"]
+
+
+def run_bio_step(sid: str, bio_step_id: str) -> Dict[str, Any]:
+    """执行单个传记生成步骤（BIO01~BIO06）"""
+    import time as _t
+    
+    if bio_step_id not in BIO_FILES:
+        return {"error": True, "message": f"unknown step: {bio_step_id}"}
+    
+    s = session_store.require(sid)
+    bio_state = s["bio_state"]
+    control = bio_state.setdefault("control", {"paused": False, "canceled": False})
+    if control.get("canceled"):
+        return {"error": True, "step": bio_step_id, "message": "已取消"}
+    if control.get("paused"):
+        return {"error": True, "step": bio_step_id, "message": "已暂停"}
+    
+    # 检查前置依赖
+    step_idx = BIO_ORDER.index(bio_step_id)
+    for prev_step in BIO_ORDER[:step_idx]:
+        if bio_state["step_status"].get(prev_step) != "approved":
+            return {"error": True, "message": f"{bio_step_id} 需要前置步骤 {prev_step} 完成"}
+    
+    # 标记为运行中
+    bio_state["step_status"][bio_step_id] = "running"
+    print(f"[biography] run_bio_step start session={sid} step={bio_step_id}")
+    t0 = _t.time()
+    
+    try:
+        skill_path = SKILLS_DIR / BIO_FILES[bio_step_id]
+        system_prompt = load_skill(str(skill_path))
+        
+        # 为各步骤构建输入 payload
+        if bio_step_id == "BIO01":
+            payload = {
+                "form_data": s["form_data"],
+                "assets": get_biography_assets(s),
+            }
+        elif bio_step_id == "BIO02":
+            payload = {
+                "extracted_chunks": bio_state.get("extracted_chunks", []),
+            }
+        elif bio_step_id == "BIO03":
+            payload = {
+                "usable_chunks": bio_state.get("usable_chunks", []),
+                "form_data": s["form_data"],
+            }
+        elif bio_step_id == "BIO04":
+            payload = {
+                "form_data": s["form_data"],
+                "usable_chunks": bio_state.get("usable_chunks", []),
+                "timeline": bio_state.get("timeline", []),
+                "assets": get_biography_assets(s),
+            }
+        elif bio_step_id == "BIO05":
+            payload = {
+                "biography_draft": bio_state.get("bio_draft", ""),
+                "form_data": s["form_data"],
+                "usable_chunks": bio_state.get("usable_chunks", []),
+                "timeline": bio_state.get("timeline", []),
+                "assets": get_biography_assets(s),
+            }
+        elif bio_step_id == "BIO06":
+            payload = {
+                "biography_md": bio_state.get("bio_final", ""),
+                "form_data": s["form_data"],
+                "render_target": "web",
+                "assets": get_biography_assets(s),
+            }
+        else:
+            return {"error": True, "message": f"unsupported step: {bio_step_id}"}
+        
+        # 调用 Skill
+        result = call_skill(bio_step_id, system_prompt, payload)
+        elapsed = round(_t.time() - t0, 2)
+        
+        if isinstance(result, dict) and result.get("error"):
+            bio_state["step_status"][bio_step_id] = "error"
+            bio_state["last_error"] = result.get("message", "unknown")
+            return {"error": True, "step": bio_step_id, "message": result.get("message")}
+        
+        # 如果在执行过程中已取消，则不保存结果
+        if bio_state.get("control", {}).get("canceled") or bio_state["step_status"].get(bio_step_id) == "cancelled":
+            bio_state["step_status"][bio_step_id] = "cancelled"
+            bio_state["last_error"] = "已取消"
+            return {"error": True, "step": bio_step_id, "message": "已取消"}
+
+        # 更新 bio_state，存储步骤输出
+        if bio_step_id == "BIO01":
+            bio_state["extracted_chunks"] = result.get("extracted_chunks", [])
+        elif bio_step_id == "BIO02":
+            bio_state["usable_chunks"] = result.get("usable_chunks", [])
+            bio_state["info_gaps"] = result.get("info_gaps", [])
+            form = s.get("form_data", {}) or {}
+            user_id = form.get("user_id")
+            memorial_id = form.get("memorial_id")
+            if user_id and memorial_id:
+                note = form.get("family_memory_text", "") or result.get("summary", "") or ""
+                try:
+                    core_storage.add_dossier_memory(user_id, memorial_id, "Step2 回忆", note, tags=["biography", "step2"])
+                except Exception as _ex:
+                    print(f"[biography] failed to save step2 memory: {_ex}")
+            form = s.get("form_data", {}) or {}
+            user_id = form.get("user_id")
+            memorial_id = form.get("memorial_id")
+            if user_id and memorial_id:
+                note = form.get("family_memory_text", "") or result.get("summary", "") or ""
+                try:
+                    core_storage.add_dossier_memory(user_id, memorial_id, "Step2 回忆", note, tags=["biography", "step2"])
+                except Exception as _ex:
+                    print(f"[biography] failed to save step2 memory: {_ex}")
+        elif bio_step_id == "BIO03":
+            bio_state["timeline"] = result.get("timeline", [])
+        elif bio_step_id == "BIO04":
+            bio_draft = result.get("biography_markdown", "")
+            bio_state["bio_draft"] = indent_markdown_paragraphs(bio_draft)
+            bio_state["bio_json"] = result.get("biography_json", {})
+            form = s.get("form_data", {}) or {}
+            user_id = form.get("user_id")
+            memorial_id = form.get("memorial_id")
+            if user_id and memorial_id and bio_draft:
+                try:
+                    core_storage.add_dossier_memory(user_id, memorial_id, "传记草稿", bio_draft[:1000], tags=["biography", "draft"])
+                except Exception as _ex:
+                    print(f"[biography] failed to save draft memory: {_ex}")
+        elif bio_step_id == "BIO05":
+            bio_final = result.get("biography_final", "")
+            bio_state["bio_final"] = indent_markdown_paragraphs(bio_final)
+            bio_state["bio_json"] = result.get("biography_json", {})
+            bio_state["quality_assessment"] = result.get("quality_assessment", {})
+        elif bio_step_id == "BIO06":
+            bio_state["bio_css"] = result.get("bio_css", "")
+            bio_state["bio_layout_notes"] = result.get("layout_notes", [])
+        
+        bio_state["step_status"][bio_step_id] = "approved"
+        
+        # 持久化：不再写入 backend/outputs，改为写入对应 memorial 目录
+        try:
+            import json as _json
+            form = s.get("form_data", {}) or {}
+            user_id = form.get("user_id")
+            memorial_id = form.get("memorial_id")
+            if user_id and memorial_id:
+                md_dir = core_storage.memorial_dir(user_id, memorial_id)
+                md_dir.mkdir(parents=True, exist_ok=True)
+                out_path = md_dir / f"biography_{bio_step_id.lower()}.json"
+                out_path.write_text(_json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(f"[biography] wrote step result to {out_path}")
+        except Exception as _ex:
+            print(f"[biography] failed to save step json after {bio_step_id}: {_ex}")
+
+        # BIO05/BIO06 完成后写入用户 memorial 目录
+        if bio_step_id in ("BIO05", "BIO06"):
+            try:
+                form = s.get("form_data", {}) or {}
+                user_id = form.get("user_id")
+                memorial_id = form.get("memorial_id")
+                md_dir = None
+                if user_id and memorial_id:
+                    md_dir = core_storage.memorial_dir(user_id, memorial_id)
+                    md_dir.mkdir(parents=True, exist_ok=True)
+                if bio_step_id == "BIO05":
+                    bio_md = bio_state.get("bio_final", "")
+                    if bio_md and md_dir is not None:
+                        (md_dir / "biography.md").write_text(bio_md, encoding="utf-8")
+                        print(f"[biography] wrote final markdown to {md_dir / 'biography.md'}")
+                if bio_step_id == "BIO06":
+                    bio_css = bio_state.get("bio_css", "")
+                    if bio_css and md_dir is not None:
+                        (md_dir / "biography.css").write_text(bio_css, encoding="utf-8")
+                        print(f"[biography] wrote bio css to {md_dir / 'biography.css'}")
+            except Exception as _ex:
+                print(f"[biography] failed to save bio artifacts after {bio_step_id}: {_ex}")
+
+        print(f"[biography] run_bio_step finished session={sid} step={bio_step_id} duration={elapsed}s error={result.get('error', False)}")
+        return {
+            "ok": True,
+            "step": bio_step_id,
+            "duration_sec": elapsed,
+            "result": result,
+        }
+    
+    except Exception as exc:
+        elapsed = round(_t.time() - t0, 2)
+        bio_state["step_status"][bio_step_id] = "error"
+        bio_state["last_error"] = str(exc)
+        print(f"[biography] run_bio_step failed session={sid} step={bio_step_id} error={exc}")
+        return {"error": True, "step": bio_step_id, "message": str(exc)}
+
+
+def run_bio_chain(sid: str) -> Dict[str, Any]:
+    """串行执行 BIO01→BIO06，返回最终传记与排版结果"""
+    print(f"[biography] run_bio_chain start session={sid}")
+    results = {}
+    for bio_step_id in BIO_ORDER:
+        res = run_bio_step(sid, bio_step_id)
+        results[bio_step_id] = res
+        if res.get("error"):
+            print(f"[biography] run_bio_chain failed session={sid} failed_step={bio_step_id} message={res.get('message')}")
+            return {
+                "error": True,
+                "failed_step": bio_step_id,
+                "message": res.get("message"),
+                "results": results,
+            }
+    
+    s = session_store.require(sid)
+    print(f"[biography] run_bio_chain completed session={sid}")
+    # 将最终传记与排版样式写入 data/users/{user_id}/memorials/{memorial_id}/
+    try:
+        bio_md = s["bio_state"].get("bio_final", "")
+        bio_css = s["bio_state"].get("bio_css", "")
+        form = s.get("form_data", {}) or {}
+        user_id = form.get("user_id")
+        memorial_id = form.get("memorial_id")
+        if user_id and memorial_id:
+            try:
+                md_dir = core_storage.memorial_dir(user_id, memorial_id)
+                md_dir.mkdir(parents=True, exist_ok=True)
+                if bio_md:
+                    (md_dir / "biography.md").write_text(bio_md, encoding="utf-8")
+                if bio_css:
+                    (md_dir / "biography.css").write_text(bio_css, encoding="utf-8")
+                print(f"[biography] wrote final artifacts to {md_dir}")
+            except Exception as _ex:
+                print(f"[biography] failed to write final biography artifacts to user folder: {_ex}")
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "message": "传记生成完成",
+        "results": results,
+        "biography_final": s["bio_state"].get("bio_final", ""),
+        "bio_css": s["bio_state"].get("bio_css", ""),
+        "biography_json": s["bio_state"].get("bio_json", {}),
+    }
+
+
+def get_biography_result(sid: str) -> Dict[str, Any]:
+    """获取当前 session 的传记最终输出"""
+    s = session_store.require(sid)
+    bio_state = s["bio_state"]
+    
+    if bio_state["step_status"].get("BIO05") != "approved":
+        return {
+            "error": True,
+            "message": "传记还未生成完成",
+            "step_status": bio_state["step_status"],
+        }
+    
+    return {
+        "ok": True,
+        "biography_final": bio_state.get("bio_final", ""),
+        "bio_css": bio_state.get("bio_css", ""),
+        "biography_json": bio_state.get("bio_json", {}),
+        "quality_assessment": bio_state.get("quality_assessment", {}),
+        "info_gaps": bio_state.get("info_gaps", []),
+        "timeline": bio_state.get("timeline", []),
+    }
+
