@@ -1,0 +1,224 @@
+/* Immersive Chat Styles */
+
+/* 背景兜底渐变：若 WebGL 不可用，仍能看到太阳般的氛围 */
+html, body {
+  background: radial-gradient(ellipse 90% 70% at 50% 25%,
+    #fff7c2 0%,
+    #ffd17a 18%,
+    #ff8e8a 32%,
+    #ffd4b8 48%,
+    #f6e7c5 70%,
+    #c9e6c4 100%) !important;
+}
+#silkCanvas { z-index: 0 !important; }
+
+.immersive-chat {
+  position: absolute;
+  bottom: 5vh;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.ai-text-container {
+  position: absolute;
+  bottom: 26vh;
+  width: 80%;
+  text-align: center;
+}
+
+.immersive-ai-text {
+  font-size: 1.7rem;
+  color: #3b2c15;
+  font-family: 'Songti SC', serif;
+  text-shadow: 0 0 12px rgba(255,255,255,0.85), 0 0 24px rgba(255,255,255,0.55);
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  transition: transform .25s ease, opacity .25s ease;
+}
+
+.user-text-container {
+  position: absolute;
+  bottom: 18vh;
+  width: 80%;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.immersive-user-text {
+  font-size: 1rem;
+  color: #6b5640;
+  font-weight: 300;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+}
+
+.immersive-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: absolute;
+  bottom: 6vh;
+  pointer-events: auto;
+}
+
+.big-voice-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(196, 150, 74, 0.5);
+  color: #8a7654;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(4px);
+}
+
+.big-voice-btn:hover {
+  background: rgba(255, 255, 255, 0.6);
+  transform: scale(1.05);
+}
+
+.big-voice-btn.recording {
+  background: rgba(196, 150, 74, 0.6);
+  color: #fff;
+  animation: pulseBtn 1.5s infinite;
+}
+
+/* AI 文本样式（音量驱动的 scale 抖动已移除，保留静态柔光） */
+.immersive-ai-text {
+  --ai-vol: 0;
+  text-shadow:
+    0 0 16px rgba(255, 230, 180, 0.7),
+    0 0 32px rgba(255, 200, 140, 0.35);
+}
+
+.immersive-text-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1.5px solid rgba(226, 211, 190, 0.6);
+  border-radius: 36px;
+  padding: 2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05), inset 0 0 10px rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+/* 鎏金白金边缘流光效果 */
+.immersive-text-input-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: 38px;
+  background: linear-gradient(
+    90deg, 
+    transparent 0%, 
+    transparent 30%, 
+    #FFFCEB 50%, 
+    #D0B48A 60%,
+    transparent 70%, 
+    transparent 100%
+  );
+  background-size: 250% 100%;
+  animation: shineFlow 3s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+  -webkit-mask: 
+    linear-gradient(#fff 0 0) content-box, 
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1.5px;
+}
+
+.immersive-text-input-wrapper::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 35px;
+  z-index: 1;
+}
+
+.immersive-text-input-wrapper:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border: 1.5px solid rgba(255, 240, 200, 0.8);
+  box-shadow: 0 4px 20px rgba(226, 211, 190, 0.3), inset 0 0 15px rgba(255, 255, 255, 0.3);
+}
+
+@keyframes shineFlow {
+  0% { background-position: 250% 0; }
+  100% { background-position: -250% 0; }
+}
+
+.immersive-text-input {
+  width: 280px;
+  height: 48px;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0 16px;
+  font-size: 16px;
+  color: #4a4a4a;
+  font-family: inherit;
+  position: relative;
+  z-index: 2;
+}
+
+.immersive-text-input::placeholder {
+  color: rgba(90, 90, 90, 0.6);
+}
+
+.immersive-send-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(196, 150, 74, 0.8);
+  border: none;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  margin: 2px 4px 2px 2px;
+  transition: all 0.2s;
+  position: relative;
+  z-index: 2;
+}
+
+.immersive-send-btn:hover {
+  background: rgba(196, 150, 74, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(196, 150, 74, 0.4);
+}
+
+.immersive-send-btn:active {
+  transform: translateY(1px);
+}
+
+@keyframes pulseBtn {
+  0% { box-shadow: 0 0 0 0 rgba(196, 150, 74, 0.4); }
+  70% { box-shadow: 0 0 0 20px rgba(196, 150, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(196, 150, 74, 0); }
+}
+
+.premium-footer-contact {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: #8a7654;
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  font-family: "Songti SC", serif;
+}
+

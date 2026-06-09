@@ -7,7 +7,7 @@ from fastapi import Header, HTTPException, Depends
 JWT_SECRET = os.getenv("JWT_SECRET", "nian-dev-secret-change-me-in-prod")
 JWT_ALG = "HS256"
 JWT_TTL = 60 * 60 * 24 * 30   # 30 天
-OWNER_ACCESS_CODE = os.getenv("OWNER_ACCESS_CODE", "666666")
+OWNER_ACCESS_CODE = os.getenv("OWNER_ACCESS_CODE", "NIAN-2026-OWNER")
 OWNER_USER_ID = "owner"
 
 

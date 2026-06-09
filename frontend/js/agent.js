@@ -60,6 +60,11 @@
   }
 
   function appendBubble(role, text){
+    if(document.getElementById('immersiveChat')) {
+      if(role === 'user') document.getElementById('immersiveUserText').textContent = text;
+      else document.getElementById('immersiveAiText').textContent = text;
+    }
+
     var list = $('agentMessages');
     var wrap = document.createElement('div');
     wrap.className = 'msg-row ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -296,6 +301,28 @@
     try { state.playCtx = new AudioCtx({ sampleRate: 24000 }); } catch(e) { state.playCtx = new AudioCtx(); }
     state.playTime = 0;
 
+    // AnalyserNode 实时跟踪 AI 输出音量（驱动光晕动效）
+    try {
+      state.playAnalyser = state.playCtx.createAnalyser();
+      state.playAnalyser.fftSize = 1024;
+      state.playAnalyser.smoothingTimeConstant = 0.3;
+      state.playAnalyser.connect(state.playCtx.destination);
+      state._volBuf = new Float32Array(state.playAnalyser.fftSize);
+      if (!state._volRAF) {
+        var sampleVol = function(){
+          if (!state.playAnalyser) { state._volRAF = null; return; }
+          try {
+            state.playAnalyser.getFloatTimeDomainData(state._volBuf);
+            var _s = 0, _n = state._volBuf.length;
+            for (var _i=0; _i<_n; _i++) _s += state._volBuf[_i] * state._volBuf[_i];
+            window.aiActiveVolume = Math.sqrt(_s / _n);
+          } catch(e){}
+          state._volRAF = requestAnimationFrame(sampleVol);
+        };
+        state._volRAF = requestAnimationFrame(sampleVol);
+      }
+    } catch(e) { console.warn('[analyser] init failed', e); }
+
     setLiveStatus('正在连接 Qwen-Omni-Realtime...', true);
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var qs = [];
@@ -312,7 +339,7 @@
     // ─── 停止检测 state（服务端 VAD 已设为 7s 静音，这里只做 UI 渐弱提示 + 关键词快捷提交）─
     state.committing = false;
     state.fadeActive = false;
-    state.aiSpeaking = false;
+    state.aiSpeaking = false; window.aiActiveVolume=0;
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
@@ -416,7 +443,12 @@
     if (t === 'response.audio_transcript.delta' && msg.delta) {
       if (!state.liveAiBubble) { state.liveAiBubble = appendBubble('ai', ''); state.liveAiText = ''; }
       state.liveAiText += msg.delta;
-      state.liveAiBubble.querySelector('.bubble-text').textContent = state.liveAiText;
+      
+    state.liveAiBubble.querySelector('.bubble-text').textContent = state.liveAiText;
+    if(document.getElementById('immersiveAiText')) {
+      document.getElementById('immersiveAiText').textContent = state.liveAiText;
+    }
+
       scrollBottom();
       return;
     }
@@ -430,10 +462,10 @@
       try {
         var i16 = base64ToInt16(msg.delta);
         var f32 = int16ToFloat32(i16);
-        var buf = state.playCtx.createBuffer(1, f32.length, 24000);
+        var sum=0; for(var _i=0; _i<f32.length; _i++) sum+=f32[_i]*f32[_i]; window.aiActiveVolume=Math.sqrt(sum/f32.length); var buf = state.playCtx.createBuffer(1, f32.length, 24000);
         buf.copyToChannel(f32, 0);
         var src = state.playCtx.createBufferSource();
-        src.buffer = buf; src.connect(state.playCtx.destination);
+        src.buffer = buf; src.connect(state.playAnalyser || state.playCtx.destination);
         var now = state.playCtx.currentTime;
         var startAt = Math.max(state.playTime, now + 0.02);
         src.start(startAt);
@@ -459,9 +491,11 @@
     if (state.procNode) { try { state.procNode.disconnect(); } catch(e){} state.procNode = null; }
     if (state.micNode)  { try { state.micNode.disconnect();  } catch(e){} state.micNode  = null; }
     if (state.audioCtx) { try { state.audioCtx.close(); } catch(e){} state.audioCtx = null; }
+    if (state._volRAF) { cancelAnimationFrame(state._volRAF); state._volRAF = null; }
+    if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
-    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null;
+    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
     cleanupLive();
@@ -733,8 +767,106 @@
         if (state.mode === 'text') sendMessage('你好，我想制作一部追思影像');
       }, 800);
     }
+
+    // ChatGPT 默认对话按钮
+    var chatBtn = document.getElementById('defaultChatBtn');
+    if (chatBtn) {
+        chatBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if(!AgentSession.isConnected) {
+                console.log("Connect via default chat button");
+                startSession();
+            } else {
+                AgentSession.ws.close();
+            }
+        });
+    }
+    
+    // Add enter key and click handler for immersive text input
+    var immersiveTextInput = document.getElementById('immersiveTextInput');
+    var immersiveSendBtn = document.getElementById('immersiveSendBtn');
+    
+    function sendImmersiveText() {
+        if (!immersiveTextInput) return;
+        var text = immersiveTextInput.value.trim();
+        if (text) {
+            // Check if connected
+            if (!AgentSession.isConnected) {
+                startSession();
+                // Wait briefly for connection before sending
+                setTimeout(() => {
+                    if (AgentSession.isConnected && AgentSession.ws) {
+                        AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
+                        appendUserText(text);
+                        immersiveTextInput.value = '';
+                    }
+                }, 1000);
+            } else {
+                AgentSession.ws.send(JSON.stringify({ type: 'text', text: text }));
+                appendUserText(text);
+                immersiveTextInput.value = '';
+            }
+        }
+    }
+    
+    if (immersiveSendBtn) {
+        immersiveSendBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            sendImmersiveText();
+        });
+    }
+    
+    if (immersiveTextInput) {
+        immersiveTextInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendImmersiveText();
+            }
+        });
+    }
+
+    // 录音状态重置
+    var origPlaceholder = inp.placeholder || '';
+    var resetRecordingState = function(){
+      state.isRecording = false;
+      if (vBtn) { vBtn.classList.remove('recording'); vBtn.title = '按住说话'; }
+      inp.classList.remove('is-listening');
+      inp.placeholder = origPlaceholder;
+    };
+    // 处理页面离开/刷新
+    window.addEventListener('beforeunload', function(){
+      if (state.mode === 'live') stopLiveMode();
+      else if (state.isRecording) stopHoldRecording();
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+})();
+
+// 沉浸式语音按钮：仅做 DOM 层桥接，复用现有 modeLive / agentVoice 逻辑
+(function(){
+  function bind(){
+    var immersiveBtn = document.getElementById('immersiveVoiceBtn');
+    if (!immersiveBtn) return;
+    var aiText = document.getElementById('immersiveAiText');
+    var isLive = false;
+    immersiveBtn.addEventListener('click', function(){
+      var modeLive = document.getElementById('modeLive');
+      var modeText = document.getElementById('modeText');
+      if (!isLive) {
+        if (modeLive) modeLive.click();
+        immersiveBtn.classList.add('recording');
+        if (aiText) aiText.textContent = '念念正在倾听…';
+        isLive = true;
+      } else {
+        if (modeText) modeText.click();
+        immersiveBtn.classList.remove('recording');
+        if (aiText) aiText.textContent = '已结束。再次点击重新开始。';
+        isLive = false;
+      }
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
+  else bind();
 })();
