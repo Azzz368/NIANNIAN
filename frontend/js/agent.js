@@ -1069,6 +1069,88 @@
       if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
     });
 
+    // ── 上传素材到当前人物资料库 ──
+    var upZone  = document.getElementById('sessionUploadZone');
+    var upInput = document.getElementById('sessionUploadInput');
+    var upList  = document.getElementById('sessionUploadList');
+
+    function _getActiveMid() {
+      var mid = spSel && spSel.value;
+      if (!mid && window.NianAuth && window.NianAuth.getActiveMemorialId) {
+        mid = window.NianAuth.getActiveMemorialId();
+      }
+      if (!mid) {
+        var mainSel = document.getElementById('memSelect');
+        if (mainSel) mid = mainSel.value;
+      }
+      return mid;
+    }
+
+    function _uploadOne(mid, file) {
+      var item = document.createElement('div');
+      item.className = 'session-upload-item';
+      var safeName = file.name.length > 32 ? file.name.slice(0, 30) + '…' : file.name;
+      item.innerHTML = '<span class="upload-name" title="' + file.name.replace(/"/g, '&quot;') + '">' + safeName + '</span><span class="upload-status">上传中…</span>';
+      if (upList) upList.prepend(item);
+      var statusEl = item.querySelector('.upload-status');
+
+      var fd = new FormData();
+      fd.append('file', file);
+      fd.append('description', '');
+
+      var headers = {};
+      var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+
+      fetch('/api/memorials/' + encodeURIComponent(mid) + '/upload', {
+        method: 'POST', headers: headers, body: fd
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t) { throw new Error('HTTP ' + r.status + ' ' + t.slice(0, 80)); });
+        return r.json();
+      }).then(function(data) {
+        item.classList.add('success');
+        if (statusEl) statusEl.textContent = '✓ 已入库';
+      }).catch(function(e) {
+        item.classList.add('error');
+        if (statusEl) statusEl.textContent = '✗ ' + (e.message || '失败').slice(0, 28);
+      });
+    }
+
+    function _handleFiles(files) {
+      var mid = _getActiveMid();
+      if (!mid) { alert('请先在上方选择或新建一个人物'); return; }
+      if (!files || !files.length) return;
+      Array.prototype.forEach.call(files, function(f) { _uploadOne(mid, f); });
+    }
+
+    if (upZone && upInput) {
+      upZone.addEventListener('click', function() {
+        var mid = _getActiveMid();
+        if (!mid) { alert('请先在上方选择或新建一个人物'); return; }
+        upInput.click();
+      });
+      upInput.addEventListener('change', function() {
+        _handleFiles(upInput.files);
+        upInput.value = '';
+      });
+      // 拖拽上传
+      ['dragenter', 'dragover'].forEach(function(ev) {
+        upZone.addEventListener(ev, function(e) {
+          e.preventDefault(); e.stopPropagation();
+          upZone.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(function(ev) {
+        upZone.addEventListener(ev, function(e) {
+          e.preventDefault(); e.stopPropagation();
+          upZone.classList.remove('dragover');
+        });
+      });
+      upZone.addEventListener('drop', function(e) {
+        if (e.dataTransfer && e.dataTransfer.files) _handleFiles(e.dataTransfer.files);
+      });
+    }
+
     console.log('[sessionPanel] \u72ec\u7acb\u521d\u59cb\u5316\u5b8c\u6210\u2705');
   }
 

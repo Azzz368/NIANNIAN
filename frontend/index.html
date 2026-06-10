@@ -16,7 +16,7 @@
 
 <link rel="stylesheet" href="css/index-hero.css">
 
-<link rel="stylesheet" href="css/immersive.css?v=2026061004">
+<link rel="stylesheet" href="css/immersive.css?v=2026061011">
 
 <style>
 
@@ -451,7 +451,7 @@
 
 <script src="js/api.js"></script>
 
-<script src="js/agent.js?v=2026061006"></script>
+<script src="js/agent.js?v=2026061011"></script>
 
 
 
@@ -786,6 +786,19 @@ document.querySelectorAll('.pcard-link').forEach(function(el) {
         <select id="sessionMemSelect"><option>加载中...</option></select>
         <button class="session-new-btn" id="sessionNewMemBtn" type="button">+ 新建</button>
       </div>
+    </div>
+    <div class="session-section">
+      <div class="session-section-title">上传素材到资料库</div>
+      <input type="file" id="sessionUploadInput" multiple style="display:none" accept="image/*,audio/*,video/*,.pdf,.txt,.doc,.docx,.md" />
+      <div class="session-upload-zone" id="sessionUploadZone" title="点击上传文件到当前人物资料库">
+        <div class="session-upload-circle">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </div>
+        <div class="session-upload-hint">点击或拖拽上传 · 自动入当前人物资料库</div>
+      </div>
+      <div id="sessionUploadList" class="session-upload-list"></div>
     </div>
     <div class="session-section">
       <div class="session-section-title">对话记录</div>

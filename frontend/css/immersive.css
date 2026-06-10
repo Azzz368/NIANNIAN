@@ -444,6 +444,88 @@ html, body {
   padding: 6px 0;
 }
 
+/* ── 上传素材 UI（ChatGPT 风格虚化圆 + 号） ── */
+.session-upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 18px 0 14px;
+  cursor: pointer;
+  border: 1.5px dashed rgba(196, 150, 74, 0.35);
+  border-radius: 14px;
+  background: rgba(255, 253, 248, 0.5);
+  transition: all 0.22s ease;
+}
+.session-upload-zone:hover {
+  background: rgba(255, 243, 222, 0.7);
+  border-color: rgba(196, 150, 74, 0.65);
+}
+.session-upload-zone.dragover {
+  background: rgba(255, 235, 195, 0.85);
+  border-color: #C4964A;
+  border-style: solid;
+}
+.session-upload-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a7654;
+  box-shadow:
+    0 4px 18px rgba(196, 150, 74, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  margin-bottom: 9px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.session-upload-zone:hover .session-upload-circle {
+  transform: scale(1.08);
+  box-shadow:
+    0 6px 24px rgba(196, 150, 74, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+.session-upload-hint {
+  font-size: 0.76rem;
+  color: #7a6a52;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+.session-upload-list {
+  margin-top: 10px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.session-upload-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 7px;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  color: #3a2f22;
+  border: 1px solid rgba(196, 150, 74, 0.1);
+}
+.session-upload-item .upload-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+.session-upload-item .upload-status {
+  font-size: 0.7rem;
+  color: #8a7654;
+  flex-shrink: 0;
+}
+.session-upload-item.success .upload-status { color: #5ba055; font-weight: 500; }
+.session-upload-item.error .upload-status { color: #c0392b; }
+
 /* ── controls-row2：桌面端用 display:contents 透明穿透 flex 父容器
    手机端在媒体查询内覆盖为 display:flex ── */
 .controls-row2 {
