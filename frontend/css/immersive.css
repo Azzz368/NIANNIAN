@@ -444,3 +444,106 @@ html, body {
   padding: 6px 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   手机端适配 — iOS / Android 竖屏（≤ 768px）
+   光球居中 · 控制区居中 · 输入框全宽 · 文字尺寸缩小
+   桌面端（> 768px）完全不受影响
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── 光球 canvas 居中（JS 同步调整 shader uniform）── */
+  #silkCanvas {
+    width: 100vw !important;
+    height: 100vh !important;
+  }
+
+  /* ── 整体沉浸聊天容器 ── */
+  .immersive-chat {
+    bottom: 0;
+    height: 100%;
+    justify-content: flex-end;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* ── AI 文字：缩小 + 上移，给控制区留出空间 ── */
+  .ai-text-container {
+    bottom: 30vh;
+    width: 90%;
+  }
+  .immersive-ai-text {
+    font-size: 1.2rem;
+  }
+
+  /* ── 用户回话文字 ── */
+  .user-text-container {
+    bottom: 23vh;
+    width: 90%;
+  }
+  .immersive-user-text {
+    font-size: 0.88rem;
+  }
+
+  /* ── 控制区：竖排居中，语音按钮在上，输入框在下 ── */
+  .immersive-controls {
+    position: absolute;
+    bottom: calc(4vh + env(safe-area-inset-bottom, 0px));
+    left: 0;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    box-sizing: border-box;
+  }
+
+  /* ── 语音按钮：缩小一点，居中 ── */
+  .big-voice-btn {
+    width: 60px;
+    height: 60px;
+  }
+  .big-voice-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* ── 会话面板按钮 ── */
+  .session-panel-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* ── 文字输入框：全宽铺开 ── */
+  .immersive-text-input-wrapper {
+    width: 100%;
+    max-width: 480px;
+  }
+  .immersive-text-input {
+    width: 100%;
+    min-width: 0;
+    font-size: 15px;
+  }
+
+  /* ── 会话面板：全屏宽度 ── */
+  #sessionPanel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+
+  /* ── Premium 卡片区：单列 ── */
+  .premium-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 12px !important;
+  }
+  .premium-headline { font-size: 1.6rem !important; }
+  .premium-sub { font-size: 0.82rem !important; }
+}
+
+/* iPhone SE / 小屏手机 ≤ 390px 额外微调 */
+@media (max-width: 390px) {
+  .ai-text-container { bottom: 32vh; }
+  .immersive-ai-text { font-size: 1.05rem; }
+  .immersive-controls { bottom: calc(3vh + env(safe-area-inset-bottom, 0px)); }
+  .big-voice-btn { width: 54px; height: 54px; }
+  .premium-grid { grid-template-columns: 1fr !important; }
+}
+
