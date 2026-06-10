@@ -197,13 +197,18 @@
       var pr = renderer.getPixelRatio();
       uniforms.uResolution.value.set(w * pr, h * pr);
 
+      // ── Y 补偿：修复 uResolution 后 uv.y 范围从错误的 [-1, 2pr-1] 变成正确的 [-1, 1]
+      // 为保持"修复前"视觉高度一致 → Y_new = (Y_old + 1) / pr - 1
+      // pr=1 时无变化；pr=2 时自动下移让视觉位置不变
+      var fixY = function (yOld) { return (yOld + 1) / pr - 1; };
+
       // ── 光球水平始终居中（x=0），仅手机端覆盖Y和半径
       var isMobile = w <= 768 && h > w;
       if (isMobile) {
-        uniforms.uCenter.value.set(0, 1.25);  // 水平居中，Y保持手机设定
+        uniforms.uCenter.value.set(0, fixY(1.25));   // 手机端：原视觉位置（修复前 Y=1.25）
         uniforms.uBaseRadius.value = 0.22;
       } else {
-        uniforms.uCenter.value.set(0, PARAMS.centerY);  // 水平居中，Y用桌面默认
+        uniforms.uCenter.value.set(0, fixY(PARAMS.centerY));  // 桌面端：原视觉位置
         uniforms.uBaseRadius.value = PARAMS.baseRadius;
       }
     }
