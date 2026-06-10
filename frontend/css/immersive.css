@@ -483,51 +483,58 @@ html, body {
     font-size: 0.88rem;
   }
 
-  /* ── 控制区：wrap 横排
-     第1行：语音按钮独占居中
-     第2行：书本按钮 + 输入框 + 发送按钮 ── */
+  /* ── 控制区：竖列，语音按钮第1行，书本+输入第2行 ── */
   .immersive-controls {
     position: absolute;
     bottom: calc(2.5vh + env(safe-area-inset-bottom, 0px));
     left: 0;
     width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: center;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     padding: 0 16px;
     box-sizing: border-box;
   }
 
-  /* ── 语音按钮：独占一整行（flex-basis 100%），自身居中 ── */
+  /* ── 语音按钮：正圆，独占第1行 ── */
   .big-voice-btn {
-    flex: 0 0 100%;
-    justify-content: center;   /* 按钮内部已 display:flex */
-    width: 60px;
-    height: 60px;
-    margin: 0 auto 2px;
-    order: 1;
+    flex: 0 0 auto;
+    width: 60px !important;
+    height: 60px !important;
+    min-width: 60px;
+    min-height: 60px;
+    max-width: 60px;
+    max-height: 60px;
+    border-radius: 50% !important;
+    margin: 0;
   }
   .big-voice-btn svg {
     width: 24px;
     height: 24px;
   }
 
-  /* ── 书本（会话）按钮：与输入框同行，在左侧 ── */
+  /* ── 第2行容器：书本 + 输入框 + 发送键横排 ── */
+  .controls-row2 {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ── 书本（会话）按钮 ── */
   .session-panel-btn {
     flex: 0 0 auto;
     width: 42px;
     height: 42px;
-    order: 2;
   }
 
-  /* ── 文字输入框：同行，变短（不再全宽）── */
+  /* ── 文字输入框：变短 ── */
   .immersive-text-input-wrapper {
     flex: 1 1 auto;
     max-width: 260px;
     width: auto;
-    order: 3;
   }
   .immersive-text-input {
     width: 100%;
