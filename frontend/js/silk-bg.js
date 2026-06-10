@@ -192,7 +192,10 @@
     function resize() {
       var w = window.innerWidth, h = window.innerHeight;
       renderer.setSize(w, h);
-      uniforms.uResolution.value.set(w, h);
+      // ── 关键修复：uResolution 必须用 framebuffer 实际像素（含 pixelRatio）
+      // gl_FragCoord 是物理像素，若用 CSS 像素会导致 uv 水平方向偏移
+      var pr = renderer.getPixelRatio();
+      uniforms.uResolution.value.set(w * pr, h * pr);
 
       // ── 光球水平始终居中（x=0），仅手机端覆盖Y和半径
       var isMobile = w <= 768 && h > w;
