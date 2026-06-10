@@ -194,13 +194,13 @@
       renderer.setSize(w, h);
       uniforms.uResolution.value.set(w, h);
 
-      // ── 手机端（≤768px 竖屏）：光球偏右上方 + 缩小半径
+      // ── 光球水平始终居中（x=0），仅手机端覆盖Y和半径
       var isMobile = w <= 768 && h > w;
       if (isMobile) {
-        uniforms.uCenter.value.set(0.54, 1.25);  // 右移 + 上移
+        uniforms.uCenter.value.set(0, 1.25);  // 水平居中，Y保持手机设定
         uniforms.uBaseRadius.value = 0.22;
       } else {
-        uniforms.uCenter.value.set(PARAMS.centerX, PARAMS.centerY);
+        uniforms.uCenter.value.set(0, PARAMS.centerY);  // 水平居中，Y用桌面默认
         uniforms.uBaseRadius.value = PARAMS.baseRadius;
       }
     }
