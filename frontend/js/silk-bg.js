@@ -197,7 +197,7 @@
       // ── 手机端（≤768px 竖屏）：光球偏右上方 + 缩小半径
       var isMobile = w <= 768 && h > w;
       if (isMobile) {
-        uniforms.uCenter.value.set(0.54, 0.95);  // 右移 + 上移
+        uniforms.uCenter.value.set(0.54, 1.25);  // 右移 + 上移
         uniforms.uBaseRadius.value = 0.22;
       } else {
         uniforms.uCenter.value.set(PARAMS.centerX, PARAMS.centerY);
