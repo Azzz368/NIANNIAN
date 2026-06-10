@@ -483,39 +483,51 @@ html, body {
     font-size: 0.88rem;
   }
 
-  /* ── 控制区：竖排居中，语音按钮在上，输入框在下 ── */
+  /* ── 控制区：wrap 横排
+     第1行：语音按钮独占居中
+     第2行：书本按钮 + 输入框 + 发送按钮 ── */
   .immersive-controls {
     position: absolute;
-    bottom: calc(4vh + env(safe-area-inset-bottom, 0px));
+    bottom: calc(2.5vh + env(safe-area-inset-bottom, 0px));
     left: 0;
     width: 100%;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
     align-items: center;
-    gap: 12px;
-    padding: 0 20px;
+    gap: 10px;
+    padding: 0 16px;
     box-sizing: border-box;
   }
 
-  /* ── 语音按钮：缩小一点，居中 ── */
+  /* ── 语音按钮：独占一整行（flex-basis 100%），自身居中 ── */
   .big-voice-btn {
+    flex: 0 0 100%;
+    justify-content: center;   /* 按钮内部已 display:flex */
     width: 60px;
     height: 60px;
+    margin: 0 auto 2px;
+    order: 1;
   }
   .big-voice-btn svg {
     width: 24px;
     height: 24px;
   }
 
-  /* ── 会话面板按钮 ── */
+  /* ── 书本（会话）按钮：与输入框同行，在左侧 ── */
   .session-panel-btn {
-    width: 44px;
-    height: 44px;
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    order: 2;
   }
 
-  /* ── 文字输入框：全宽铺开 ── */
+  /* ── 文字输入框：同行，变短（不再全宽）── */
   .immersive-text-input-wrapper {
-    width: 100%;
-    max-width: 480px;
+    flex: 1 1 auto;
+    max-width: 260px;
+    width: auto;
+    order: 3;
   }
   .immersive-text-input {
     width: 100%;

@@ -194,10 +194,10 @@
       renderer.setSize(w, h);
       uniforms.uResolution.value.set(w, h);
 
-      // ── 手机端（≤768px 竖屏）：光球居中偏下 + 缩小半径
+      // ── 手机端（≤768px 竖屏）：光球偏右上方 + 缩小半径
       var isMobile = w <= 768 && h > w;
       if (isMobile) {
-        uniforms.uCenter.value.set(0.0, 0.35);
+        uniforms.uCenter.value.set(0.20, 0.65);  // 右移 + 上移30%
         uniforms.uBaseRadius.value = 0.22;
       } else {
         uniforms.uCenter.value.set(PARAMS.centerX, PARAMS.centerY);
