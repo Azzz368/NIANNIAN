@@ -679,7 +679,7 @@
     setTimeout(function(){
       var sel = $('memSelect');
       var name = (sel && sel.options[sel.selectedIndex]) ? sel.options[sel.selectedIndex].text.split(' · ')[0] : '';
-      var hi = name && name !== 'Ta' ? '你好，我想和你聊聊 ' + name : '你好，我想制作一部追思影像';
+      var hi = name && name !== 'Ta' ? '你好，我想和你聊聊 ' + name : '你好，今天有什么想聊的吗？';
       if (state.mode === 'text') sendMessage(hi);
     }, 600);
   }
@@ -766,7 +766,7 @@
     if (!state.hasGreeted) {
       state.hasGreeted = true;
       setTimeout(function(){
-        if (state.mode === 'text') sendMessage('你好，我想制作一部追思影像');
+        if (state.mode === 'text') sendMessage('你好，今天有什么想聊的吗？');
       }, 800);
     }
 
