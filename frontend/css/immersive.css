@@ -444,6 +444,12 @@ html, body {
   padding: 6px 0;
 }
 
+/* ── controls-row2：桌面端用 display:contents 透明穿透 flex 父容器
+   手机端在媒体查询内覆盖为 display:flex ── */
+.controls-row2 {
+  display: contents; /* 透明于父 flex，子元素直接作为兄弟项排列 */
+}
+
 /* ═══════════════════════════════════════════════════════════════
    手机端适配 — iOS / Android 竖屏（≤ 768px）
    光球居中 · 控制区居中 · 输入框全宽 · 文字尺寸缩小
