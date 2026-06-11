@@ -154,7 +154,7 @@
     if (!file || state.isThinking) return;
     state.isThinking = true;
 
-    appendBubble('user', '📷 ' + file.name);
+    appendBubble('user', '[图片] ' + file.name);
     state.history.push({ role: 'user', content: '[图片：' + file.name + ']' });
 
     var thinkEl = showThinkBubble();
@@ -171,7 +171,7 @@
         if (ur.ok) {
           var ud = await ur.json();
           var utags = ((ud.asset || {}).tags || []).slice(0, 4).join('、');
-          showToast('📎 已入资料库' + (utags ? '：' + utags : ''), 2800);
+          showToast('已入资料库' + (utags ? '：' + utags : ''), 2800);
         }
       } catch(e) { console.warn('[img-lib] upload failed:', e); }
     }
@@ -712,9 +712,9 @@
       var d = await r.json();
       var asset = d.asset || {};
       var tags = (asset.tags || []).slice(0,4).join('、');
-      appendBubble('user', '📎 我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
+      appendBubble('user', '我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
       appendBubble('ai', '我把这份资料收下了。' + (tags ? '我读到了：' + tags + '。' : '') + ' 这些内容已经存进 Ta 的资料库里了，我们继续聊。');
-      showToast('📎 已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
+      showToast('已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
       closeUploadModal();
     } catch(e){
       console.error(e);
@@ -1023,7 +1023,7 @@
       if (dsBtn) dsBtn.disabled = true;
       if (dsResult) {
         dsResult.className = 'session-search-result show';
-        dsResult.innerHTML = '<div class="session-search-thinking"><span>\ud83d\udd0d</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
+        dsResult.innerHTML = '<div class="session-search-thinking"><span>...</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
       }
       var headers = { 'Content-Type': 'application/json' };
       var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
@@ -1119,7 +1119,7 @@
       if (dsBtn) dsBtn.disabled = true;
       if (dsResult) {
         dsResult.className = 'session-search-result show';
-        dsResult.innerHTML = '<div class="session-search-thinking"><span>\uD83D\uDD0D</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
+        dsResult.innerHTML = '<div class="session-search-thinking"><span>...</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
       }
       var headers = { 'Content-Type': 'application/json' };
       var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
