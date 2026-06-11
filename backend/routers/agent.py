@@ -1,5 +1,5 @@
 # backend/routers/agent.py — 念念智能体 · 文本流式 + ASR + 资料库智能提取
-import os, json, io
+import os, json, io, base64 as _b64
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.background import BackgroundTask
@@ -197,6 +197,105 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
     if user and req.memorial_id and storage.get_memorial(user["user_id"], req.memorial_id):
         def _after():
             _persist_and_extract(user["user_id"], req.memorial_id, req.message, full_reply["text"])
+        bg = BackgroundTask(_after)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        background=bg,
+    )
+
+
+@router.post("/image-chat")
+async def agent_image_chat(
+    image: UploadFile = File(...),
+    history: str = Form("[]"),
+    memorial_id: Optional[str] = Form(None),
+    user = Depends(security.get_current_user_optional),
+):
+    """流式 SSE：用户上传图片 → qwen-vl-plus 视觉分析 → 念念温柔回应。"""
+    raw = await image.read()
+    if len(raw) > 10 * 1024 * 1024:
+        raise HTTPException(413, "图片不超过 10MB")
+
+    mime = image.content_type or "image/jpeg"
+    b64_str = _b64.b64encode(raw).decode("utf-8")
+    image_data_url = f"data:{mime};base64,{b64_str}"
+
+    try:
+        hist_data = json.loads(history)
+    except Exception:
+        hist_data = []
+
+    client = get_client()
+    messages: list = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # 注入 dossier 摘要
+    if user and memorial_id:
+        try:
+            d = storage.get_dossier(user["user_id"], memorial_id)
+            subj = d.get("subject", {})
+            ctx = []
+            if subj.get("name") or subj.get("relation"):
+                ctx.append(f"已知对象：{subj.get('name','')}（{subj.get('relation','')}）")
+            pi = d.get("product_intent", {})
+            if pi.get("primary"):
+                ctx.append(f"产品倾向：{pi['primary']}")
+            if ctx:
+                messages.append({"role": "system", "content": "【资料库摘要】\n" + "\n".join(ctx)})
+        except Exception:
+            pass
+
+    for m in hist_data[-20:]:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if content:
+            messages.append({"role": role, "content": content})
+
+    # 图片 + 引导提示词
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": image_data_url}},
+            {"type": "text", "text": "用户刚刚上传了这张照片。请作为念念，用温柔克制的语气描述你看到的内容，并自然地问一句这张照片背后的故事。不超过60字。"},
+        ],
+    })
+
+    full_reply: dict = {"text": ""}
+
+    def generate():
+        try:
+            stream = client.chat.completions.create(
+                model="qwen-vl-plus",
+                messages=messages,  # type: ignore[arg-type]
+                stream=True,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if getattr(delta, "content", None):
+                    full_reply["text"] += delta.content
+                    payload = json.dumps({"type": "text", "delta": delta.content}, ensure_ascii=False)
+                    yield f"data: {payload}\n\n"
+        except Exception as e:
+            payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
+            yield f"data: {payload}\n\n"
+        yield "data: [DONE]\n\n"
+
+    bg = None
+    if user and memorial_id and storage.get_memorial(user["user_id"], memorial_id):
+        uid = user["user_id"]
+        mid = memorial_id
+        def _after():
+            try:
+                storage.append_conversation(uid, mid, [
+                    {"role": "user", "content": "[上传图片]"},
+                    {"role": "assistant", "content": full_reply["text"]},
+                ])
+            except Exception:
+                pass
         bg = BackgroundTask(_after)
 
     return StreamingResponse(

@@ -131,6 +131,9 @@
               fullText += evt.delta;
               if (!aiEl) { thinkEl.remove(); aiEl = appendBubble('ai', ''); }
               aiEl.querySelector('.bubble-text').textContent = fullText;
+              // 同步更新光球沉浸式文字区域
+              var _imAi = document.getElementById('immersiveAiText');
+              if (_imAi) _imAi.textContent = fullText;
               scrollBottom();
             } else if (evt.type === 'error') {
               thinkEl.remove(); appendBubble('ai', '抱歉，念念暂时无法回应。');
@@ -144,6 +147,85 @@
 
     if (fullText) state.history.push({ role:'assistant', content: fullText });
     state.isThinking = false; setInputLock(false); scrollBottom();
+  }
+
+  // ─── 图片上传并分析（主界面 + 号按钮）────────────────────────────
+  async function sendImageMessage(file) {
+    if (!file || state.isThinking) return;
+    state.isThinking = true;
+
+    appendBubble('user', '📷 ' + file.name);
+    state.history.push({ role: 'user', content: '[图片：' + file.name + ']' });
+
+    var thinkEl = showThinkBubble();
+    var fullText = ''; var aiEl = null;
+
+    // Step 1: 上传到当前对象资料库
+    var mid = window.NianAuth && window.NianAuth.getActiveMemorialId ? window.NianAuth.getActiveMemorialId() : null;
+    if (mid && window.NianAuth && window.NianAuth.isAuthed()) {
+      try {
+        var fd = new FormData();
+        fd.append('file', file);
+        fd.append('description', '');
+        var ur = await window.NianAuth.fetch('/api/memorials/' + encodeURIComponent(mid) + '/upload', { method: 'POST', body: fd });
+        if (ur.ok) {
+          var ud = await ur.json();
+          var utags = ((ud.asset || {}).tags || []).slice(0, 4).join('、');
+          showToast('📎 已入资料库' + (utags ? '：' + utags : ''), 2800);
+        }
+      } catch(e) { console.warn('[img-lib] upload failed:', e); }
+    }
+
+    // Step 2: 发给 Qwen VL 分析（念念做视觉回应）
+    try {
+      var headers = {};
+      var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+
+      var form = new FormData();
+      form.append('image', file);
+      form.append('history', JSON.stringify(state.history.slice(-20)));
+      if (mid) form.append('memorial_id', mid);
+
+      var resp = await fetch('/api/agent/image-chat', { method: 'POST', headers: headers, body: form });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      while (true) {
+        var rr = await reader.read();
+        if (rr.done) break;
+        buf += decoder.decode(rr.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (var ii = 0; ii < lines.length; ii++) {
+          var ln = lines[ii];
+          if (!ln.startsWith('data:')) continue;
+          var rw = ln.slice(5).trim();
+          if (rw === '[DONE]') break;
+          try {
+            var ev = JSON.parse(rw);
+            if (ev.type === 'text') {
+              fullText += ev.delta;
+              if (!aiEl) { thinkEl.remove(); aiEl = appendBubble('ai', ''); }
+              aiEl.querySelector('.bubble-text').textContent = fullText;
+              var _imAi2 = document.getElementById('immersiveAiText');
+              if (_imAi2) _imAi2.textContent = fullText;
+              scrollBottom();
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {
+      thinkEl.remove();
+      appendBubble('ai', '图片分析失败：' + e.message);
+    }
+
+    if (fullText) state.history.push({ role: 'assistant', content: fullText });
+    state.isThinking = false;
+    setInputLock(false);
+    scrollBottom();
   }
 
   // ─── 文字模式：按住录音 ────────────────────────────────────────
@@ -741,6 +823,22 @@
       });
       fInp.addEventListener('change', function(){
         if (fInp.files && fInp.files[0]) openUploadModal(fInp.files[0]);
+      });
+    }
+
+    // 主界面光球聊天框右侧 + 号上传按钮
+    var immUploadBtn = $('immersiveUploadBtn');
+    var immImageInput = $('immersiveImageInput');
+    if (immUploadBtn && immImageInput) {
+      immUploadBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        immImageInput.click();
+      });
+      immImageInput.addEventListener('change', function() {
+        if (immImageInput.files && immImageInput.files[0]) {
+          sendImageMessage(immImageInput.files[0]);
+          immImageInput.value = '';
+        }
       });
     }
     var uc = $('uploadCancel'), uok = $('uploadConfirm');
