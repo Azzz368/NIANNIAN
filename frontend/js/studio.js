@@ -2,10 +2,13 @@
 const { apiGet, apiPost, getSessionId, toast, esc } = window.NN;
 
 const state = {
-  sid:    getSessionId(),
-  scenes: [],
-  chars:  null,
-  mv04:   null,
+  sid:       getSessionId(),
+  mid:       new URLSearchParams(location.search).get('mid') || '',  // 来自素材库的 memorial_id
+  scenes:    [],
+  chars:     null,
+  mv04:      null,
+  libImages: [],     // 素材库中的图片资产
+  refB64:    '',     // 当前选中的参考图 base64
 };
 
 const $    = id => document.getElementById(id);
@@ -180,7 +183,9 @@ async function genSceneImage(idx) {
   renderScenes();
   setPill('MV05', 'active');
   try {
-    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, {});
+    const body = {};
+    if (state.refB64) body.ref_b64 = state.refB64;
+    const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, body);
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
@@ -211,6 +216,75 @@ async function genSceneVideo(idx) {
     toast('视频生成失败：' + e.message);
   } finally {
     renderScenes();
+  }
+}
+
+// ───── 素材库照片加载 & 参考图选择 ─────
+async function loadLibraryAssets() {
+  if (!state.mid) return;
+  const tok = localStorage.getItem('nian_token') || '';
+  if (!tok) return;
+  try {
+    const res = await fetch(`/api/memorials/${encodeURIComponent(state.mid)}`, {
+      headers: { 'Authorization': 'Bearer ' + tok }
+    });
+    if (!res.ok) return;
+    const d = await res.json();
+    state.libImages = (d.assets || []).filter(a => a.kind === 'image');
+    if (state.libImages.length) {
+      renderRefPhotoBar();
+      $('refPhotoBar').classList.remove('hidden');
+    }
+  } catch(e) {
+    console.warn('[studio] 加载素材库照片失败:', e);
+  }
+}
+
+function renderRefPhotoBar() {
+  const list = $('refPhotoList');
+  list.innerHTML = '';
+  // 「不用参考」选项
+  const none = document.createElement('div');
+  none.className = 'ref-photo-item active';
+  none.innerHTML = `<div class="ref-photo-none">不用参考<br>纯文生图</div>`;
+  none.onclick = () => selectRefPhoto(-1, null, none);
+  list.appendChild(none);
+
+  state.libImages.forEach((a, i) => {
+    const url = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(localStorage.getItem('nian_token') || '');
+    const el = document.createElement('div');
+    el.className = 'ref-photo-item';
+    el.title = a.filename || a.asset_id;
+    el.innerHTML = `<img src="${esc(url)}" alt="${esc(a.filename || '')}">` ;
+    el.onclick = () => selectRefPhoto(i, a.url, el);
+    list.appendChild(el);
+  });
+}
+
+async function selectRefPhoto(idx, rawUrl, el) {
+  document.querySelectorAll('.ref-photo-item').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  if (idx < 0 || !rawUrl) {
+    state.refB64 = '';
+    $('refPhotoHint').textContent = '选中照片后，AI 会以该人物面貌生成每张画面；点「不用参考」则纯文生图';
+    return;
+  }
+  const tok = localStorage.getItem('nian_token') || '';
+  try {
+    const r = await fetch(rawUrl, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    state.refB64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    $('refPhotoHint').textContent = '✓ 已选择「' + esc(state.libImages[idx].filename || '照片') + '」为参考，点“生成图片”将使用图生图模式';
+    toast('参考照片已加载');
+  } catch(e) {
+    state.refB64 = '';
+    toast('照片加载失败：' + e.message);
   }
 }
 
@@ -265,6 +339,9 @@ async function bootstrap() {
       renderScenes();
     }
   } catch { /* 没生成过则保持初始 UI */ }
+
+  // 3. 加载素材库图片（若 URL 含 ?mid=）
+  await loadLibraryAssets();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -47,6 +47,17 @@
   .lightbox.open .lightbox-img{transform:scale(1);}
   .lightbox-close{position:absolute;top:18px;right:24px;width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:24px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .2s;}
   .lightbox-close:hover{background:rgba(255,255,255,.22);transform:rotate(90deg);}
+
+  /* 参考照片选择器 */
+  .ref-photo-bar{background:var(--surf2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px;}
+  .ref-photo-label{font-size:.8rem;font-weight:600;color:var(--muted-l);letter-spacing:.05em;margin-bottom:10px;}
+  .ref-photo-list{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .ref-photo-item{cursor:pointer;border-radius:8px;border:2px solid var(--border);overflow:hidden;transition:border-color .2s,transform .2s;flex-shrink:0;}
+  .ref-photo-item:hover{border-color:var(--gold);transform:scale(1.04);}
+  .ref-photo-item.active{border-color:var(--gold);box-shadow:0 0 0 3px rgba(196,150,74,.25);}
+  .ref-photo-item img{width:72px;height:72px;object-fit:cover;display:block;}
+  .ref-photo-none{width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-size:.68rem;color:var(--muted-l);text-align:center;padding:6px;line-height:1.4;}
+  .ref-photo-hint{font-size:.72rem;color:var(--muted-l);margin-top:8px;}
 </style>
 </head>
 <body>
@@ -108,6 +119,12 @@
       <div class="step-eyebrow">第二步</div>
       <div class="step-title">逐镜生成画面 &amp; 短视频</div>
       <div class="step-desc">点击每个分镜下方的按钮，AI 会为该画面生成图片和动画。</div>
+    </div>
+    <!-- 参考照片选择器（来自素材库）-->
+    <div id="refPhotoBar" class="ref-photo-bar hidden">
+      <div class="ref-photo-label">参考照片 · 图生图（让 AI 保留 Ta 的面貌特征）</div>
+      <div id="refPhotoList" class="ref-photo-list"></div>
+      <div class="ref-photo-hint">选中照片后，AI 会以该人物面貌生成每张画面；点「不用参考」则纯文生图</div>
     </div>
     <div id="sceneList"></div>
 

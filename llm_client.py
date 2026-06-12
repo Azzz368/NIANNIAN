@@ -29,7 +29,8 @@ import requests as _requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv()
+# 始终加载项目根目录的 .env（无论从哪个子目录启动 uvicorn）
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # ── 302.ai 网关 ───────────────────────────────────────────────────────────────
 _302_BASE_URL = "https://api.302.ai/v1"
@@ -40,8 +41,8 @@ _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "gemini-2.5-flash")
 TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "claude-sonnet-4-6")
 
-# 分镜制作（MV04）专属：gpt-4o（速度快、结构化能力强）
-STORYBOARD_MODEL    = os.getenv("AI302_STORYBOARD_MODEL", "gpt-4o")
+# 分镜制作（MV04）专属：gemini-2.5-flash（gpt-4o/gpt-5.4 已被禁用）
+STORYBOARD_MODEL    = os.getenv("AI302_STORYBOARD_MODEL", "gemini-2.5-flash")
 
 # 数字人对话 & 人设融合（速度优先）
 DIALOGUE_MODEL      = os.getenv("AI302_DIALOGUE_MODEL",  "doubao-Seed-2-0-lite")
@@ -88,7 +89,7 @@ def _text_model_queue() -> List[Tuple[str, OpenAI]]:
     """
     文本推理优先级队列：
       1. gemini-2.5-flash  （主力）
-      2. claude-sonnet-4-6         （自动回退）
+      2. gemini-2.5-flash  （自动回退，保持同一模型重试）
       3. 本地 LLM               （可选）
     """
     q: List[Tuple[str, OpenAI]] = [
@@ -103,8 +104,8 @@ def _text_model_queue() -> List[Tuple[str, OpenAI]]:
 def _storyboard_model_queue() -> List[Tuple[str, OpenAI]]:
     """
     分镜制作（MV04）专属优先级队列：
-      1. gpt-4o            （速度快、结构化稳定）
-      2. claude-sonnet-4-6 （备用）
+      1. gemini-2.5-flash  （主力）
+      2. gemini-2.5-flash  （备用重试）
     """
     return [
         (STORYBOARD_MODEL,    PRIMARY_CLIENT),

@@ -249,46 +249,33 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
 
-    # ── 1) 首选：DashScope qwen-plus（阿里通义千问，联网搜索质量高）──
+    # ── 1) 首选：DashScope qwen-plus OpenAI 兼容接口（联网搜索，最稳定）──
     try:
         import os as _os
-        import dashscope  # type: ignore
+        from openai import OpenAI as _OpenAI
         api_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
         if api_key:
-            dashscope.api_key = api_key
-            # 使用国际区或国内区（默认国内）
             region = _os.environ.get("DASHSCOPE_REGION", "").strip().lower()
-            if region == "intl":
-                dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
-
+            ds_base = (
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                if region == "intl"
+                else "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+            _ds_client = _OpenAI(api_key=api_key, base_url=ds_base)
             messages: Any = [
                 {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
                 {"role": "user",   "content": user_msg},
             ]
-            # qwen-plus 支持联网搜索 enable_search=True
-            resp = dashscope.Generation.call(  # type: ignore[arg-type]
-                api_key=api_key,
+            resp = _ds_client.chat.completions.create(
                 model="qwen-plus",
                 messages=messages,
-                result_format="message",
-                enable_search=True,
+                extra_body={"enable_search": True},
                 temperature=0.4,
                 max_tokens=1400,
             )
-            # 兼容两种返回结构
-            if resp and getattr(resp, "status_code", 200) == 200:
-                output = getattr(resp, "output", None) or {}
-                if isinstance(output, dict):
-                    choices = output.get("choices") or []
-                    if choices:
-                        msg = choices[0].get("message", {}) or {}
-                        content = (msg.get("content") or "").strip()
-                        if content:
-                            return {"organized": content, "model": "qwen-plus（联网）", "fallback": False}
-                # text 字段兜底
-                text = (getattr(output, "text", "") if hasattr(output, "text") else output.get("text", "")) if output else ""
-                if text:
-                    return {"organized": text.strip(), "model": "qwen-plus（联网）", "fallback": False}
+            content = (resp.choices[0].message.content or "").strip()
+            if content:
+                return {"organized": content, "model": "qwen-plus（联网）", "fallback": False}
     except Exception as e:
         print(f"[deep_search] qwen-plus failed: {e}")
 
@@ -746,8 +733,8 @@ def get_characters(sid: str) -> Dict[str, Any]:
     return {"main": main_role, "supporting": supporting}
 
 
-def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
-    """为单个分镜生成图片。返回 {url: data-url} 或 {error, message}"""
+def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, Any]:
+    """为单个分镜生成图片。ref_b64 为参考图 base64（有则图生图用 gemini-3-pro-image-preview，否则纯文生图）。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -766,7 +753,7 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_302(image_prompt)
+    b64, err = generate_image_302(image_prompt, reference_b64=ref_b64 or None)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 

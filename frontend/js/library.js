@@ -119,6 +119,9 @@
       var audioCount = (state.assets || []).filter(function(a){ return a.kind === 'audio'; }).length;
       vsMeta.textContent = audioCount > 0 ? audioCount + ' 个音频样本 · 点击进入声音工坊勾选' : '未克隆 · 0 个音频样本';
     }
+    // 影像制作入口：带当前 mid，studio 可直接加载素材库照片作为参考图
+    var studioEntry = $('studioEntry');
+    if (studioEntry && state.currentId) studioEntry.href = '/static/studio.html?mid=' + encodeURIComponent(state.currentId);
 
     $('dRelation').textContent = state.meta.relation || '';
 
