@@ -151,13 +151,26 @@ function setThinking(on) {
 }
 
 async function fetchGreeting() {
+  // 先渲染已有历史（防止从 step1/2 返回后空白）
+  renderChat();
   if (state.chatHistory.length > 0) return;
   setThinking(true);
   try {
     const res = await apiPost('/chat/greeting', { session_id: getSessionId() });
-    state.chatHistory = res.chat_history;
+    const history = res.chat_history || [];
+    // 如果返回内容为空，补充默认开场白
+    if (!history.length || !history[0].content) {
+      state.chatHistory = [{ role: 'assistant', content: '你好，我是念念。很高兴能和你一起记录这一段珍贵的记忆。请告诉我，关于这位拆散的亲人，你最想让我知道的是什么？' }];
+    } else {
+      state.chatHistory = history;
+    }
     renderChat();
-  } catch (e) { toast('AI 开场失败：' + e.message); }
+  } catch (e) {
+    toast('开场白加载失败，展示默认开场');
+    // API 失败时展示默认开场，不让用户看到空白屏
+    state.chatHistory = [{ role: 'assistant', content: '你好，我是念念。很高兴能和你一起记录这一段珍贵的记忆。请告诉我，关于这位珍贵的亲人，你最想让我知道的是什么？' }];
+    renderChat();
+  }
   finally { setThinking(false); }
 }
 

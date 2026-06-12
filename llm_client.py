@@ -215,7 +215,7 @@ def call_memorial_chat(
                     model=model,
                     messages=all_msgs,
                     temperature=0.65,
-                    max_tokens=600,
+                    max_tokens=6000,
                 )
                 return response.choices[0].message.content or ""
             except Exception as exc:
@@ -231,7 +231,7 @@ def call_memorial_chat(
                     model=model_name,
                     messages=all_msgs,
                     temperature=0.65,
-                    max_tokens=600,
+                    max_tokens=6000,
                 )
                 return response.choices[0].message.content or ""
             except Exception as exc:
