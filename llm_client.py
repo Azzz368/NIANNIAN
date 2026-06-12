@@ -9,7 +9,7 @@
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
   AI302_API_KEY          = sk-xxxxxxxxxxxx       ← 必填，图文/视频 302.ai 备用均使用
-  AI302_TEXT_MODEL       = gemini-2.0-flash-preview
+  AI302_TEXT_MODEL       = gemini-2.5-flash
   AI302_TEXT_FALLBACK    = claude-sonnet-4-6
   AI302_VISION_MODEL     = gemini-2.0-pro-image-preview
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
@@ -37,7 +37,7 @@ _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 
 # ── 各任务专属模型 ─────────────────────────────────────────────────────────────
 # 文本分析：主力 Gemini Flash，自动回退到 Claude Sonnet
-TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "gemini-2.0-flash-preview")
+TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "gemini-2.5-flash")
 TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "claude-sonnet-4-6")
 
 # 分镜制作（MV04）专属：gpt-4o（速度快、结构化能力强）
@@ -87,9 +87,9 @@ FALLBACK_MODELS: list = []
 def _text_model_queue() -> List[Tuple[str, OpenAI]]:
     """
     文本推理优先级队列：
-      1. claude-sonnet-4-6  （主力）
-      2. gpt-5.4            （自动回退）
-      3. 本地 LLM           （可选）
+      1. gemini-2.5-flash  （主力）
+      2. claude-sonnet-4-6         （自动回退）
+      3. 本地 LLM               （可选）
     """
     q: List[Tuple[str, OpenAI]] = [
         (TEXT_MODEL, PRIMARY_CLIENT),
@@ -103,8 +103,8 @@ def _text_model_queue() -> List[Tuple[str, OpenAI]]:
 def _storyboard_model_queue() -> List[Tuple[str, OpenAI]]:
     """
     分镜制作（MV04）专属优先级队列：
-      1. gpt-4o  （速度快、结构化稳定）
-      2. gpt-5.4 （备用）
+      1. gpt-4o            （速度快、结构化稳定）
+      2. claude-sonnet-4-6 （备用）
     """
     return [
         (STORYBOARD_MODEL,    PRIMARY_CLIENT),

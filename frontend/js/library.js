@@ -46,7 +46,10 @@
 
     renderList();
 
-    var activeId = NianAuth.getActiveMemorialId() || (state.memorials[0] && state.memorials[0].memorial_id);
+    // URL ?mid= 优先，其次 localStorage，再次第一个
+    var urlMid = (location.search.match(/[?&]mid=([^&]+)/) || [])[1];
+    if (urlMid) urlMid = decodeURIComponent(urlMid);
+    var activeId = urlMid || NianAuth.getActiveMemorialId() || (state.memorials[0] && state.memorials[0].memorial_id);
 
     if (activeId) selectMemorial(activeId);
 
@@ -82,6 +85,10 @@
 
     NianAuth.setActiveMemorialId(mid);
 
+    // 立即更新声音工坊入口链接，避免用户在 fetch 完成前点击时 mid 丢失
+    var vsEntry = $('voiceStudioEntry');
+    if (vsEntry) vsEntry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(mid);
+
     renderList();
 
     var r = await NianAuth.fetch('/api/memorials/' + mid);
@@ -106,6 +113,12 @@
     // 声音工坊入口携带当前 mid，跳转后不需要重新选择
     var vsEntry = $('voiceStudioEntry');
     if (vsEntry && state.currentId) vsEntry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(state.currentId);
+    // 更新音频样本数量标签
+    var vsMeta = $('voiceStudioMeta');
+    if (vsMeta) {
+      var audioCount = (state.assets || []).filter(function(a){ return a.kind === 'audio'; }).length;
+      vsMeta.textContent = audioCount > 0 ? audioCount + ' 个音频样本 · 点击进入声音工坊勾选' : '未克隆 · 0 个音频样本';
+    }
 
     $('dRelation').textContent = state.meta.relation || '';
 
