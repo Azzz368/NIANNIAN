@@ -81,6 +81,9 @@
       state.presets = d.preset_voices || [];
       state.selected = new Set(state.voice.samples || []);
       renderAll();
+      // 更新「去素材库」链接携带当前 mid
+      var goLib = $('vsGoLibrary');
+      if (goLib && state.mid) goLib.href = '/static/library.html?tab=assets&mid=' + encodeURIComponent(state.mid);
     } catch(e) {
       console.error('[voice] load exception', e);
       $('vsStatusText').textContent = '加载失败：' + e.message;
@@ -113,7 +116,9 @@
   function renderSamples(){
     var box = $('vsSamples'); box.innerHTML = '';
     if (!state.audios.length) {
-      box.innerHTML = '<div class="vs-empty">还没有音频样本。点击下方「上传新的声音样本」，或回到聊天页用 ⬆ 上传。</div>';
+      var mid = state.mid;
+      var libUrl = mid ? '/static/library.html?tab=assets&mid=' + encodeURIComponent(mid) : '/static/library.html';
+      box.innerHTML = '<div class="vs-empty">还没有语音样本。<br>请先去<a href="' + libUrl + '" style="color:#C4964A;text-decoration:underline">资料库 → 素材库</a>上传语音文件，上传后刷新此页即可勾选。</div>';
       return;
     }
     state.audios.forEach(function(a){
@@ -211,25 +216,6 @@
       box.appendChild(row);
     });
   }
-
-  // ─── 上传 ───────────────────────────────────────────────────
-  $('vsUploadBtn').addEventListener('click', function(){ $('vsFileInput').click(); });
-  $('vsFileInput').addEventListener('change', async function(e){
-    var f = e.target.files[0]; if (!f) return;
-    var desc = prompt('简单描述一下这段录音（在什么场合录的？谁的声音？）', '');
-    if (desc === null) { e.target.value=''; return; }
-    var form = new FormData();
-    form.append('file', f);
-    form.append('description', desc || '声音样本');
-    toast('上传中...');
-    try {
-      var r = await NianAuth.fetch('/api/memorials/' + state.mid + '/upload', { method:'POST', body: form });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      toast('✓ 上传成功');
-      await loadVoice();
-    } catch(err) { toast('上传失败：' + err.message); }
-    e.target.value = '';
-  });
 
   // ─── 克隆 ───────────────────────────────────────────────────
   $('vsCloneBtn').addEventListener('click', async function(){

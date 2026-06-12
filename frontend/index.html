@@ -82,6 +82,14 @@
 
   .dossier-toast.show{opacity:1;transform:translateY(0)}
 
+  /* 上传类型选择气泡 */
+  .imm-upload-wrap{position:relative;display:inline-flex;align-items:center}
+  .imm-type-picker{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border:1px solid rgba(196,150,74,.28);border-radius:12px;box-shadow:0 8px 28px rgba(58,47,34,.18);padding:8px;display:none;flex-direction:column;gap:6px;z-index:30;min-width:100px}
+  .imm-type-picker.show{display:flex}
+  .imm-type-btn{display:flex;align-items:center;gap:8px;padding:9px 14px;border:none;background:transparent;cursor:pointer;border-radius:8px;font-size:.88rem;color:#3a2f22;white-space:nowrap;transition:.15s}
+  .imm-type-btn:hover{background:rgba(196,150,74,.10);color:#C4964A}
+  .imm-type-icon{font-size:1.2rem}
+
 </style>
 
 </head>
@@ -281,13 +289,25 @@
 
       </div>
 
-      <!-- 上传图片到资料库 + Qwen 视觉分析 -->
-      <button class="immersive-upload-btn" id="immersiveUploadBtn" type="button" title="上传图片到资料库 · 念念同步分析" aria-label="上传图片">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" stroke-linecap="round">
-          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-        </svg>
-      </button>
+      <!-- 上传到资料库 + 类型选择面板 -->
+      <div class="imm-upload-wrap" id="immUploadWrap">
+        <button class="immersive-upload-btn" id="immersiveUploadBtn" type="button" title="上传到资料库" aria-label="上传">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <!-- 类型选择气泡 -->
+        <div class="imm-type-picker" id="immTypePicker">
+          <button class="imm-type-btn" data-type="audio" id="immPickAudio">
+            <span class="imm-type-icon">🎵</span><span>语音</span>
+          </button>
+          <button class="imm-type-btn" data-type="image" id="immPickImage">
+            <span class="imm-type-icon">🖼</span><span>图片</span>
+          </button>
+        </div>
+      </div>
       <input type="file" id="immersiveImageInput" accept="image/*" hidden>
+      <input type="file" id="immersiveAudioInput" accept="audio/*" hidden>
 
     </div>
 

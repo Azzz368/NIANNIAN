@@ -826,17 +826,52 @@
       });
     }
 
-    // 主界面光球聊天框右侧 + 号上传按钮
-    var immUploadBtn = $('immersiveUploadBtn');
+    // 主界面光球聊天框右侧 + 号上传按钮 → 类型选择气泡
+    var immUploadBtn  = $('immersiveUploadBtn');
+    var immTypePicker = $('immTypePicker');
     var immImageInput = $('immersiveImageInput');
-    if (immUploadBtn && immImageInput) {
+    var immAudioInput = $('immersiveAudioInput');
+
+    function closeImmPicker(){ if (immTypePicker) immTypePicker.classList.remove('show'); }
+
+    if (immUploadBtn && immTypePicker) {
       immUploadBtn.addEventListener('click', function(e) {
         e.stopPropagation();
+        if (!window.NianAuth || !window.NianAuth.isAuthed()) {
+          if (confirm('上传文件需要先登录，是否前往登录？')) location.href = '/static/login.html';
+          return;
+        }
+        immTypePicker.classList.toggle('show');
+      });
+      // 点外部关闭
+      document.addEventListener('click', function(e){
+        if (!$('immUploadWrap').contains(e.target)) closeImmPicker();
+      });
+    }
+    // 选择「语音」
+    var immPickAudio = $('immPickAudio');
+    if (immPickAudio && immAudioInput) {
+      immPickAudio.addEventListener('click', function(){
+        closeImmPicker();
+        immAudioInput.click();
+      });
+      immAudioInput.addEventListener('change', function(){
+        if (immAudioInput.files && immAudioInput.files[0]) {
+          openUploadModal(immAudioInput.files[0]);
+          immAudioInput.value = '';
+        }
+      });
+    }
+    // 选择「图片」
+    var immPickImage = $('immPickImage');
+    if (immPickImage && immImageInput) {
+      immPickImage.addEventListener('click', function(){
+        closeImmPicker();
         immImageInput.click();
       });
       immImageInput.addEventListener('change', function() {
         if (immImageInput.files && immImageInput.files[0]) {
-          sendImageMessage(immImageInput.files[0]);
+          openUploadModal(immImageInput.files[0]);
           immImageInput.value = '';
         }
       });
