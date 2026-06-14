@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念日记 · 念念</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .diary-shell {
+    max-width: 940px;
+  }
+
+  .diary-hero {
+    margin-bottom: 24px;
+  }
+
+  .diary-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 22px;
+    align-items: start;
+  }
+
+  .diary-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  .diary-date {
+    color: var(--muted-l);
+    font-size: .86rem;
+    white-space: nowrap;
+  }
+
+  .diary-editor {
+    min-height: 280px;
+  }
+
+  .diary-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .diary-preview {
+    aspect-ratio: 1;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--surf2);
+    border: 1px solid var(--border);
+    position: relative;
+  }
+
+  .diary-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .diary-preview span {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: rgba(30, 26, 20, .58);
+    color: #fff;
+    font-size: .68rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .diary-note {
+    background: var(--surf2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 16px;
+    color: var(--ink-m);
+    font-size: .9rem;
+    line-height: 1.75;
+  }
+
+  .diary-actions {
+    justify-content: flex-end;
+  }
+
+  .diary-file-input {
+    display: none;
+  }
+
+  @media (max-width: 780px) {
+    .diary-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .diary-title-row {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="container diary-shell">
+
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">记</div>
+      <div>
+        <div class="topbar-name">念念日记</div>
+        <div class="topbar-sub">NianNian Memory Diary</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a class="btn btn-ghost" href="index.html">返回主页</a>
+      <div class="topbar-badge">日常记录</div>
+    </div>
+  </div>
+
+  <section class="hero diary-hero">
+    <h1 class="hero-title">把今天的想念<br><em>轻轻写下来</em></h1>
+    <div class="hero-line"></div>
+    <p class="hero-sub">选择一张照片，写下一段此刻的心情、生活片段，或想对 Ta 说的话。</p>
+  </section>
+
+  <div class="diary-layout">
+    <main>
+      <div class="card">
+        <div class="diary-title-row">
+          <div>
+            <div class="section-label" style="margin-bottom:8px;">Diary Entry</div>
+            <div class="step-title" style="margin:0;">今日记录</div>
+          </div>
+          <div class="diary-date" id="diaryDate"></div>
+        </div>
+
+        <div class="field">
+          <label>标题</label>
+          <input type="text" id="diaryTitle" placeholder="例如：今天路过了熟悉的街角">
+        </div>
+
+        <div class="field">
+          <label>文字内容</label>
+          <textarea id="diaryText" class="diary-editor" placeholder="写下今天想记录的事，或想对 Ta 说的话..."></textarea>
+        </div>
+
+        <div class="btn-row diary-actions">
+          <button class="btn" id="btnClearDiary" type="button">清空</button>
+          <button class="btn btn-primary" id="btnSaveDiary" type="button">保存草稿</button>
+        </div>
+      </div>
+    </main>
+
+    <aside>
+      <div class="card">
+        <div class="section-label">图片</div>
+        <label class="upload-zone" for="diaryImages">
+          点击上传图片<br>
+          <span class="text-muted">支持多张图片，本页先进行本地预览</span>
+        </label>
+        <input type="file" id="diaryImages" class="upload-input diary-file-input" multiple accept="image/*">
+        <div class="diary-preview-grid" id="diaryPreviewGrid"></div>
+      </div>
+
+      <div class="diary-note">
+        当前版本会把文字草稿保存在本机浏览器中。图片只做页面预览，后续接入资料库后可以保存到云端。
+      </div>
+    </aside>
+  </div>
+
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/diary.js"></script>
+</body>
+</html>
