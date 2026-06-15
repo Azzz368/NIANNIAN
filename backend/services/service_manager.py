@@ -232,16 +232,23 @@ _DEEP_SEARCH_SYSTEM = """你是念念追思影像制作助手，具备联网实�
 
 若无公开资料请如实告知。输出语气温暖，不要使用"根据搜索结果"等机械表述。"""
 
-_FILL_SYSTEM = """根据已整理资料，提取以下字段，严格输出 JSON，不加任何解释：
+_FILL_SYSTEM = """根据已整理的人物资料，提取以下字段，严格输出 JSON，不加任何解释：
 {
   "deceased_name": "姓名",
   "deceased_gender": "男 或 女 或 不便告知",
-  "birth_date": "XXXX年X月X日 或 空",
-  "death_date": "XXXX年X月X日 或 空",
-  "occupation": "主要职业",
-  "family_memory_text": "家属视角的温暖回忆叙述，200-350字"
+  "birth_date": "XXXX年X月X日 或 XXXX年 或 空",
+  "death_date": "XXXX年X月X日 或 XXXX年 或 空（健在则填空）",
+  "occupation": "主要职业或身份",
+  "locations": ["出生地或主要居住地，数组，最多3个"],
+  "personality_keywords": ["性格关键词，数组，最多5个"],
+  "quotes": ["代表性金句或名言，原文，数组，最多5条；没有则空数组"],
+  "objects": ["代表性物件或标志性事物，数组，最多5个；没有则空数组"],
+  "core_memories": [
+    {"title": "记忆标题", "content": "具体描述，80-150字"}
+  ],
+  "family_memory_text": "以家属或后辈视角写的温暖回忆叙述，200-350字"
 }
-信息不足的字段填空字符串。"""
+信息不足的字段：字符串填空字符串，数组填空数组。"""
 
 
 def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
@@ -329,7 +336,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
 
 
 def deep_search_extract_fields(organized: str, query: str) -> Dict[str, Any]:
-    """从整理文本中提取可填表单字段"""
+    """从整理文本中提取可填表单字段（含 quotes/objects/core_memories）"""
     import json as _json, re as _re
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
@@ -340,7 +347,7 @@ def deep_search_extract_fields(organized: str, query: str) -> Dict[str, Any]:
                     {"role": "user",   "content": f"搜索词：{query}\n\n整理资料：\n{organized}"},
                 ],
                 temperature=0.2,
-                max_tokens=700,
+                max_tokens=1200,
             )
             raw = resp.choices[0].message.content or "{}"
             mt = _re.search(r"\{.*\}", raw, _re.S)

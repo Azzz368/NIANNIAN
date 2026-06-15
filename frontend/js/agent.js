@@ -1159,9 +1159,15 @@
       var headers = { 'Content-Type': 'application/json' };
       var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
       if (tok) headers['Authorization'] = 'Bearer ' + tok;
+      // 获取当前人物的 memorial_id 和 user_id
+      var mid = window.NianAuth && window.NianAuth.getActiveMemorialId ? window.NianAuth.getActiveMemorialId() : null;
+      var spSel2 = document.getElementById('sessionMemSelect');
+      if (!mid && spSel2) mid = spSel2.value || null;
+      var userInfo = window.NianAuth && window.NianAuth.getUser ? window.NianAuth.getUser() : null;
+      var uid = userInfo ? (userInfo.user_id || userInfo.id || null) : null;
       fetch('/api/intake/deep-search', {
         method: 'POST', headers: headers,
-        body: JSON.stringify({ query: q, extra: ex, session_id: null })
+        body: JSON.stringify({ query: q, extra: ex, session_id: null, memorial_id: mid || null, user_id: uid || null })
       }).then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -1181,15 +1187,49 @@
           tag.textContent = data.fallback ? '\ud83d\udcda \u77e5\u8bc6\u5e93' : '\ud83c\udf10 \u8054\u7f51\u641c\u7d22\uff08' + data.model + '\uff09';
           dsResult.appendChild(tag);
         }
+        // 归档提示
+        if (data.dossier_updated) {
+          var archiveNote = document.createElement('div');
+          archiveNote.style.cssText = 'font-size:.72rem;margin-bottom:8px;margin-left:4px;color:#5a9a72;display:inline-block;margin-left:6px;';
+          archiveNote.textContent = '\u2705 \u5df2\u5f52\u6863\u5e76\u540c\u6b65\u5230\u8d44\u6599\u5e93';
+          dsResult.appendChild(archiveNote);
+          dsResult.appendChild(document.createElement('br'));
+        }
+        // 提取字段速览
+        if (data.fields && Object.keys(data.fields).length > 0) {
+          var f = data.fields;
+          var chips = [];
+          if (f.deceased_name) chips.push('\ud83d\udc64 ' + f.deceased_name);
+          if (f.birth_date) chips.push('\ud83d\udcc5 ' + f.birth_date);
+          if (f.occupation) chips.push('\ud83d\udcbc ' + f.occupation);
+          if (f.quotes && f.quotes.length) chips.push('\ud83d\udcac ' + f.quotes.length + '\u6761\u91d1\u53e5');
+          if (f.objects && f.objects.length) chips.push('\ud83c\udffa ' + f.objects.length + '\u4ef6\u7269\u54c1');
+          if (f.core_memories && f.core_memories.length) chips.push('\u2728 ' + f.core_memories.length + '\u6761\u6838\u5fc3\u8bb0\u5fc6');
+          if (chips.length) {
+            var chipRow = document.createElement('div');
+            chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;';
+            chips.forEach(function(c) {
+              var ch = document.createElement('span');
+              ch.style.cssText = 'background:rgba(90,120,80,.1);color:#3a5a30;font-size:.7rem;padding:1px 7px;border-radius:8px;';
+              ch.textContent = c;
+              chipRow.appendChild(ch);
+            });
+            dsResult.appendChild(chipRow);
+          }
+        }
+        // 全文展示（可滚动，不截断）
+        var scrollBox = document.createElement('div');
+        scrollBox.style.cssText = 'max-height:260px;overflow-y:auto;margin-bottom:6px;padding-right:4px;';
         var p = document.createElement('p');
         p.style.cssText = 'margin:0;white-space:pre-wrap;font-size:.81rem;color:#3a2f22;line-height:1.7';
-        p.textContent = text.length > 1200 ? text.slice(0, 1200) + '...' : text;
-        dsResult.appendChild(p);
+        p.textContent = text;
+        scrollBox.appendChild(p);
+        dsResult.appendChild(scrollBox);
         var applyBtn = document.createElement('button');
         applyBtn.textContent = '\u53d1\u9001\u7ed9\u5ff5\u5ff5\u53c2\u8003';
         applyBtn.style.cssText = 'margin-top:10px;padding:7px 0;background:linear-gradient(135deg,#C4964A,#E8C57A);border:none;border-radius:7px;color:#fff;font-size:.82rem;cursor:pointer;width:100%;font-family:inherit';
         applyBtn.addEventListener('click', function() {
-          var summary = '\u4ee5\u4e0b\u662f\u5173\u4e8e\u300c' + q + '\u300d\u7684\u80cc\u666f\u8d44\u6599\uff0c\u8bf7\u53c2\u8003\uff1a\n' + text.slice(0, 500);
+          var summary = '\u4ee5\u4e0b\u662f\u5173\u4e8e\u300c' + q + '\u300d\u7684\u80cc\u666f\u8d44\u6599\uff0c\u8bf7\u53c2\u8003\uff1a\n' + text.slice(0, 800);
           var agentInp = document.getElementById('agentInput');
           var agentSend = document.getElementById('agentSend');
           if (agentInp && agentSend) {
