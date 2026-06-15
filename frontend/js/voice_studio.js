@@ -1,4 +1,4 @@
-// voice_studio.js — 声音工坊
+﻿// voice_studio.js — 声音工坊
 (function(){
   'use strict';
   if (!window.NianAuth || !window.NianAuth.requireAuth()) return;
@@ -231,13 +231,13 @@
       var d = await r.json();
       state.voice = d.voice;
       renderAll();
-      if (state.voice.provider === 'dashscope') toast('🎉 克隆成功！可以试听了', 3000);
+      if (state.voice.provider === 'dashscope') toast('克隆成功！可以试听了', 3000);
       else toast('已切换 Mock 模式（先用预制音色试听）', 3500);
     } catch(e) {
       toast('克隆失败：' + e.message, 4000);
       state.voice.status = 'failed'; state.voice.error = e.message; renderStatus();
     } finally {
-      btn.disabled = false; btn.textContent = '🎯 开始克隆';
+      btn.disabled = false; btn.textContent = '开始克隆';
     }
   });
 
@@ -314,3 +314,4 @@
     if (state.mid) await loadVoice();
   })();
 })();
+

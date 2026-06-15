@@ -1,4 +1,4 @@
-// agent.js — 念念智能体
+﻿// agent.js — 念念智能体
 // 文字模式：
 //   - 输入 → /api/agent/chat (SSE) 流式回复，不朗读
 //   - 按住麦克风键 = 录音；松开 = 停止 + 上传 DashScope Paraformer 精准识别
@@ -678,10 +678,10 @@
   function openUploadModal(file){
     pendingFile = file;
     var prev = $('uploadPreview');
-    var icon = '📄';
-    if (/^image\//.test(file.type)) icon = '🖼';
-    else if (/^audio\//.test(file.type)) icon = '🎵';
-    else if (/^video\//.test(file.type)) icon = '🎬';
+    var icon = '[文件]';
+    if (/^image\//.test(file.type)) icon = '[图片]';
+    else if (/^audio\//.test(file.type)) icon = '[音频]';
+    else if (/^video\//.test(file.type)) icon = '[视频]';
     var size = (file.size/1024).toFixed(1) + ' KB';
     if (file.size > 1024*1024) size = (file.size/1024/1024).toFixed(1) + ' MB';
     prev.innerHTML = '<span class="ic">' + icon + '</span><div><div style="font-weight:600">' + escHtml(file.name) + '</div><div style="color:#8a7654;font-size:.78rem">' + size + '</div></div>';
@@ -1184,14 +1184,14 @@
             + (data.fallback
               ? 'background:rgba(180,140,60,.15);color:#8a6820;'
               : 'background:rgba(60,160,100,.15);color:#2a7a50;');
-          tag.textContent = data.fallback ? '\ud83d\udcda \u77e5\u8bc6\u5e93' : '\ud83c\udf10 \u8054\u7f51\u641c\u7d22\uff08' + data.model + '\uff09';
+          tag.textContent = data.fallback ? '\u77e5\u8bc6\u5e93' : '\u8054\u7f51\u641c\u7d22\uff08' + data.model + '\uff09';
           dsResult.appendChild(tag);
         }
         // 归档提示
         if (data.dossier_updated) {
           var archiveNote = document.createElement('div');
           archiveNote.style.cssText = 'font-size:.72rem;margin-bottom:8px;margin-left:4px;color:#5a9a72;display:inline-block;margin-left:6px;';
-          archiveNote.textContent = '\u2705 \u5df2\u5f52\u6863\u5e76\u540c\u6b65\u5230\u8d44\u6599\u5e93';
+          archiveNote.textContent = '\u5df2\u5f52\u6863\u5e76\u540c\u6b65\u5230\u8d44\u6599\u5e93';
           dsResult.appendChild(archiveNote);
           dsResult.appendChild(document.createElement('br'));
         }
@@ -1199,12 +1199,12 @@
         if (data.fields && Object.keys(data.fields).length > 0) {
           var f = data.fields;
           var chips = [];
-          if (f.deceased_name) chips.push('\ud83d\udc64 ' + f.deceased_name);
-          if (f.birth_date) chips.push('\ud83d\udcc5 ' + f.birth_date);
-          if (f.occupation) chips.push('\ud83d\udcbc ' + f.occupation);
-          if (f.quotes && f.quotes.length) chips.push('\ud83d\udcac ' + f.quotes.length + '\u6761\u91d1\u53e5');
-          if (f.objects && f.objects.length) chips.push('\ud83c\udffa ' + f.objects.length + '\u4ef6\u7269\u54c1');
-          if (f.core_memories && f.core_memories.length) chips.push('\u2728 ' + f.core_memories.length + '\u6761\u6838\u5fc3\u8bb0\u5fc6');
+          if (f.deceased_name) chips.push(f.deceased_name);
+          if (f.birth_date) chips.push(f.birth_date);
+          if (f.occupation) chips.push(f.occupation);
+          if (f.quotes && f.quotes.length) chips.push(f.quotes.length + '\u6761\u91d1\u53e5');
+          if (f.objects && f.objects.length) chips.push(f.objects.length + '\u4ef6\u7269\u54c1');
+          if (f.core_memories && f.core_memories.length) chips.push(f.core_memories.length + '\u6761\u6838\u5fc3\u8bb0\u5fc6');
           if (chips.length) {
             var chipRow = document.createElement('div');
             chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;';
@@ -1367,3 +1367,4 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 })();
+
