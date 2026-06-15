@@ -2,13 +2,14 @@
 const { apiGet, apiPost, getSessionId, toast, esc } = window.NN;
 
 const state = {
-  sid:       getSessionId(),
-  mid:       new URLSearchParams(location.search).get('mid') || '',  // 来自素材库的 memorial_id
-  scenes:    [],
-  chars:     null,
-  mv04:      null,
-  libImages: [],     // 素材库中的图片资产
-  refB64:    '',     // 当前选中的参考图 base64
+  sid:            getSessionId(),
+  mid:            new URLSearchParams(location.search).get('mid') || '',  // 来自素材库的 memorial_id
+  scenes:         [],
+  chars:          null,
+  mv04:           null,
+  libImages:      [],     // 素材库中的图片资产
+  refB64:         '',     // 当前选中的参考图 base64（用于后端生成）
+  refAsset:       null,   // 当前选中的资产对象（用于展示）
 };
 
 const $    = id => document.getElementById(id);
@@ -27,7 +28,7 @@ function setThink(on, label) {
   if (on && label) $('genThinkLabel').textContent = label;
 }
 
-// ───── 角色档案展示（来自 /pipeline/characters/{sid}）─────
+// ───── 角色档案展示（含照片选择槽）─────
 function renderCharSummary() {
   const box = $('charSummary');
   const c = state.chars;
@@ -35,9 +36,45 @@ function renderCharSummary() {
     box.innerHTML = `<div class="text-muted">尚未读取到角色档案，请先完成方案确认台。</div>`;
     return;
   }
-  const cards = [c.main, ...(c.supporting || [])];
-  let html = `<div class="char-grid">`;
-  cards.forEach(ch => {
+  const main = c.main;
+
+  // 主角照片槽
+  const hasLib = state.libImages.length > 0;
+  let photoHtml;
+  if (state.refB64 && state.refAsset) {
+    const tok = localStorage.getItem('nian_token') || '';
+    const dispUrl = state.refAsset.url + (state.refAsset.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+    photoHtml = `
+      <div class="char-photo-slot has-photo" id="mainPhotoSlot" title="点击更换参考照片">
+        <img src="${esc(dispUrl)}" alt="参考图">
+      </div>
+      <div class="char-ref-badge" style="color:var(--green);">✓ 已选参考图</div>`;
+  } else if (hasLib) {
+    photoHtml = `
+      <div class="char-photo-slot" id="mainPhotoSlot" title="点击选择参考照片">
+        <div class="char-photo-slot-hint">点击选<br>参考图</div>
+      </div>
+      <div class="char-ref-badge" style="color:var(--muted-l);">未选参考图</div>`;
+  } else {
+    photoHtml = `
+      <div class="char-photo-slot" id="mainPhotoSlot" style="cursor:default;" title="素材库暂无照片">
+        <div class="char-photo-slot-hint">无照片</div>
+      </div>
+      <div class="char-ref-badge" style="color:var(--muted-l);">未上传照片</div>`;
+  }
+
+  let html = `<div class="char-grid">
+    <div class="char-card" style="display:flex;gap:12px;align-items:flex-start;">
+      <div style="flex-shrink:0;text-align:center;">
+        ${photoHtml}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div class="char-name">${esc(main.name)} <span style="font-size:.7rem;color:var(--gold);">· ${esc(main.role_label || '')}</span></div>
+        ${main.description ? `<div class="char-meta">${esc(main.description)}</div>` : ''}
+      </div>
+    </div>`;
+
+  (c.supporting || []).forEach(ch => {
     html += `<div class="char-card">
       <div class="char-name">${esc(ch.name)} <span style="font-size:.7rem;color:var(--gold);">· ${esc(ch.role_label || '')}</span></div>
       ${ch.description ? `<div class="char-meta">${esc(ch.description)}</div>` : ''}
@@ -45,6 +82,93 @@ function renderCharSummary() {
   });
   html += `</div>`;
   box.innerHTML = html;
+
+  // 绑定照片槽点击
+  const slot = $('mainPhotoSlot');
+  if (slot && hasLib) {
+    slot.onclick = openPhotoPicker;
+  }
+}
+
+// ───── 照片选择器弹窗 ─────
+function openPhotoPicker() {
+  const overlay = $('photoPickerOverlay');
+  const tok = localStorage.getItem('nian_token') || '';
+  const imgs = state.libImages;
+
+  const itemsHtml = imgs.length
+    ? imgs.map((a, i) => {
+        const dispUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+        const isActive = state.refAsset && state.refAsset.asset_id === a.asset_id ? ' active' : '';
+        return `<div class="photo-picker-item${isActive}" data-idx="${i}" title="${esc(a.filename || '')}">
+          <img src="${esc(dispUrl)}" alt="${esc(a.filename || '')}" loading="lazy">
+          <div class="ppi-name">${esc(a.filename || '照片' + (i + 1))}</div>
+        </div>`;
+      }).join('')
+    : `<div class="photo-picker-empty">素材库暂无图片，请先在「素材库」上传照片</div>`;
+
+  overlay.innerHTML = `
+    <div class="photo-picker-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="photo-picker-title">选择参考照片（AI 将保留 Ta 的面貌特征）</div>
+        <button style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--muted-l);padding:0 4px;line-height:1;" onclick="closePhotoPicker()">×</button>
+      </div>
+      <div class="photo-picker-grid">${itemsHtml}</div>
+      <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+        ${state.refB64 ? `<button class="btn" id="pickerClearBtn">清除参考图（纯文生图）</button>` : ''}
+        <button class="btn btn-ghost" onclick="closePhotoPicker()">取消</button>
+      </div>
+    </div>`;
+  overlay.style.display = 'flex';
+
+  overlay.querySelectorAll('.photo-picker-item').forEach(el => {
+    el.onclick = () => selectRefPhotoFromLib(+el.dataset.idx);
+  });
+  overlay.onclick = e => { if (e.target === overlay) closePhotoPicker(); };
+
+  if (state.refB64) {
+    const clearBtn = $('pickerClearBtn');
+    if (clearBtn) clearBtn.onclick = () => {
+      state.refB64 = '';
+      state.refAsset = null;
+      closePhotoPicker();
+      renderCharSummary();
+      renderRefPhotoBar();
+      toast('已清除参考图，将使用纯文生图');
+    };
+  }
+}
+
+function closePhotoPicker() {
+  const o = $('photoPickerOverlay');
+  if (o) o.style.display = 'none';
+}
+
+async function selectRefPhotoFromLib(idx) {
+  const a = state.libImages[idx];
+  if (!a) return;
+  const tok = localStorage.getItem('nian_token') || '';
+  closePhotoPicker();
+  toast('正在加载照片...');
+  try {
+    const r = await fetch(a.url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    state.refB64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    state.refAsset = a;
+    renderCharSummary();
+    renderRefPhotoBar();
+    toast('参考照片已选：' + (a.filename || '照片'));
+  } catch (e) {
+    state.refB64 = '';
+    state.refAsset = null;
+    toast('照片加载失败：' + e.message);
+  }
 }
 
 // ───── 分镜卡片渲染 ─────
@@ -231,9 +355,15 @@ async function loadLibraryAssets() {
     if (!res.ok) return;
     const d = await res.json();
     state.libImages = (d.assets || []).filter(a => a.kind === 'image');
+    // 重新渲染角色档案（现在有照片列表了）
+    renderCharSummary();
     if (state.libImages.length) {
       renderRefPhotoBar();
       $('refPhotoBar').classList.remove('hidden');
+      // 自动预选第一张照片
+      if (!state.refB64) {
+        await selectRefPhotoFromLib(0);
+      }
     }
   } catch(e) {
     console.warn('[studio] 加载素材库照片失败:', e);
@@ -245,48 +375,30 @@ function renderRefPhotoBar() {
   list.innerHTML = '';
   // 「不用参考」选项
   const none = document.createElement('div');
-  none.className = 'ref-photo-item active';
+  none.className = 'ref-photo-item' + (state.refB64 ? '' : ' active');
   none.innerHTML = `<div class="ref-photo-none">不用参考<br>纯文生图</div>`;
-  none.onclick = () => selectRefPhoto(-1, null, none);
+  none.onclick = () => {
+    state.refB64 = '';
+    state.refAsset = null;
+    renderRefPhotoBar();
+    renderCharSummary();
+    toast('已切换为纯文生图');
+  };
   list.appendChild(none);
 
+  const tok = localStorage.getItem('nian_token') || '';
   state.libImages.forEach((a, i) => {
-    const url = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(localStorage.getItem('nian_token') || '');
+    const dispUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+    const isActive = state.refAsset && state.refAsset.asset_id === a.asset_id;
     const el = document.createElement('div');
-    el.className = 'ref-photo-item';
+    el.className = 'ref-photo-item' + (isActive ? ' active' : '');
     el.title = a.filename || a.asset_id;
-    el.innerHTML = `<img src="${esc(url)}" alt="${esc(a.filename || '')}">` ;
-    el.onclick = () => selectRefPhoto(i, a.url, el);
+    el.innerHTML = `<img src="${esc(dispUrl)}" alt="${esc(a.filename || '')}">`;
+    el.onclick = () => selectRefPhotoFromLib(i);
     list.appendChild(el);
   });
 }
 
-async function selectRefPhoto(idx, rawUrl, el) {
-  document.querySelectorAll('.ref-photo-item').forEach(x => x.classList.remove('active'));
-  el.classList.add('active');
-  if (idx < 0 || !rawUrl) {
-    state.refB64 = '';
-    $('refPhotoHint').textContent = '选中照片后，AI 会以该人物面貌生成每张画面；点「不用参考」则纯文生图';
-    return;
-  }
-  const tok = localStorage.getItem('nian_token') || '';
-  try {
-    const r = await fetch(rawUrl, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const blob = await r.blob();
-    state.refB64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    $('refPhotoHint').textContent = '✓ 已选择「' + esc(state.libImages[idx].filename || '照片') + '」为参考，点“生成图片”将使用图生图模式';
-    toast('参考照片已加载');
-  } catch(e) {
-    state.refB64 = '';
-    toast('照片加载失败：' + e.message);
-  }
-}
 
 // ───── 最终合成 MV06 ─────
 async function finalCut() {
