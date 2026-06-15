@@ -18,6 +18,13 @@ services:
         value: whisper-1
       - key: AI302_VISION_MODEL
         value: gemini-2.5-flash
+      # ─── DashScope 通义千问（联网搜索功能专用）───
+      # 在 Render 控制台填入你的阿里云 DashScope API Key（以 sk- 开头）
+      # 国内用户不填 DASHSCOPE_REGION；海外用户填 intl
+      - key: DASHSCOPE_API_KEY
+        sync: false
+      - key: DASHSCOPE_REGION
+        value: ""            # 留空=国内端点；填 intl=海外端点
       - key: PYTHON_VERSION
         value: "3.11"
       # ─── Stage 1 用户系统 ───
