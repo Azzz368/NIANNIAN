@@ -306,7 +306,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     # ── 3) 降级：302.ai 知识库（无联网但有完整结构，不显示警告）──
     kb_system = _DEEP_SEARCH_SYSTEM.replace(
         "具备联网实时搜索能力。",
-        "请根据已有知识尽量全面作答；若信息存在时效性，请在对应字段注明"信息可能有更新"。",
+        "请根据已有知识尽量全面作答；若信息存在时效性，请在对应字段注明（信息可能有更新）。",
     )
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
