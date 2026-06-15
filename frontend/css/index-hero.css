@@ -366,11 +366,11 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
   box-shadow: 0 0 10px rgba(196,150,74,.45);
 }
 
-/* 三栏卡片网格 */
+/* 四栏卡片网格 */
 .premium-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 28px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
 }
 
 /* 卡片 — 模糊渐变背景 + 极细线边框 + 漫反射 box-shadow */
@@ -381,7 +381,7 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
     rgba(255,252,246,.88) 100%);
   border: 1px solid rgba(196,150,74,.16);
   border-radius: 22px;
-  padding: 46px 32px 40px;
+  padding: 36px 24px 32px;
   text-align: left;
   position: relative;
   overflow: hidden;
@@ -416,30 +416,30 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
 
 /* 卡片图标 */
 .pcard-icon {
-  width: 48px; height: 48px; border-radius: 14px;
+  width: 44px; height: 44px; border-radius: 12px;
   background: linear-gradient(135deg,
     rgba(196,150,74,.18) 0%,
     rgba(232,197,122,.10) 100%);
   border: 1px solid rgba(196,150,74,.22);
   display: flex; align-items: center; justify-content: center;
   font-family: "Cormorant Garamond", serif;
-  font-size: 1.5rem; color: #C4964A;
-  margin-bottom: 26px;
+  font-size: 1.4rem; color: #C4964A;
+  margin-bottom: 20px;
   box-shadow: 0 3px 12px rgba(196,150,74,.12);
 }
 
 /* 卡片标题 */
 .pcard-title {
   font-family: "Cormorant Garamond","Songti SC", serif;
-  font-size: 1.22rem; font-weight: 600;
+  font-size: 1.1rem; font-weight: 600;
   color: #3a2f22; letter-spacing: .03em;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 /* 卡片正文 */
 .pcard-body {
-  font-size: .9rem; color: #8a7654;
-  line-height: 1.8; font-weight: 300;
+  font-size: .84rem; color: #8a7654;
+  line-height: 1.75; font-weight: 300;
   letter-spacing: .02em;
 }
 
@@ -454,11 +454,14 @@ html,body{margin:0;padding:0;overflow-x:hidden;background:#F4ECDB;}
 .premium-footer-row .dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(196,150,74,.4); }
 
 /* 响应式 */
-@media (max-width: 800px) {
+@media (max-width: 1000px) {
   .premium-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 540px) {
-  .premium-grid { grid-template-columns: 1fr; }
+  .premium-grid { grid-template-columns: 1fr 1fr; gap: 14px; }
   .premium-section { padding: 80px 18px 70px; }
-  .premium-card { padding: 34px 24px 30px; }
+  .premium-card { padding: 26px 18px 22px; }
+}
+@media (max-width: 380px) {
+  .premium-grid { grid-template-columns: 1fr; }
 }
