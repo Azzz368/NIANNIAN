@@ -1,0 +1,28 @@
+{
+  "assets": [
+    {
+      "asset_id": "a_2ef989a0a30b",
+      "filename": "ScreenShot_2026-05-14_153309_055.png",
+      "stored_name": "a_2ef989a0a30b.png",
+      "mime": "image/png",
+      "kind": "image",
+      "size": 710625,
+      "description": "",
+      "tags": [
+        "2020年代",
+        "数字生活",
+        "屏幕截图",
+        "日常记录",
+        "平静"
+      ],
+      "usable_for": [
+        "person_profile",
+        "video_storyboard",
+        "digital_human_memory"
+      ],
+      "summary": "2026年手机屏幕截图",
+      "url": "/api/memorials/m_28e64002429d/assets/a_2ef989a0a30b",
+      "created_at": "2026-06-11T16:23:12"
+    }
+  ]
+}
