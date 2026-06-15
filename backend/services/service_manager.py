@@ -216,21 +216,25 @@ _SEARCH_MODELS = ["perplexity/sonar-pro", "perplexity/sonar", "gpt-4o-search-pre
                   "web-search-pro", "moonshot-v1-128k-search"]
 
 _DEEP_SEARCH_SYSTEM = """你是念念追思影像制作助手，具备联网实时搜索能力。
-用户想了解某位人物的生平资料，以便制作追思影像。请联网搜索后，用温暖自然的中文整理：
+用户想了解某位人物的生平资料，以便制作追思影像。请联网搜索后，**严格按以下 JSON 格式输出，不加任何解释或 Markdown**：
 
-### 一、基本信息
-全名、生卒年月（如有）、主要职业/身份、籍贯。
+{
+  "organized": "用温暖自然的中文整理，包含：\\n### 一、基本信息\\n全名、生卒年月、主要职业/身份、籍贯。\\n\\n### 二、人生经历亮点\\n按时间顺序列出3-6个重要节点。\\n\\n### 三、性格与精神遗产\\n性格、价值观、主要贡献（100字以内）。\\n\\n### 四、适合追思影像的素材线索\\n2-4个最具画面感的场景或情感记忆点。",
+  "name": "姓名",
+  "gender": "男 或 女 或 不便告知",
+  "birth_date": "XXXX年X月X日 或 XXXX年 或 空",
+  "death_date": "XXXX年X月X日 或 XXXX年 或 空（健在则填空）",
+  "occupation": "主要职业或身份",
+  "locations": ["出生地或主要居住地，最多3个"],
+  "personality_keywords": ["性格关键词，最多5个"],
+  "quotes": ["代表性金句，原文，最多5条；没有则空数组"],
+  "objects": ["代表性物件，最多5个；没有则空数组"],
+  "core_memories": [
+    {"title": "记忆标题（10字以内）", "content": "具体描述（60-100字）"}
+  ]
+}
 
-### 二、人生经历亮点
-按时间顺序列出 3-6 个重要节点。
-
-### 三、性格与精神遗产
-性格、价值观、主要贡献（100字以内）。
-
-### 四、适合追思影像的素材线索
-2-4 个最具画面感的场景、故事或情感记忆点。
-
-若无公开资料请如实告知。输出语气温暖，不要使用"根据搜索结果"等机械表述。"""
+信息不足的字段：字符串填空字符串，数组填空数组。若无公开资料请在 organized 里如实说明。"""
 
 _FILL_SYSTEM = """根据已整理的人物资料，提取以下字段，严格输出 JSON，不加任何解释：
 {
@@ -251,12 +255,48 @@ _FILL_SYSTEM = """根据已整理的人物资料，提取以下字段，严格�
 信息不足的字段：字符串填空字符串，数组填空数组。"""
 
 
+def _parse_deep_search_json(raw: str) -> Dict[str, Any]:
+    """
+    解析 deep_search 返回的 JSON（可能包裹在 ```json``` 代码块里）。
+    优先提取完整 JSON 对象；若解析失败则把整段文字当 organized 字段返回。
+    """
+    import json as _j, re as _r
+    text = raw.strip()
+    # 去掉可能的代码块包裹
+    m = _r.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, _r.S)
+    if m:
+        text = m.group(1)
+    else:
+        # 取第一个 { 到最后一个 }
+        s, e = text.find("{"), text.rfind("}")
+        if s != -1 and e > s:
+            text = text[s:e + 1]
+    try:
+        data = _j.loads(text)
+        if isinstance(data, dict) and data.get("organized"):
+            return data
+    except Exception:
+        pass
+    # 解析失败：整段文字当叙述文本
+    return {"organized": raw.strip()}
+
+
 def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
-    """优先 DashScope qwen-max/qwen-plus（enable_search 真实联网），失败则尝试 302.ai 搜索模型，最终降级到 302.ai 知识库。"""
+    """
+    优先 DashScope qwen-max/qwen-plus（enable_search 真实联网），
+    失败则尝试 302.ai 搜索模型，最终降级到 302.ai 知识库。
+    返回结构：{"organized": "...", "name": "...", "quotes": [...], "core_memories": [...], ...}
+    """
     import os as _os
     user_msg = f"请帮我搜索并整理关于以下人物的生平资料：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
+
+    def _try_parse(content: str, model: str, fallback: bool) -> Dict[str, Any]:
+        parsed = _parse_deep_search_json(content)
+        parsed["model"] = model
+        parsed["fallback"] = fallback
+        return parsed
 
     # ── 1) 首选：DashScope（enable_search 真实联网）──
     ds_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
@@ -280,11 +320,11 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                         ],
                         extra_body={"enable_search": True},
                         temperature=0.4,
-                        max_tokens=1600,
+                        max_tokens=2400,
                     )
                     content = (resp.choices[0].message.content or "").strip()
                     if content:
-                        return {"organized": content, "model": f"{ds_model}（联网）", "fallback": False}
+                        return _try_parse(content, f"{ds_model}（联网）", False)
                 except Exception as _e:
                     print(f"[deep_search] DashScope {ds_model} failed: {_e}")
         except Exception as e:
@@ -292,7 +332,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     else:
         print("[deep_search] DASHSCOPE_API_KEY not set, skipping")
 
-    # ── 2) 次选：302.ai 搜索模型系列（perplexity/sonar 等，如平台上线时自动生效）──
+    # ── 2) 次选：302.ai 搜索模型系列 ──
     for model in _SEARCH_MODELS:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -302,18 +342,18 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.4,
-                max_tokens=1600,
+                max_tokens=2400,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
-                return {"organized": content, "model": model, "fallback": False}
+                return _try_parse(content, model, False)
         except Exception:
             continue
 
-    # ── 3) 降级：302.ai 知识库（无联网但有完整结构，不显示警告）──
+    # ── 3) 降级：302.ai 知识库 ──
     kb_system = _DEEP_SEARCH_SYSTEM.replace(
         "具备联网实时搜索能力。",
-        "请根据已有知识尽量全面作答；若信息存在时效性，请在对应字段注明（信息可能有更新）。",
+        "请根据已有知识尽量全面作答；若信息存在时效性，请在 organized 字段里注明（信息可能有更新）。",
     )
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
@@ -324,11 +364,11 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.5,
-                max_tokens=1600,
+                max_tokens=2400,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
-                return {"organized": content, "model": f"{m}（知识库）", "fallback": True}
+                return _try_parse(content, f"{m}（知识库）", True)
         except Exception:
             continue
 
@@ -336,26 +376,12 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
 
 
 def deep_search_extract_fields(organized: str, query: str) -> Dict[str, Any]:
-    """从整理文本中提取可填表单字段（含 quotes/objects/core_memories）"""
-    import json as _json, re as _re
-    for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
-        try:
-            resp = PRIMARY_CLIENT.chat.completions.create(
-                model=m,
-                messages=[
-                    {"role": "system", "content": _FILL_SYSTEM},
-                    {"role": "user",   "content": f"搜索词：{query}\n\n整理资料：\n{organized}"},
-                ],
-                temperature=0.2,
-                max_tokens=1200,
-            )
-            raw = resp.choices[0].message.content or "{}"
-            mt = _re.search(r"\{.*\}", raw, _re.S)
-            if mt:
-                return _json.loads(mt.group())
-        except Exception:
-            continue
+    """
+    兼容旧调用：deep_search 现在已经一次性返回结构化字段，
+    此函数仅作为保留接口，直接返回空（字段已在 deep_search 结果里）。
+    """
     return {}
+
 
 
 # ── 念念 AI 对话（intake step3）────────────────────────────────────────────

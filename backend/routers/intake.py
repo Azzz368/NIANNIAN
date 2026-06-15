@@ -72,7 +72,10 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
     if not req.query.strip():
         raise HTTPException(400, "query required")
     result = sm.deep_search(req.query.strip(), req.extra)
-    fields = sm.deep_search_extract_fields(result["organized"], req.query.strip())
+    # deep_search 现在直接返回结构化字段，无需二次提取
+    fields = {k: result[k] for k in ("name","birth_date","death_date","occupation",
+              "locations","personality_keywords","quotes","objects","core_memories")
+              if k in result}
 
     archived_path: Optional[str] = None
     dossier_updated = False
@@ -86,7 +89,6 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
             archive_dir = st.memorial_dir(uid, mid) / "search_archives"
             archive_dir.mkdir(parents=True, exist_ok=True)
             ts = time.strftime("%Y%m%d_%H%M%S")
-            # 版本号 = 该目录下已有文件数 + 1
             version = len(list(archive_dir.glob("*.json"))) + 1
             fname = f"search_{ts}_v{version}.json"
             archive_data = {
@@ -104,6 +106,7 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
             archived_path = str(fpath.relative_to(st.DATA_DIR))
 
             # 2) 写入 dossier
+            # deep_search 现在直接在 result 里返回结构化字段
             dossier = st.get_dossier(uid, mid)
             if not isinstance(dossier, dict):
                 dossier = st.default_dossier()
@@ -113,16 +116,16 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
             def _fill(key, val):
                 if val and not subj.get(key):
                     subj[key] = val
-            _fill("name",       fields.get("deceased_name", ""))
-            _fill("birth",      fields.get("birth_date", ""))
-            _fill("passing",    fields.get("death_date", ""))
-            _fill("occupation", fields.get("occupation", ""))
-            locs = fields.get("locations", [])
+            _fill("name",       result.get("name", ""))
+            _fill("birth",      result.get("birth_date", ""))
+            _fill("passing",    result.get("death_date", ""))
+            _fill("occupation", result.get("occupation", ""))
+            locs = result.get("locations", [])
             if locs and not subj.get("locations"):
                 subj["locations"] = locs
 
             # personality keywords
-            pkeys = fields.get("personality_keywords", [])
+            pkeys = result.get("personality_keywords", [])
             if pkeys:
                 existing_kw = dossier.setdefault("personality", {}).setdefault("keywords", [])
                 for kw in pkeys:
@@ -130,7 +133,7 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
                         existing_kw.append(kw)
 
             # quotes（金句）
-            new_quotes = fields.get("quotes", [])
+            new_quotes = result.get("quotes", [])
             if new_quotes:
                 existing_q = dossier.setdefault("quotes", [])
                 for q in new_quotes:
@@ -138,7 +141,7 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
                         existing_q.append(q)
 
             # objects（代表性物件）
-            new_objs = fields.get("objects", [])
+            new_objs = result.get("objects", [])
             if new_objs:
                 existing_o = dossier.setdefault("objects", [])
                 for o in new_objs:
@@ -146,7 +149,7 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
                         existing_o.append(o)
 
             # core_memories → memories
-            new_mems = fields.get("core_memories", [])
+            new_mems = result.get("core_memories", [])
             if new_mems:
                 existing_m = dossier.setdefault("memories", [])
                 for mem in new_mems:
@@ -165,14 +168,14 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
             # 同步更新 meta.json（姓名/生卒）
             meta_patch: dict = {}
             current_meta = st.get_memorial(uid, mid) or {}
-            if fields.get("deceased_name") and not (current_meta.get("name") or "").strip():
-                meta_patch["name"] = fields["deceased_name"]
-            if fields.get("birth_date"):
-                meta_patch["birth_date"] = fields["birth_date"]
-            if fields.get("death_date"):
-                meta_patch["death_date"] = fields["death_date"]
-            if fields.get("occupation"):
-                meta_patch["occupation"] = fields["occupation"]
+            if result.get("name") and not (current_meta.get("name") or "").strip():
+                meta_patch["name"] = result["name"]
+            if result.get("birth_date"):
+                meta_patch["birth_date"] = result["birth_date"]
+            if result.get("death_date"):
+                meta_patch["death_date"] = result["death_date"]
+            if result.get("occupation"):
+                meta_patch["occupation"] = result["occupation"]
             if meta_patch:
                 st.update_memorial_meta(uid, mid, meta_patch)
 
