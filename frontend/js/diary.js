@@ -1,6 +1,7 @@
 const { apiUpload, toast, esc } = window.NN;
 
 const STORAGE_KEY = 'niannian.diary.draft';
+const PERSONA_STORAGE_KEY = 'niannian.diary.digital_persona';
 const state = {
   images: [],
   generating: false,
@@ -63,6 +64,79 @@ function setResult(html) {
   if (!el) return;
   el.innerHTML = html;
   el.style.display = html ? 'block' : 'none';
+}
+
+function normalizeList(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function renderPersonaItems(title, items, mapper) {
+  const cleanItems = normalizeList(items).slice(0, 4);
+  if (!cleanItems.length) return '';
+  return `
+    <div class="persona-section">
+      <div class="persona-section-title">${esc(title)}</div>
+      <div class="persona-chip-list">
+        ${cleanItems.map(item => `<span class="persona-chip">${esc(mapper(item))}</span>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function savePersonaSnapshot(persona, diaryMeta) {
+  if (!persona || persona.error) return;
+  try {
+    const history = JSON.parse(localStorage.getItem(PERSONA_STORAGE_KEY) || '[]');
+    history.unshift({
+      diary_id: diaryMeta.diary_id || '',
+      title: diaryMeta.title || '',
+      date: diaryMeta.date || '',
+      created_at: new Date().toISOString(),
+      persona,
+    });
+    localStorage.setItem(PERSONA_STORAGE_KEY, JSON.stringify(history.slice(0, 20)));
+  } catch {
+    localStorage.removeItem(PERSONA_STORAGE_KEY);
+  }
+}
+
+function renderDigitalPersona(persona, diaryMeta = {}) {
+  const card = $('digitalPersonaCard');
+  if (!card) return;
+  if (!persona || persona.error) {
+    card.style.display = 'none';
+    card.innerHTML = '';
+    return;
+  }
+
+  const confidence = Number(persona.confidence || 0);
+  const confidenceText = confidence > 0 ? `置信度 ${Math.round(confidence * 100)}%` : '本次提炼';
+  const anchors = renderPersonaItems('记忆锚点', persona.memory_anchors, item => {
+    const title = item.title || item.label || '未命名记忆';
+    const importance = item.importance ? ` · ${item.importance}` : '';
+    return `${title}${importance}`;
+  });
+  const questions = normalizeList(persona.next_questions).slice(0, 2)
+    .map(question => `<p class="persona-question">· ${esc(question)}</p>`)
+    .join('');
+
+  card.innerHTML = `
+    <div class="section-label">Digital Persona</div>
+    <h3>数字人格提炼</h3>
+    <p class="persona-summary">${esc(persona.summary || '这次日记已经沉淀为一条人格线索。')}</p>
+    <div class="persona-chip-list">
+      <span class="persona-chip">${esc(confidenceText)}</span>
+      <span class="persona-chip">${esc(diaryMeta.date || formatToday())}</span>
+    </div>
+    ${renderPersonaItems('核心身份线索', persona.core_identity, item => item.label || item.description || '')}
+    ${renderPersonaItems('生活语境', persona.life_context, item => item.label || item.description || '')}
+    ${renderPersonaItems('情绪模式', persona.emotional_patterns, item => item.label || item.description || '')}
+    ${renderPersonaItems('表达风格', persona.expression_style, item => item.label || item.description || '')}
+    ${anchors}
+    ${questions ? `<div class="persona-section"><div class="persona-section-title">下次可追问</div>${questions}</div>` : ''}
+  `;
+  card.style.display = 'block';
+  savePersonaSnapshot(persona, diaryMeta);
 }
 
 function setVoiceStatus(text, active = false) {
@@ -354,6 +428,7 @@ function clearDraft() {
   if (input) input.value = '';
   renderImagePreview();
   setResult('');
+  renderDigitalPersona(null);
   setVoiceStatus('可以直接输入文字，也可以说一段今天想记录的事。');
   toast('已清空');
 }
@@ -404,6 +479,11 @@ async function generateDiary() {
       ${esc(result.date || '')}<br>
       <a class="btn btn-primary" href="${esc(pdfUrl)}" target="_blank" download>下载 PDF</a>
     `);
+    renderDigitalPersona(result.digital_persona, {
+      diary_id: result.diary_id,
+      title: result.title,
+      date: result.date,
+    });
     toast('日记 PDF 已生成');
   } catch (err) {
     setResult(`接口调用失败：${esc(err.message || err)}`);

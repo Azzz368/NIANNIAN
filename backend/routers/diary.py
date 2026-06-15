@@ -486,6 +486,33 @@ def _run_skill(skill_id: str, filename: str, payload: Dict[str, Any]) -> Dict[st
     return result
 
 
+def _extract_digital_persona(payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = _run_skill("DIARY04", "DIARY04-digital-persona.md", payload)
+    if result.get("error"):
+        print(f"[diary] DIARY04 digital persona failed: {result.get('message')}")
+        return {
+            "error": True,
+            "message": result.get("message") or "数字人格提炼失败",
+            "summary": "",
+            "confidence": 0,
+            "core_identity": [],
+            "life_context": [],
+            "emotional_patterns": [],
+            "expression_style": [],
+            "memory_anchors": [],
+            "surface_details": [],
+            "forgetting_policy": {},
+            "next_questions": [],
+        }
+    result.setdefault("confidence", 0)
+    for key in ("core_identity", "life_context", "emotional_patterns", "expression_style", "memory_anchors", "surface_details", "next_questions"):
+        if not isinstance(result.get(key), list):
+            result[key] = []
+    if not isinstance(result.get("forgetting_policy"), dict):
+        result["forgetting_policy"] = {}
+    return result
+
+
 @router.get("/assets/{diary_id}/{name}")
 def get_diary_asset(diary_id: str, name: str) -> FileResponse:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{8,64}", diary_id):
@@ -622,6 +649,16 @@ async def generate_diary(
         print(f"[diary] pdf render failed: {exc}")
         return {"ok": False, "api_called": True, "stage": "PDF_RENDER", "message": "PDF 渲染失败，请确认 Playwright 浏览器依赖已安装", "detail": str(exc), "diary_id": diary_id}
 
+    digital_persona = _extract_digital_persona({
+        "title": clean_title,
+        "date": diary_doc.get("date") or _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "pairing": pairing,
+        "diary": diary_doc,
+        "images": [{k: v for k, v in item.items() if k != "data_url"} for item in image_items],
+    })
+
     pdf_path = DIARY_PDF_DIR / f"{diary_id}.pdf"
     pdf_path.write_bytes(pdf_bytes)
     (DIARY_OUTPUT_DIR / f"{diary_id}.json").write_text(json.dumps({
@@ -630,6 +667,7 @@ async def generate_diary(
         "pairing": pairing,
         "diary": diary_doc,
         "layout": layout,
+        "digital_persona": digital_persona,
         "pdf_path": str(pdf_path),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -645,6 +683,7 @@ async def generate_diary(
         "image_captions": diary_doc.get("image_captions", []),
         "images": [{k: v for k, v in item.items() if k != "data_url"} for item in image_items],
         "paragraph_image_map": layout.get("paragraph_image_map", []),
+        "digital_persona": digital_persona,
         "pdf_url": f"/api/diary/pdf/{diary_id}",
         "download_name": filename,
     }
