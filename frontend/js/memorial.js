@@ -238,6 +238,42 @@ async function bootstrap() {
       state.chatHistory = res.chat_history || [];
     } catch { /* 过期则忽略 */ }
   }
+  // 从资料库预填：若有 active memorial，将 dossier 数据填入空字段
+  await prefillFromLibrary();
+}
+
+async function prefillFromLibrary() {
+  if (!window.NianAuth || !NianAuth.isAuthed()) return;
+  const mid = NianAuth.getActiveMemorialId();
+  if (!mid) return;
+  try {
+    const resp = await NianAuth.fetch(`/api/memorials/${encodeURIComponent(mid)}`);
+    if (!resp.ok) return;
+    const mdata = await resp.json();
+    const subj = (mdata.dossier || {}).subject || {};
+    const prefill = {
+      deceased_name:   subj.name       || '',
+      birth_date:      subj.birth      || '',
+      death_date:      subj.passing    || '',
+      occupation:      subj.occupation || '',
+      deceased_gender: subj.gender     || '',
+    };
+    // 仅填入目前仍为空的字段，不覆盖用户已填内容
+    FIELD_IDS.forEach(k => {
+      const el = document.getElementById('f_' + k);
+      if (el && !el.value && prefill[k]) el.value = prefill[k];
+    });
+    if (prefill.deceased_gender && !document.querySelector('input[name="gender"]:checked')) {
+      const r = document.querySelector(`input[name="gender"][value="${prefill.deceased_gender}"]`);
+      if (r) r.checked = true;
+    }
+    // 顶部提示条：告知用户数据来源
+    const name = prefill.deceased_name || mdata.meta?.name || '';
+    if (name) {
+      const hint = document.getElementById('libPrefillHint');
+      if (hint) { hint.textContent = `已从资料库「${name}」预填基础信息`; hint.style.display = 'block'; }
+    }
+  } catch(e) { /* 静默忽略，不影响正常填写 */ }
 }
 
 // ───── 事件绑定 ─────
