@@ -39,6 +39,24 @@
     min-height: 280px;
   }
 
+  .diary-voice-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .diary-voice-status {
+    color: var(--muted-l);
+    font-size: .86rem;
+    line-height: 1.5;
+  }
+
+  .diary-voice-status.active {
+    color: var(--accent);
+  }
+
   .diary-preview-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -149,6 +167,10 @@
         <div class="field">
           <label>文字内容</label>
           <textarea id="diaryText" class="diary-editor" placeholder="写下今天想记录的事，或想对 Ta 说的话..."></textarea>
+          <div class="diary-voice-row">
+            <button class="btn" id="btnVoiceDiary" type="button">语音输入</button>
+            <span class="diary-voice-status" id="diaryVoiceStatus">可以直接输入文字，也可以说一段今天想记录的事。</span>
+          </div>
         </div>
 
         <div class="btn-row diary-actions">

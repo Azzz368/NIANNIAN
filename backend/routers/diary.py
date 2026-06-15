@@ -3,8 +3,14 @@ import html
 import io
 import json
 import mimetypes
+import os
 import re
+import sys
+import threading
+import time
+import wave
 import uuid
+from array import array
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,6 +20,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
+from openai import OpenAI
 
 from llm_client import call_skill
 from skill_loader import load_skill
@@ -31,6 +38,303 @@ for _dir in (DIARY_OUTPUT_DIR, DIARY_ASSET_DIR, DIARY_PDF_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 _ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+def _env_list(name: str, default: str) -> List[str]:
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _diary_asr_provider() -> str:
+    provider = os.getenv("DIARY_ASR_PROVIDER", "auto").strip().lower()
+    return provider if provider in {"auto", "dashscope", "dashscope_realtime", "302", "ai302", "llm"} else "auto"
+
+
+def _diary_302_asr_model() -> str:
+    return (
+        os.getenv("DIARY_302_ASR_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or os.getenv("AI302_AUDIO_MODEL", "").strip()
+        or "whisper-1"
+    )
+
+
+def _diary_llm_audio_model() -> str:
+    return (
+        os.getenv("DIARY_LLM_AUDIO_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or os.getenv("AI302_TEXT_MODEL", "").strip()
+        or "gemini-2.5-flash"
+    )
+
+
+def _diary_dashscope_realtime_model() -> str:
+    return (
+        os.getenv("DIARY_DASHSCOPE_REALTIME_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or "qwen3.5-omni-plus-realtime"
+    )
+
+
+def _resample_int16(samples: List[int], src_rate: int, dst_rate: int = 16000) -> List[int]:
+    if src_rate == dst_rate or not samples:
+        return samples
+    out_len = max(1, int(len(samples) * dst_rate / src_rate))
+    return [samples[min(len(samples) - 1, int(i * src_rate / dst_rate))] for i in range(out_len)]
+
+
+def _audio_to_pcm16_mono_16k(raw: bytes, filename: str, content_type: str) -> bytes:
+    ext = Path(filename or "").suffix.lower()
+    if ext == ".pcm" or "pcm" in (content_type or "").lower():
+        return raw
+    if ext != ".wav" and "wav" not in (content_type or "").lower():
+        raise ValueError("DashScope realtime 需要 WAV/PCM 音频；请让前端上传 16kHz 单声道 WAV，或先安装音频转码能力。")
+
+    with wave.open(io.BytesIO(raw), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        frames = wav.readframes(wav.getnframes())
+
+    if sample_width == 2:
+        values = array("h")
+        values.frombytes(frames)
+        if sys.byteorder != "little":
+            values.byteswap()
+        raw_samples = list(values)
+    elif sample_width == 1:
+        raw_samples = [(value - 128) << 8 for value in frames]
+    else:
+        raise ValueError(f"暂不支持 {sample_width * 8}bit WAV，请上传 16bit PCM WAV")
+
+    if channels > 1:
+        mono_samples = []
+        for i in range(0, len(raw_samples), channels):
+            chunk = raw_samples[i:i + channels]
+            mono_samples.append(int(sum(chunk) / len(chunk)))
+    else:
+        mono_samples = raw_samples
+
+    resampled = _resample_int16(mono_samples, sample_rate, 16000)
+    output = array("h", [max(-32768, min(32767, int(sample))) for sample in resampled])
+    if sys.byteorder != "little":
+        output.byteswap()
+    return output.tobytes()
+
+
+class _DiaryRealtimeCallback:
+    def __init__(self):
+        from dashscope.audio.qwen_omni import OmniRealtimeCallback
+
+        class Callback(OmniRealtimeCallback):
+            def __init__(self, outer):
+                super().__init__()
+                self.outer = outer
+
+            def on_event(self, response):
+                self.outer.on_event(response)
+
+        self.transcripts: List[str] = []
+        self.errors: List[str] = []
+        self.events: List[str] = []
+        self.done = threading.Event()
+        self.instance = Callback(self)
+
+    def on_event(self, response: Dict[str, Any]) -> None:
+        event_type = response.get("type", "")
+        if event_type:
+            self.events.append(event_type)
+        if event_type == "conversation.item.input_audio_transcription.completed":
+            text = (response.get("transcript") or "").strip()
+            if text:
+                self.transcripts.append(text)
+            self.done.set()
+        elif event_type in {"conversation.item.input_audio_transcription.failed", "error"}:
+            self.errors.append(json.dumps(response, ensure_ascii=False))
+            self.done.set()
+        elif event_type in {"response.text.done", "response.audio_transcript.done"}:
+            text = (response.get("text") or response.get("transcript") or "").strip()
+            if text:
+                self.transcripts.append(text)
+            self.done.set()
+        elif event_type == "response.done":
+            response_obj = response.get("response") or {}
+            for item in response_obj.get("output", []) or []:
+                for content in item.get("content", []) or []:
+                    text = (content.get("text") or content.get("transcript") or "").strip()
+                    if text:
+                        self.transcripts.append(text)
+            self.done.set()
+
+
+def _audio_format(filename: str, content_type: str) -> str:
+    ext = Path(filename or "").suffix.lower().lstrip(".")
+    if ext in {"mp3", "wav", "m4a", "aac", "ogg", "webm", "flac"}:
+        return ext
+    if "wav" in content_type:
+        return "wav"
+    if "mpeg" in content_type or "mp3" in content_type:
+        return "mp3"
+    if "mp4" in content_type or "m4a" in content_type:
+        return "m4a"
+    if "aac" in content_type:
+        return "aac"
+    if "ogg" in content_type:
+        return "ogg"
+    if "webm" in content_type:
+        return "webm"
+    return "mp3"
+
+
+def _transcribe_with_audio_llm(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("AI302_API_KEY", "").strip()
+    if not api_key:
+        errors.append("llm-audio: AI302_API_KEY is not configured")
+        return ""
+
+    model = _diary_llm_audio_model()
+    base_url = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1").strip().rstrip("/")
+    audio_data = base64.b64encode(raw).decode("ascii")
+    audio_format = _audio_format(filename, content_type)
+    target_lang = os.getenv("DIARY_LLM_AUDIO_TARGET_LANG", "中文").strip() or "中文"
+    task = os.getenv("DIARY_LLM_AUDIO_TASK", "transcribe").strip().lower()
+    if task == "translate":
+        instruction = f"请听这段音频，并翻译成{target_lang}。只输出翻译后的文字，不要解释，不要总结。"
+    else:
+        instruction = f"请听这段音频，并转写为{target_lang}原文。只输出转写文字，不要解释，不要总结，不要润色。"
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你是一个严谨的音频转写助手，只返回音频中的文字内容。"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": instruction},
+                        {"type": "input_audio", "input_audio": {"data": audio_data, "format": audio_format}},
+                    ],
+                },
+            ],
+            temperature=0,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            errors.append(f"llm-audio/{model}: empty transcript")
+        return text
+    except Exception as exc:
+        errors.append(f"llm-audio/{model}: {exc}")
+        return ""
+
+
+def _transcribe_with_302(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("AI302_API_KEY", "").strip()
+    if not api_key:
+        errors.append("302ai: AI302_API_KEY is not configured")
+        return ""
+
+    model = _diary_302_asr_model()
+    base_url = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1").strip().rstrip("/")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    try:
+        transcript = client.audio.transcriptions.create(
+            model=model,
+            file=(filename, io.BytesIO(raw), content_type),
+            language="zh",
+        )
+        text = (getattr(transcript, "text", "") or "").strip()
+        if not text:
+            errors.append(f"302ai/{model}: empty transcript")
+        return text
+    except Exception as exc:
+        errors.append(f"302ai/{model}: {exc}")
+        return ""
+
+
+def _transcribe_with_dashscope(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        errors.append("dashscope: DASHSCOPE_API_KEY is not configured")
+        return ""
+
+    client = OpenAI(api_key=api_key, base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+    for model in _env_list("DIARY_DASHSCOPE_ASR_MODELS", "paraformer-realtime-v2"):
+        try:
+            transcript = client.audio.transcriptions.create(
+                model=model,
+                file=(filename, io.BytesIO(raw), content_type),
+                language="zh",
+            )
+            text = (getattr(transcript, "text", "") or "").strip()
+            if text:
+                return text
+            errors.append(f"dashscope/{model}: empty transcript")
+        except Exception as exc:
+            errors.append(f"dashscope/{model}: {exc}")
+    return ""
+
+
+def _transcribe_with_dashscope_realtime(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        errors.append("dashscope-realtime: DASHSCOPE_API_KEY is not configured")
+        return ""
+
+    try:
+        from dashscope.audio.qwen_omni import AudioFormat, MultiModality, OmniRealtimeConversation
+    except Exception as exc:
+        errors.append(f"dashscope-realtime: dashscope sdk is unavailable: {exc}")
+        return ""
+
+    try:
+        pcm_bytes = _audio_to_pcm16_mono_16k(raw, filename, content_type)
+    except Exception as exc:
+        errors.append(f"dashscope-realtime: {exc}")
+        return ""
+
+    model = _diary_dashscope_realtime_model()
+    url = os.getenv("DASHSCOPE_REALTIME_URL", "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime").strip()
+    timeout_sec = float(os.getenv("DIARY_DASHSCOPE_REALTIME_TIMEOUT", "25"))
+    callback = _DiaryRealtimeCallback()
+    conv = OmniRealtimeConversation(model=model, callback=callback.instance, url=url, api_key=api_key)
+
+    try:
+        conv.connect()
+        conv.update_session(
+            output_modalities=[MultiModality.TEXT],
+            voice=os.getenv("DIARY_DASHSCOPE_REALTIME_VOICE", "Ethan"),
+            input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,
+            enable_input_audio_transcription=True,
+            enable_turn_detection=False,
+            instructions="请只转写用户音频中的原文，不要回答问题，不要解释，不要润色。",
+        )
+        chunk_size = 3200
+        for start in range(0, len(pcm_bytes), chunk_size):
+            conv.append_audio(base64.b64encode(pcm_bytes[start:start + chunk_size]).decode("ascii"))
+            time.sleep(0.01)
+        conv.commit()
+        if not callback.done.wait(timeout_sec):
+            conv.create_response(instructions="请输出这段用户音频的原文转写。", output_modalities=[MultiModality.TEXT])
+            callback.done.wait(timeout_sec)
+    except Exception as exc:
+        errors.append(f"dashscope-realtime/{model}: {exc}")
+        return ""
+    finally:
+        try:
+            conv.close()
+        except Exception:
+            pass
+
+    text = "\n".join(item.strip() for item in callback.transcripts if item.strip()).strip()
+    if text:
+        return text
+    if callback.errors:
+        errors.extend(f"dashscope-realtime/{model}: {item}" for item in callback.errors[-2:])
+    else:
+        seen = ", ".join(callback.events[-8:]) if callback.events else "no events"
+        errors.append(f"dashscope-realtime/{model}: empty transcript; events={seen}; pcm_bytes={len(pcm_bytes)}")
+    return ""
 
 
 class DiaryJsonImage(BaseModel):
@@ -202,6 +506,43 @@ def get_diary_pdf(diary_id: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(404, "pdf not found")
     return FileResponse(str(path), media_type="application/pdf", filename=f"念念日记_{diary_id}.pdf")
+
+
+@router.post("/transcribe")
+async def transcribe_diary_audio(audio: UploadFile = File(...)) -> Dict[str, Any]:
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(400, "empty audio")
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(413, "audio too large")
+
+    filename = audio.filename or "diary_voice.webm"
+    content_type = audio.content_type or mimetypes.guess_type(filename)[0] or "audio/webm"
+    errors: List[str] = []
+    provider = _diary_asr_provider()
+
+    if provider == "llm":
+        text = _transcribe_with_audio_llm(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "llm-audio", "model": _diary_llm_audio_model()}
+
+    if provider == "dashscope_realtime":
+        text = _transcribe_with_dashscope_realtime(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "dashscope-realtime", "model": _diary_dashscope_realtime_model()}
+
+    if provider in {"auto", "dashscope"}:
+        text = _transcribe_with_dashscope(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "dashscope"}
+
+    if provider in {"auto", "302", "ai302"}:
+        text = _transcribe_with_302(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "302ai", "model": _diary_302_asr_model()}
+
+    detail = "；".join(errors[-3:]) if errors else "ASR provider is not configured"
+    return {"ok": False, "text": "", "message": "日记语音识别失败", "detail": detail}
 
 
 @router.post("/generate")
