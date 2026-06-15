@@ -1171,9 +1171,19 @@
         if (!dsResult) return;
         dsResult.innerHTML = '';
         dsResult.className = 'session-search-result show';
+        // 来源标签
+        if (data.model) {
+          var tag = document.createElement('div');
+          tag.style.cssText = 'font-size:.72rem;margin-bottom:8px;padding:2px 8px;border-radius:10px;display:inline-block;'
+            + (data.fallback
+              ? 'background:rgba(180,140,60,.15);color:#8a6820;'
+              : 'background:rgba(60,160,100,.15);color:#2a7a50;');
+          tag.textContent = data.fallback ? '\ud83d\udcda \u77e5\u8bc6\u5e93' : '\ud83c\udf10 \u8054\u7f51\u641c\u7d22\uff08' + data.model + '\uff09';
+          dsResult.appendChild(tag);
+        }
         var p = document.createElement('p');
         p.style.cssText = 'margin:0;white-space:pre-wrap;font-size:.81rem;color:#3a2f22;line-height:1.7';
-        p.textContent = text.length > 600 ? text.slice(0, 600) + '...' : text;
+        p.textContent = text.length > 1200 ? text.slice(0, 1200) + '...' : text;
         dsResult.appendChild(p);
         var applyBtn = document.createElement('button');
         applyBtn.textContent = '\u53d1\u9001\u7ed9\u5ff5\u5ff5\u53c2\u8003';

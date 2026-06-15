@@ -211,8 +211,9 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
         return {"error": True, "step": mv_id, "message": str(exc)}
 
 
-# ── 深度搜索（302.ai perplexity/sonar-pro）────────────────────────────────
-_SEARCH_MODELS = ["perplexity/sonar-pro", "perplexity/sonar", "gpt-4o-search-preview"]
+# ── 深度搜索（302.ai perplexity/sonar-pro → Tavily → 知识库）────────────────
+_SEARCH_MODELS = ["perplexity/sonar-pro", "perplexity/sonar", "gpt-4o-search-preview",
+                  "web-search-pro", "moonshot-v1-128k-search"]
 
 _DEEP_SEARCH_SYSTEM = """你是念念追思影像制作助手，具备联网实时搜索能力。
 用户想了解某位人物的生平资料，以便制作追思影像。请联网搜索后，用温暖自然的中文整理：
@@ -244,14 +245,14 @@ _FILL_SYSTEM = """根据已整理资料，提取以下字段，严格输出 JSON
 
 
 def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
-    """优先使用 DashScope qwen-plus（联网搜索能力强），失败降级 302.ai → 知识库。"""
-    user_msg = f"请帮我搜索并整理：{query}"
+    """优先 DashScope qwen-plus 联网 → Tavily 联网 → 302.ai 搜索模型 → 知识库降级。"""
+    import os as _os
+    user_msg = f"请帮我搜索并整理关于以下人物的生平资料：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
 
-    # ── 1) 首选：DashScope qwen-plus OpenAI 兼容接口（联网搜索，最稳定）──
+    # ── 1) 首选：DashScope qwen-plus（enable_search）──
     try:
-        import os as _os
         from openai import OpenAI as _OpenAI
         api_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
         if api_key:
@@ -279,7 +280,50 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     except Exception as e:
         print(f"[deep_search] qwen-plus failed: {e}")
 
-    # ── 2) 次选：302.ai perplexity sonar 系列 ──
+    # ── 2) 次选：Tavily Search API（独立联网搜索）──
+    try:
+        tavily_key = _os.environ.get("TAVILY_API_KEY", "").strip()
+        if tavily_key:
+            import urllib.request, json as _json
+            payload = _json.dumps({
+                "api_key": tavily_key,
+                "query": query + (" " + extra if extra.strip() else "") + " 生平 人物简介",
+                "search_depth": "advanced",
+                "include_answer": True,
+                "max_results": 5,
+            }).encode()
+            req = urllib.request.Request(
+                "https://api.tavily.com/search",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp_tv:
+                tv_data = _json.loads(resp_tv.read())
+            answer = tv_data.get("answer", "")
+            results_text = "\n".join(
+                f"- {r.get('title','')}: {r.get('content','')[:200]}"
+                for r in tv_data.get("results", [])[:4]
+            )
+            combined = (answer + "\n\n" + results_text).strip()
+            if combined:
+                # 用 LLM 整理 Tavily 原始结果
+                fmt_resp = PRIMARY_CLIENT.chat.completions.create(
+                    model=TEXT_MODEL,
+                    messages=[
+                        {"role": "system", "content": _DEEP_SEARCH_SYSTEM.replace("具备联网实时搜索能力。", "请根据提供的搜索结果整理。")},
+                        {"role": "user", "content": f"以下是关于「{query}」的搜索结果，请整理成规定格式：\n\n{combined}"},
+                    ],
+                    temperature=0.3,
+                    max_tokens=1400,
+                )
+                organized = (fmt_resp.choices[0].message.content or "").strip()
+                if organized:
+                    return {"organized": organized, "model": "Tavily 联网", "fallback": False}
+    except Exception as e:
+        print(f"[deep_search] Tavily failed: {e}")
+
+    # ── 3) 三选：302.ai 搜索模型系列 ──
     for model in _SEARCH_MODELS:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -297,12 +341,11 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
         except Exception:
             continue
 
-    # ── 3) 降级：纯知识库模式（无联网）──
-    kb_prefix = (
-        "【提示：联网搜索模型暂时不可用，以下内容来自 AI 知识库，"
-        "可能存在知识截止日期限制，建议核实后再填写。】\n\n"
+    # ── 4) 降级：知识库模式（去掉警告，使用更强模型）──
+    kb_system = (
+        _DEEP_SEARCH_SYSTEM
+        .replace("具备联网实时搜索能力。", "请根据训练知识尽可能全面地回答，如信息可能存在时效性请在相关字段注明。")
     )
-    kb_system = _DEEP_SEARCH_SYSTEM.replace("具备联网实时搜索能力。", "请根据已有知识回答。")
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -312,11 +355,11 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.5,
-                max_tokens=1200,
+                max_tokens=1400,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
-                return {"organized": kb_prefix + content, "model": f"{m}（知识库模式）", "fallback": True}
+                return {"organized": content, "model": f"{m}（知识库）", "fallback": True}
         except Exception:
             continue
 
