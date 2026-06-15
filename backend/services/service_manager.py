@@ -320,7 +320,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                         ],
                         extra_body={"enable_search": True},
                         temperature=0.4,
-                        max_tokens=2400,
+                        max_tokens=4500,
                     )
                     content = (resp.choices[0].message.content or "").strip()
                     if content:
@@ -342,7 +342,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.4,
-                max_tokens=2400,
+                max_tokens=4500,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
@@ -364,7 +364,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.5,
-                max_tokens=2400,
+                max_tokens=4500,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
