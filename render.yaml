@@ -3,7 +3,7 @@ services:
     name: niannian-memorial
     runtime: python
     rootDir: .
-    buildCommand: pip install -r backend/requirements.txt
+    buildCommand: pip install -r backend/requirements.txt && python -m playwright install --with-deps chromium
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: AI302_API_KEY
