@@ -3,8 +3,8 @@ services:
     name: niannian-memorial
     runtime: python
     rootDir: .
-    buildCommand: pip install -r backend/requirements.txt && python -m playwright install --with-deps chromium
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: pip install -r backend/requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.playwright python -m playwright install --with-deps chromium
+    startCommand: PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.playwright uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: AI302_API_KEY
         sync: false          # 在 Render 控制台手动填写，不写进代码
@@ -34,6 +34,9 @@ services:
         sync: false           # 在控制台手填，默认 NIAN-2026-OWNER
       - key: NIAN_DATA_DIR
         value: /var/data      # 配合下面 Disk 的挂载点
+      # ─── Playwright Chromium 路径（PDF 生成用）───
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/project/.playwright
       # ─── 阿里云 OSS 持久化（推荐：彻底解决 Render 重启丢数据）───
       # 详见 OSS_SETUP.md。设为 1 启用；不填则继续用本地 Disk
       - key: OSS_ENABLE
