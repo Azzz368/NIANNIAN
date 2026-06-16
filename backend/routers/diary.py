@@ -767,8 +767,10 @@ async def generate_diary(
     try:
         pdf_bytes = await _render_pdf_with_playwright(_wrap_pdf_html(layout))
     except Exception as exc:
-        print(f"[diary] pdf render failed: {exc}")
-        return {"ok": False, "api_called": True, "stage": "PDF_RENDER", "message": "PDF 渲染失败，请确认 Playwright 浏览器依赖已安装", "detail": str(exc), "diary_id": diary_id}
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[diary] pdf render failed: {exc}\n{tb}")
+        return {"ok": False, "api_called": True, "stage": "PDF_RENDER", "message": f"PDF 渲染失败: {exc}", "detail": tb[-800:], "diary_id": diary_id}
 
     digital_persona = _extract_digital_persona({
         "title": clean_title,
