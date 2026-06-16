@@ -3,8 +3,14 @@ import html
 import io
 import json
 import mimetypes
+import os
 import re
+import sys
+import threading
+import time
+import wave
 import uuid
+from array import array
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,9 +20,11 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from playwright.async_api import async_playwright
 from pydantic import BaseModel, Field
+from openai import OpenAI
 
 from llm_client import call_skill
 from skill_loader import load_skill
+from services import long_memory
 from services import service_manager as sm
 
 router = APIRouter(prefix="/diary", tags=["diary"])
@@ -33,6 +41,303 @@ for _dir in (DIARY_OUTPUT_DIR, DIARY_ASSET_DIR, DIARY_PDF_DIR):
 _ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
+def _env_list(name: str, default: str) -> List[str]:
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _diary_asr_provider() -> str:
+    provider = os.getenv("DIARY_ASR_PROVIDER", "auto").strip().lower()
+    return provider if provider in {"auto", "dashscope", "dashscope_realtime", "302", "ai302", "llm"} else "auto"
+
+
+def _diary_302_asr_model() -> str:
+    return (
+        os.getenv("DIARY_302_ASR_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or os.getenv("AI302_AUDIO_MODEL", "").strip()
+        or "whisper-1"
+    )
+
+
+def _diary_llm_audio_model() -> str:
+    return (
+        os.getenv("DIARY_LLM_AUDIO_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or os.getenv("AI302_TEXT_MODEL", "").strip()
+        or "gemini-2.5-flash"
+    )
+
+
+def _diary_dashscope_realtime_model() -> str:
+    return (
+        os.getenv("DIARY_DASHSCOPE_REALTIME_MODEL", "").strip()
+        or os.getenv("DIARY_ASR_MODEL", "").strip()
+        or "qwen3.5-omni-plus-realtime"
+    )
+
+
+def _resample_int16(samples: List[int], src_rate: int, dst_rate: int = 16000) -> List[int]:
+    if src_rate == dst_rate or not samples:
+        return samples
+    out_len = max(1, int(len(samples) * dst_rate / src_rate))
+    return [samples[min(len(samples) - 1, int(i * src_rate / dst_rate))] for i in range(out_len)]
+
+
+def _audio_to_pcm16_mono_16k(raw: bytes, filename: str, content_type: str) -> bytes:
+    ext = Path(filename or "").suffix.lower()
+    if ext == ".pcm" or "pcm" in (content_type or "").lower():
+        return raw
+    if ext != ".wav" and "wav" not in (content_type or "").lower():
+        raise ValueError("DashScope realtime 需要 WAV/PCM 音频；请让前端上传 16kHz 单声道 WAV，或先安装音频转码能力。")
+
+    with wave.open(io.BytesIO(raw), "rb") as wav:
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        frames = wav.readframes(wav.getnframes())
+
+    if sample_width == 2:
+        values = array("h")
+        values.frombytes(frames)
+        if sys.byteorder != "little":
+            values.byteswap()
+        raw_samples = list(values)
+    elif sample_width == 1:
+        raw_samples = [(value - 128) << 8 for value in frames]
+    else:
+        raise ValueError(f"暂不支持 {sample_width * 8}bit WAV，请上传 16bit PCM WAV")
+
+    if channels > 1:
+        mono_samples = []
+        for i in range(0, len(raw_samples), channels):
+            chunk = raw_samples[i:i + channels]
+            mono_samples.append(int(sum(chunk) / len(chunk)))
+    else:
+        mono_samples = raw_samples
+
+    resampled = _resample_int16(mono_samples, sample_rate, 16000)
+    output = array("h", [max(-32768, min(32767, int(sample))) for sample in resampled])
+    if sys.byteorder != "little":
+        output.byteswap()
+    return output.tobytes()
+
+
+class _DiaryRealtimeCallback:
+    def __init__(self):
+        from dashscope.audio.qwen_omni import OmniRealtimeCallback
+
+        class Callback(OmniRealtimeCallback):
+            def __init__(self, outer):
+                super().__init__()
+                self.outer = outer
+
+            def on_event(self, response):
+                self.outer.on_event(response)
+
+        self.transcripts: List[str] = []
+        self.errors: List[str] = []
+        self.events: List[str] = []
+        self.done = threading.Event()
+        self.instance = Callback(self)
+
+    def on_event(self, response: Dict[str, Any]) -> None:
+        event_type = response.get("type", "")
+        if event_type:
+            self.events.append(event_type)
+        if event_type == "conversation.item.input_audio_transcription.completed":
+            text = (response.get("transcript") or "").strip()
+            if text:
+                self.transcripts.append(text)
+            self.done.set()
+        elif event_type in {"conversation.item.input_audio_transcription.failed", "error"}:
+            self.errors.append(json.dumps(response, ensure_ascii=False))
+            self.done.set()
+        elif event_type in {"response.text.done", "response.audio_transcript.done"}:
+            text = (response.get("text") or response.get("transcript") or "").strip()
+            if text:
+                self.transcripts.append(text)
+            self.done.set()
+        elif event_type == "response.done":
+            response_obj = response.get("response") or {}
+            for item in response_obj.get("output", []) or []:
+                for content in item.get("content", []) or []:
+                    text = (content.get("text") or content.get("transcript") or "").strip()
+                    if text:
+                        self.transcripts.append(text)
+            self.done.set()
+
+
+def _audio_format(filename: str, content_type: str) -> str:
+    ext = Path(filename or "").suffix.lower().lstrip(".")
+    if ext in {"mp3", "wav", "m4a", "aac", "ogg", "webm", "flac"}:
+        return ext
+    if "wav" in content_type:
+        return "wav"
+    if "mpeg" in content_type or "mp3" in content_type:
+        return "mp3"
+    if "mp4" in content_type or "m4a" in content_type:
+        return "m4a"
+    if "aac" in content_type:
+        return "aac"
+    if "ogg" in content_type:
+        return "ogg"
+    if "webm" in content_type:
+        return "webm"
+    return "mp3"
+
+
+def _transcribe_with_audio_llm(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("AI302_API_KEY", "").strip()
+    if not api_key:
+        errors.append("llm-audio: AI302_API_KEY is not configured")
+        return ""
+
+    model = _diary_llm_audio_model()
+    base_url = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1").strip().rstrip("/")
+    audio_data = base64.b64encode(raw).decode("ascii")
+    audio_format = _audio_format(filename, content_type)
+    target_lang = os.getenv("DIARY_LLM_AUDIO_TARGET_LANG", "中文").strip() or "中文"
+    task = os.getenv("DIARY_LLM_AUDIO_TASK", "transcribe").strip().lower()
+    if task == "translate":
+        instruction = f"请听这段音频，并翻译成{target_lang}。只输出翻译后的文字，不要解释，不要总结。"
+    else:
+        instruction = f"请听这段音频，并转写为{target_lang}原文。只输出转写文字，不要解释，不要总结，不要润色。"
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "你是一个严谨的音频转写助手，只返回音频中的文字内容。"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": instruction},
+                        {"type": "input_audio", "input_audio": {"data": audio_data, "format": audio_format}},
+                    ],
+                },
+            ],
+            temperature=0,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        if not text:
+            errors.append(f"llm-audio/{model}: empty transcript")
+        return text
+    except Exception as exc:
+        errors.append(f"llm-audio/{model}: {exc}")
+        return ""
+
+
+def _transcribe_with_302(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("AI302_API_KEY", "").strip()
+    if not api_key:
+        errors.append("302ai: AI302_API_KEY is not configured")
+        return ""
+
+    model = _diary_302_asr_model()
+    base_url = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1").strip().rstrip("/")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    try:
+        transcript = client.audio.transcriptions.create(
+            model=model,
+            file=(filename, io.BytesIO(raw), content_type),
+            language="zh",
+        )
+        text = (getattr(transcript, "text", "") or "").strip()
+        if not text:
+            errors.append(f"302ai/{model}: empty transcript")
+        return text
+    except Exception as exc:
+        errors.append(f"302ai/{model}: {exc}")
+        return ""
+
+
+def _transcribe_with_dashscope(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        errors.append("dashscope: DASHSCOPE_API_KEY is not configured")
+        return ""
+
+    client = OpenAI(api_key=api_key, base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+    for model in _env_list("DIARY_DASHSCOPE_ASR_MODELS", "paraformer-realtime-v2"):
+        try:
+            transcript = client.audio.transcriptions.create(
+                model=model,
+                file=(filename, io.BytesIO(raw), content_type),
+                language="zh",
+            )
+            text = (getattr(transcript, "text", "") or "").strip()
+            if text:
+                return text
+            errors.append(f"dashscope/{model}: empty transcript")
+        except Exception as exc:
+            errors.append(f"dashscope/{model}: {exc}")
+    return ""
+
+
+def _transcribe_with_dashscope_realtime(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        errors.append("dashscope-realtime: DASHSCOPE_API_KEY is not configured")
+        return ""
+
+    try:
+        from dashscope.audio.qwen_omni import AudioFormat, MultiModality, OmniRealtimeConversation
+    except Exception as exc:
+        errors.append(f"dashscope-realtime: dashscope sdk is unavailable: {exc}")
+        return ""
+
+    try:
+        pcm_bytes = _audio_to_pcm16_mono_16k(raw, filename, content_type)
+    except Exception as exc:
+        errors.append(f"dashscope-realtime: {exc}")
+        return ""
+
+    model = _diary_dashscope_realtime_model()
+    url = os.getenv("DASHSCOPE_REALTIME_URL", "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime").strip()
+    timeout_sec = float(os.getenv("DIARY_DASHSCOPE_REALTIME_TIMEOUT", "25"))
+    callback = _DiaryRealtimeCallback()
+    conv = OmniRealtimeConversation(model=model, callback=callback.instance, url=url, api_key=api_key)
+
+    try:
+        conv.connect()
+        conv.update_session(
+            output_modalities=[MultiModality.TEXT],
+            voice=os.getenv("DIARY_DASHSCOPE_REALTIME_VOICE", "Ethan"),
+            input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,
+            enable_input_audio_transcription=True,
+            enable_turn_detection=False,
+            instructions="请只转写用户音频中的原文，不要回答问题，不要解释，不要润色。",
+        )
+        chunk_size = 3200
+        for start in range(0, len(pcm_bytes), chunk_size):
+            conv.append_audio(base64.b64encode(pcm_bytes[start:start + chunk_size]).decode("ascii"))
+            time.sleep(0.01)
+        conv.commit()
+        if not callback.done.wait(timeout_sec):
+            conv.create_response(instructions="请输出这段用户音频的原文转写。", output_modalities=[MultiModality.TEXT])
+            callback.done.wait(timeout_sec)
+    except Exception as exc:
+        errors.append(f"dashscope-realtime/{model}: {exc}")
+        return ""
+    finally:
+        try:
+            conv.close()
+        except Exception:
+            pass
+
+    text = "\n".join(item.strip() for item in callback.transcripts if item.strip()).strip()
+    if text:
+        return text
+    if callback.errors:
+        errors.extend(f"dashscope-realtime/{model}: {item}" for item in callback.errors[-2:])
+    else:
+        seen = ", ".join(callback.events[-8:]) if callback.events else "no events"
+        errors.append(f"dashscope-realtime/{model}: empty transcript; events={seen}; pcm_bytes={len(pcm_bytes)}")
+    return ""
+
+
 class DiaryJsonImage(BaseModel):
     filename: str = "image.jpg"
     mime: str = "image/jpeg"
@@ -40,6 +345,7 @@ class DiaryJsonImage(BaseModel):
 
 
 class DiaryJsonRequest(BaseModel):
+    user_id: str = "local"
     title: str = ""
     text: str = ""
     tone: str = "温柔、克制、真实"
@@ -67,6 +373,10 @@ def _safe_ext(filename: str, content_type: str = "") -> str:
 def _data_url(path: Path, mime: str) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime or 'image/jpeg'};base64,{encoded}"
+
+
+def _public_image_items(images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{k: v for k, v in item.items() if k != "data_url"} for item in images]
 
 
 def _today_cn() -> str:
@@ -182,6 +492,136 @@ def _run_skill(skill_id: str, filename: str, payload: Dict[str, Any]) -> Dict[st
     return result
 
 
+def _extract_digital_persona(payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = _run_skill("DIARY04", "DIARY04-digital-persona.md", payload)
+    if result.get("error"):
+        print(f"[diary] DIARY04 digital persona failed: {result.get('message')}")
+        return {
+            "error": True,
+            "message": result.get("message") or "数字人格提炼失败",
+            "summary": "",
+            "confidence": 0,
+            "core_identity": [],
+            "life_context": [],
+            "emotional_patterns": [],
+            "expression_style": [],
+            "memory_anchors": [],
+            "surface_details": [],
+            "forgetting_policy": {},
+            "next_questions": [],
+        }
+    result.setdefault("confidence", 0)
+    for key in ("core_identity", "life_context", "emotional_patterns", "expression_style", "memory_anchors", "surface_details", "next_questions"):
+        if not isinstance(result.get(key), list):
+            result[key] = []
+    if not isinstance(result.get("forgetting_policy"), dict):
+        result["forgetting_policy"] = {}
+    return result
+
+
+def _as_text_list(value: Any, limit: int = 6) -> List[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = re.split(r"[，,、\s]+", value)
+    else:
+        return []
+    cleaned = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _fallback_structured_output(
+    title: str,
+    date: str,
+    user_text: str,
+    diary_doc: Dict[str, Any],
+    images: List[Dict[str, Any]],
+    digital_persona: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    diary_text = _plain_text_from_paragraphs(diary_doc.get("paragraphs", []))
+    summary_source = (diary_text or user_text or title).strip()
+    summary = summary_source[:96] + ("..." if len(summary_source) > 96 else "")
+    cover_image = images[0].get("url", "") if images else ""
+    captions = _as_text_list([item.get("vision_summary", "") for item in images], 4)
+    persona_hooks = _as_text_list((digital_persona or {}).get("memory_anchors", []), 4)
+    tags = _as_text_list([title, "日记", "今日照片", *persona_hooks], 6)
+    if len(tags) < 3:
+        tags.extend(item for item in ["记录", "生活"] if item not in tags)
+
+    paragraphs = diary_doc.get("paragraphs", []) or []
+    timeline = []
+    for index, paragraph in enumerate(paragraphs[:4], start=1):
+        image_id = next(iter(paragraph.get("image_ids", []) or []), "")
+        image_url = ""
+        if image_id:
+            for image in images:
+                if image.get("image_id") == image_id:
+                    image_url = image.get("url", "")
+                    break
+        text = str(paragraph.get("text", "")).strip()
+        timeline.append({
+            "time": f"片段{index}",
+            "title": str(paragraph.get("title") or title or "今日片段").strip()[:24],
+            "text": text[:120] + ("..." if len(text) > 120 else ""),
+            "image": image_url,
+        })
+    if not timeline:
+        timeline.append({"time": date, "title": title or "今日记录", "text": summary, "image": cover_image})
+
+    return {
+        "record_card": {
+            "type": "daily_diary",
+            "title": diary_doc.get("title") or title or "念念日记",
+            "time": diary_doc.get("date") or date,
+            "summary": summary,
+            "location": "",
+            "people": [],
+            "tags": tags[:6],
+            "cover_image": cover_image,
+        },
+        "indexes": {
+            "time": diary_doc.get("date") or date,
+            "locations": [],
+            "people": [],
+            "events": _as_text_list([title, *captions], 5),
+            "emotions": _as_text_list((digital_persona or {}).get("emotional_patterns", []), 5),
+            "keywords": _as_text_list([title, "日记", *captions, *persona_hooks], 8),
+        },
+        "timeline": timeline,
+        "memory_hooks": _as_text_list([title, *persona_hooks, *captions], 6),
+    }
+
+
+def _extract_structured_output(payload: Dict[str, Any]) -> Dict[str, Any]:
+    fallback = _fallback_structured_output(
+        payload.get("title", ""),
+        payload.get("date", ""),
+        payload.get("user_text", ""),
+        payload.get("diary", {}),
+        payload.get("images", []),
+        payload.get("digital_persona", {}),
+    )
+    result = _run_skill("DIARY05", "DIARY05-structured-output.md", payload)
+    if result.get("error"):
+        print(f"[diary] DIARY05 structured output failed: {result.get('message')}")
+        return fallback
+    if not isinstance(result.get("record_card"), dict):
+        result["record_card"] = fallback["record_card"]
+    if not isinstance(result.get("indexes"), dict):
+        result["indexes"] = fallback["indexes"]
+    if not isinstance(result.get("timeline"), list):
+        result["timeline"] = fallback["timeline"]
+    if not isinstance(result.get("memory_hooks"), list):
+        result["memory_hooks"] = fallback["memory_hooks"]
+    return result
+
+
 @router.get("/assets/{diary_id}/{name}")
 def get_diary_asset(diary_id: str, name: str) -> FileResponse:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{8,64}", diary_id):
@@ -204,8 +644,46 @@ def get_diary_pdf(diary_id: str) -> FileResponse:
     return FileResponse(str(path), media_type="application/pdf", filename=f"念念日记_{diary_id}.pdf")
 
 
+@router.post("/transcribe")
+async def transcribe_diary_audio(audio: UploadFile = File(...)) -> Dict[str, Any]:
+    raw = await audio.read()
+    if not raw:
+        raise HTTPException(400, "empty audio")
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(413, "audio too large")
+
+    filename = audio.filename or "diary_voice.webm"
+    content_type = audio.content_type or mimetypes.guess_type(filename)[0] or "audio/webm"
+    errors: List[str] = []
+    provider = _diary_asr_provider()
+
+    if provider == "llm":
+        text = _transcribe_with_audio_llm(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "llm-audio", "model": _diary_llm_audio_model()}
+
+    if provider == "dashscope_realtime":
+        text = _transcribe_with_dashscope_realtime(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "dashscope-realtime", "model": _diary_dashscope_realtime_model()}
+
+    if provider in {"auto", "dashscope"}:
+        text = _transcribe_with_dashscope(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "dashscope"}
+
+    if provider in {"auto", "302", "ai302"}:
+        text = _transcribe_with_302(raw, filename, content_type, errors)
+        if text:
+            return {"ok": True, "text": text, "provider": "302ai", "model": _diary_302_asr_model()}
+
+    detail = "；".join(errors[-3:]) if errors else "ASR provider is not configured"
+    return {"ok": False, "text": "", "message": "日记语音识别失败", "detail": detail}
+
+
 @router.post("/generate")
 async def generate_diary(
+    user_id: str = Form("local"),
     title: str = Form(""),
     text: str = Form(""),
     tone: str = Form("温柔、克制、真实"),
@@ -218,6 +696,7 @@ async def generate_diary(
     clean_title = title.strip() or "念念日记"
     clean_text = text.strip()
     clean_tone = tone.strip() or "温柔、克制、真实"
+    clean_user_id = user_id.strip() or "local"
     clean_deceased = deceased_name.strip()
 
     print(f"[diary] generate request id={diary_id} title={clean_title!r} text_len={len(clean_text)} images={len(images or [])}")
@@ -261,17 +740,25 @@ async def generate_diary(
             "user_caption": "",
         })
 
-    common_payload = {"title": clean_title, "date": _today_cn(), "user_text": clean_text, "tone": clean_tone, "deceased_name": clean_deceased, "images": image_items}
+    skill_images = _public_image_items(image_items)
+    common_payload = {
+        "title": clean_title,
+        "date": _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "deceased_name": clean_deceased,
+        "images": skill_images,
+    }
 
     pairing = _run_skill("DIARY01", "DIARY01-media-pairing.md", common_payload)
     if pairing.get("error"):
         return {"ok": False, "api_called": True, "stage": "DIARY01", "message": "日记配图 Skill 调用失败", "llm_error": pairing.get("message"), "diary_id": diary_id}
 
-    diary_doc = _run_skill("DIARY02", "DIARY02-diary-writer.md", {**pairing, "images": image_items, "user_text": clean_text})
+    diary_doc = _run_skill("DIARY02", "DIARY02-diary-writer.md", {**pairing, "images": skill_images, "user_text": clean_text})
     if diary_doc.get("error"):
         return {"ok": False, "api_called": True, "stage": "DIARY02", "message": "日记写作 Skill 调用失败", "llm_error": diary_doc.get("message"), "diary_id": diary_id}
 
-    layout = _run_skill("DIARY03", "DIARY03-pdf-layout.md", {**diary_doc, "images": image_items, "render_target": "pdf"})
+    layout = _run_skill("DIARY03", "DIARY03-pdf-layout.md", {**diary_doc, "images": skill_images, "render_target": "pdf"})
     if layout.get("error") or not layout.get("html") or not layout.get("css"):
         print(f"[diary] DIARY03 failed, backend layout fallback: {layout.get('message')}")
         layout = _fallback_layout(diary_doc, image_items)
@@ -283,6 +770,43 @@ async def generate_diary(
         print(f"[diary] pdf render failed: {exc}")
         return {"ok": False, "api_called": True, "stage": "PDF_RENDER", "message": "PDF 渲染失败，请确认 Playwright 浏览器依赖已安装", "detail": str(exc), "diary_id": diary_id}
 
+    digital_persona = _extract_digital_persona({
+        "title": clean_title,
+        "date": diary_doc.get("date") or _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "pairing": pairing,
+        "diary": diary_doc,
+        "images": skill_images,
+    })
+    structured_output = _extract_structured_output({
+        "title": clean_title,
+        "date": diary_doc.get("date") or _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "pairing": pairing,
+        "diary": diary_doc,
+        "images": skill_images,
+        "paragraph_image_map": layout.get("paragraph_image_map", []),
+        "digital_persona": digital_persona,
+    })
+    memory_record = long_memory.save_diary_memory(
+        user_id=clean_user_id,
+        diary_id=diary_id,
+        title=diary_doc.get("title") or clean_title,
+        date_text=diary_doc.get("date") or _today_cn(),
+        diary_text=_plain_text_from_paragraphs(diary_doc.get("paragraphs", [])),
+        structured_output=structured_output,
+        digital_persona=digital_persona,
+        images=skill_images,
+        pdf_url=f"/api/diary/pdf/{diary_id}",
+        raw_payload={
+            "input": common_payload,
+            "pairing": pairing,
+            "paragraph_image_map": layout.get("paragraph_image_map", []),
+        },
+    )
+
     pdf_path = DIARY_PDF_DIR / f"{diary_id}.pdf"
     pdf_path.write_bytes(pdf_bytes)
     (DIARY_OUTPUT_DIR / f"{diary_id}.json").write_text(json.dumps({
@@ -291,6 +815,9 @@ async def generate_diary(
         "pairing": pairing,
         "diary": diary_doc,
         "layout": layout,
+        "digital_persona": digital_persona,
+        "structured_output": structured_output,
+        "memory_record": memory_record,
         "pdf_path": str(pdf_path),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -304,8 +831,11 @@ async def generate_diary(
         "diary": _plain_text_from_paragraphs(diary_doc.get("paragraphs", [])),
         "paragraphs": diary_doc.get("paragraphs", []),
         "image_captions": diary_doc.get("image_captions", []),
-        "images": [{k: v for k, v in item.items() if k != "data_url"} for item in image_items],
+        "images": skill_images,
         "paragraph_image_map": layout.get("paragraph_image_map", []),
+        "digital_persona": digital_persona,
+        "structured_output": structured_output,
+        "memory_record": memory_record,
         "pdf_url": f"/api/diary/pdf/{diary_id}",
         "download_name": filename,
     }
@@ -326,7 +856,7 @@ async def generate_diary_json(req: DiaryJsonRequest) -> Dict[str, Any]:
             raise HTTPException(413, f"{item.filename or '图片'} 超过 10MB")
         files.append(_MemoryUploadFile(raw, item.filename or f"image_{index}.jpg", item.mime or "image/jpeg"))
 
-    return await generate_diary(title=req.title, text=req.text, tone=req.tone, deceased_name="", images=files)  # type: ignore[arg-type]
+    return await generate_diary(user_id=req.user_id, title=req.title, text=req.text, tone=req.tone, deceased_name="", images=files)  # type: ignore[arg-type]
 
 
 @router.post("/generate-pdf")

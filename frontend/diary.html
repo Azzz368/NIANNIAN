@@ -39,6 +39,24 @@
     min-height: 280px;
   }
 
+  .diary-voice-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .diary-voice-status {
+    color: var(--muted-l);
+    font-size: .86rem;
+    line-height: 1.5;
+  }
+
+  .diary-voice-status.active {
+    color: var(--accent);
+  }
+
   .diary-preview-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -85,6 +103,61 @@
     color: var(--ink-m);
     font-size: .9rem;
     line-height: 1.75;
+  }
+
+  .persona-card {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(139, 79, 92, .18);
+    background: #fffaf7;
+  }
+
+  .persona-card h3 {
+    margin: 0 0 8px;
+    color: var(--ink);
+    font-size: 1rem;
+  }
+
+  .persona-summary {
+    margin: 0 0 12px;
+    color: var(--ink-m);
+    line-height: 1.75;
+  }
+
+  .persona-section {
+    margin-top: 12px;
+  }
+
+  .persona-section-title {
+    margin-bottom: 8px;
+    color: var(--accent);
+    font-size: .82rem;
+    font-weight: 700;
+  }
+
+  .persona-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .persona-chip {
+    max-width: 100%;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: var(--surf2);
+    border: 1px solid var(--border);
+    color: var(--ink-m);
+    font-size: .82rem;
+    line-height: 1.35;
+  }
+
+  .persona-question {
+    margin: 6px 0 0;
+    color: var(--muted-l);
+    font-size: .86rem;
+    line-height: 1.55;
   }
 
   .diary-actions {
@@ -149,6 +222,10 @@
         <div class="field">
           <label>文字内容</label>
           <textarea id="diaryText" class="diary-editor" placeholder="写下今天想记录的事，或想对 Ta 说的话..."></textarea>
+          <div class="diary-voice-row">
+            <button class="btn" id="btnVoiceDiary" type="button">语音输入</button>
+            <span class="diary-voice-status" id="diaryVoiceStatus">可以直接输入文字，也可以说一段今天想记录的事。</span>
+          </div>
         </div>
 
         <div class="btn-row diary-actions">
@@ -172,6 +249,8 @@
       <div class="diary-note">
         当前版本会把文字草稿保存在本机浏览器中。图片只做页面预览，后续接入资料库后可以保存到云端。
       </div>
+
+      <div class="persona-card" id="digitalPersonaCard" style="display:none;"></div>
     </aside>
   </div>
 
