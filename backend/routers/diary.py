@@ -24,6 +24,7 @@ from openai import OpenAI
 
 from llm_client import call_skill
 from skill_loader import load_skill
+from services import long_memory
 from services import service_manager as sm
 
 router = APIRouter(prefix="/diary", tags=["diary"])
@@ -344,6 +345,7 @@ class DiaryJsonImage(BaseModel):
 
 
 class DiaryJsonRequest(BaseModel):
+    user_id: str = "local"
     title: str = ""
     text: str = ""
     tone: str = "温柔、克制、真实"
@@ -371,6 +373,10 @@ def _safe_ext(filename: str, content_type: str = "") -> str:
 def _data_url(path: Path, mime: str) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime or 'image/jpeg'};base64,{encoded}"
+
+
+def _public_image_items(images: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{k: v for k, v in item.items() if k != "data_url"} for item in images]
 
 
 def _today_cn() -> str:
@@ -513,6 +519,109 @@ def _extract_digital_persona(payload: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def _as_text_list(value: Any, limit: int = 6) -> List[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = re.split(r"[，,、\s]+", value)
+    else:
+        return []
+    cleaned = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _fallback_structured_output(
+    title: str,
+    date: str,
+    user_text: str,
+    diary_doc: Dict[str, Any],
+    images: List[Dict[str, Any]],
+    digital_persona: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    diary_text = _plain_text_from_paragraphs(diary_doc.get("paragraphs", []))
+    summary_source = (diary_text or user_text or title).strip()
+    summary = summary_source[:96] + ("..." if len(summary_source) > 96 else "")
+    cover_image = images[0].get("url", "") if images else ""
+    captions = _as_text_list([item.get("vision_summary", "") for item in images], 4)
+    persona_hooks = _as_text_list((digital_persona or {}).get("memory_anchors", []), 4)
+    tags = _as_text_list([title, "日记", "今日照片", *persona_hooks], 6)
+    if len(tags) < 3:
+        tags.extend(item for item in ["记录", "生活"] if item not in tags)
+
+    paragraphs = diary_doc.get("paragraphs", []) or []
+    timeline = []
+    for index, paragraph in enumerate(paragraphs[:4], start=1):
+        image_id = next(iter(paragraph.get("image_ids", []) or []), "")
+        image_url = ""
+        if image_id:
+            for image in images:
+                if image.get("image_id") == image_id:
+                    image_url = image.get("url", "")
+                    break
+        text = str(paragraph.get("text", "")).strip()
+        timeline.append({
+            "time": f"片段{index}",
+            "title": str(paragraph.get("title") or title or "今日片段").strip()[:24],
+            "text": text[:120] + ("..." if len(text) > 120 else ""),
+            "image": image_url,
+        })
+    if not timeline:
+        timeline.append({"time": date, "title": title or "今日记录", "text": summary, "image": cover_image})
+
+    return {
+        "record_card": {
+            "type": "daily_diary",
+            "title": diary_doc.get("title") or title or "念念日记",
+            "time": diary_doc.get("date") or date,
+            "summary": summary,
+            "location": "",
+            "people": [],
+            "tags": tags[:6],
+            "cover_image": cover_image,
+        },
+        "indexes": {
+            "time": diary_doc.get("date") or date,
+            "locations": [],
+            "people": [],
+            "events": _as_text_list([title, *captions], 5),
+            "emotions": _as_text_list((digital_persona or {}).get("emotional_patterns", []), 5),
+            "keywords": _as_text_list([title, "日记", *captions, *persona_hooks], 8),
+        },
+        "timeline": timeline,
+        "memory_hooks": _as_text_list([title, *persona_hooks, *captions], 6),
+    }
+
+
+def _extract_structured_output(payload: Dict[str, Any]) -> Dict[str, Any]:
+    fallback = _fallback_structured_output(
+        payload.get("title", ""),
+        payload.get("date", ""),
+        payload.get("user_text", ""),
+        payload.get("diary", {}),
+        payload.get("images", []),
+        payload.get("digital_persona", {}),
+    )
+    result = _run_skill("DIARY05", "DIARY05-structured-output.md", payload)
+    if result.get("error"):
+        print(f"[diary] DIARY05 structured output failed: {result.get('message')}")
+        return fallback
+    if not isinstance(result.get("record_card"), dict):
+        result["record_card"] = fallback["record_card"]
+    if not isinstance(result.get("indexes"), dict):
+        result["indexes"] = fallback["indexes"]
+    if not isinstance(result.get("timeline"), list):
+        result["timeline"] = fallback["timeline"]
+    if not isinstance(result.get("memory_hooks"), list):
+        result["memory_hooks"] = fallback["memory_hooks"]
+    return result
+
+
 @router.get("/assets/{diary_id}/{name}")
 def get_diary_asset(diary_id: str, name: str) -> FileResponse:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{8,64}", diary_id):
@@ -574,6 +683,7 @@ async def transcribe_diary_audio(audio: UploadFile = File(...)) -> Dict[str, Any
 
 @router.post("/generate")
 async def generate_diary(
+    user_id: str = Form("local"),
     title: str = Form(""),
     text: str = Form(""),
     tone: str = Form("温柔、克制、真实"),
@@ -585,6 +695,7 @@ async def generate_diary(
     clean_title = title.strip() or "念念日记"
     clean_text = text.strip()
     clean_tone = tone.strip() or "温柔、克制、真实"
+    clean_user_id = user_id.strip() or "local"
 
     print(f"[diary] generate request id={diary_id} title={clean_title!r} text_len={len(clean_text)} images={len(images or [])}")
 
@@ -627,17 +738,18 @@ async def generate_diary(
             "user_caption": "",
         })
 
-    common_payload = {"title": clean_title, "date": _today_cn(), "user_text": clean_text, "tone": clean_tone, "images": image_items}
+    skill_images = _public_image_items(image_items)
+    common_payload = {"title": clean_title, "date": _today_cn(), "user_text": clean_text, "tone": clean_tone, "images": skill_images}
 
     pairing = _run_skill("DIARY01", "DIARY01-media-pairing.md", common_payload)
     if pairing.get("error"):
         return {"ok": False, "api_called": True, "stage": "DIARY01", "message": "日记配图 Skill 调用失败", "llm_error": pairing.get("message"), "diary_id": diary_id}
 
-    diary_doc = _run_skill("DIARY02", "DIARY02-diary-writer.md", {**pairing, "images": image_items, "user_text": clean_text})
+    diary_doc = _run_skill("DIARY02", "DIARY02-diary-writer.md", {**pairing, "images": skill_images, "user_text": clean_text})
     if diary_doc.get("error"):
         return {"ok": False, "api_called": True, "stage": "DIARY02", "message": "日记写作 Skill 调用失败", "llm_error": diary_doc.get("message"), "diary_id": diary_id}
 
-    layout = _run_skill("DIARY03", "DIARY03-pdf-layout.md", {**diary_doc, "images": image_items, "render_target": "pdf"})
+    layout = _run_skill("DIARY03", "DIARY03-pdf-layout.md", {**diary_doc, "images": skill_images, "render_target": "pdf"})
     if layout.get("error") or not layout.get("html") or not layout.get("css"):
         print(f"[diary] DIARY03 failed, backend layout fallback: {layout.get('message')}")
         layout = _fallback_layout(diary_doc, image_items)
@@ -656,8 +768,35 @@ async def generate_diary(
         "tone": clean_tone,
         "pairing": pairing,
         "diary": diary_doc,
-        "images": [{k: v for k, v in item.items() if k != "data_url"} for item in image_items],
+        "images": skill_images,
     })
+    structured_output = _extract_structured_output({
+        "title": clean_title,
+        "date": diary_doc.get("date") or _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "pairing": pairing,
+        "diary": diary_doc,
+        "images": skill_images,
+        "paragraph_image_map": layout.get("paragraph_image_map", []),
+        "digital_persona": digital_persona,
+    })
+    memory_record = long_memory.save_diary_memory(
+        user_id=clean_user_id,
+        diary_id=diary_id,
+        title=diary_doc.get("title") or clean_title,
+        date_text=diary_doc.get("date") or _today_cn(),
+        diary_text=_plain_text_from_paragraphs(diary_doc.get("paragraphs", [])),
+        structured_output=structured_output,
+        digital_persona=digital_persona,
+        images=skill_images,
+        pdf_url=f"/api/diary/pdf/{diary_id}",
+        raw_payload={
+            "input": common_payload,
+            "pairing": pairing,
+            "paragraph_image_map": layout.get("paragraph_image_map", []),
+        },
+    )
 
     pdf_path = DIARY_PDF_DIR / f"{diary_id}.pdf"
     pdf_path.write_bytes(pdf_bytes)
@@ -668,6 +807,8 @@ async def generate_diary(
         "diary": diary_doc,
         "layout": layout,
         "digital_persona": digital_persona,
+        "structured_output": structured_output,
+        "memory_record": memory_record,
         "pdf_path": str(pdf_path),
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -681,9 +822,11 @@ async def generate_diary(
         "diary": _plain_text_from_paragraphs(diary_doc.get("paragraphs", [])),
         "paragraphs": diary_doc.get("paragraphs", []),
         "image_captions": diary_doc.get("image_captions", []),
-        "images": [{k: v for k, v in item.items() if k != "data_url"} for item in image_items],
+        "images": skill_images,
         "paragraph_image_map": layout.get("paragraph_image_map", []),
         "digital_persona": digital_persona,
+        "structured_output": structured_output,
+        "memory_record": memory_record,
         "pdf_url": f"/api/diary/pdf/{diary_id}",
         "download_name": filename,
     }
@@ -704,7 +847,7 @@ async def generate_diary_json(req: DiaryJsonRequest) -> Dict[str, Any]:
             raise HTTPException(413, f"{item.filename or '图片'} 超过 10MB")
         files.append(_MemoryUploadFile(raw, item.filename or f"image_{index}.jpg", item.mime or "image/jpeg"))
 
-    return await generate_diary(title=req.title, text=req.text, tone=req.tone, images=files)  # type: ignore[arg-type]
+    return await generate_diary(user_id=req.user_id, title=req.title, text=req.text, tone=req.tone, images=files)  # type: ignore[arg-type]
 
 
 @router.post("/generate-pdf")

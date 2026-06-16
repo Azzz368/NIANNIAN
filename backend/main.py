@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary
+from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary, memory
 from core import oss_sync, storage as _storage  # noqa: F401
 
 app = FastAPI(
@@ -134,6 +134,7 @@ app.include_router(voice.router,    prefix="/api")
 app.include_router(admin.router,    prefix="/api")
 app.include_router(biography.router, prefix="/api")
 app.include_router(diary.router, prefix="/api")
+app.include_router(memory.router, prefix="/api")
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"
