@@ -35,9 +35,9 @@ services:
       - key: NIAN_DATA_DIR
         value: /var/data      # 配合下面 Disk 的挂载点
       # ─── Playwright Chromium 路径（PDF 生成用）───
-      # Render Python runtime 项目目录为 /opt/render/project/src
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/project/src/.playwright-browsers
+      # 不设置自定义路径，让 build 和 runtime 都使用默认路径 /opt/render/.cache/ms-playwright
+      # - key: PLAYWRIGHT_BROWSERS_PATH
+      #   value: /opt/render/project/src/.playwright-browsers
       # ─── 阿里云 OSS 持久化（推荐：彻底解决 Render 重启丢数据）───
       # 详见 OSS_SETUP.md。设为 1 启用；不填则继续用本地 Disk
       - key: OSS_ENABLE
