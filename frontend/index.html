@@ -14,7 +14,7 @@
 
 <link rel="stylesheet" href="css/style.css">
 
-<link rel="stylesheet" href="css/index-hero.css">
+<link rel="stylesheet" href="css/index-hero.css?v=20260615">
 
 <link rel="stylesheet" href="css/immersive.css?v=2026061011">
 
@@ -81,6 +81,14 @@
   .dossier-toast{position:fixed;right:24px;bottom:24px;background:linear-gradient(135deg,#C4964A,#E8C57A);color:#fff;padding:10px 18px;border-radius:10px;font-size:.82rem;box-shadow:0 8px 24px rgba(196,150,74,.32);opacity:0;transform:translateY(10px);transition:.3s;z-index:50;pointer-events:none}
 
   .dossier-toast.show{opacity:1;transform:translateY(0)}
+
+  /* 上传类型选择气泡 */
+  .imm-upload-wrap{position:relative;display:inline-flex;align-items:center}
+  .imm-type-picker{position:absolute;bottom:calc(100% + 10px);right:0;background:#fff;border:1px solid rgba(196,150,74,.28);border-radius:12px;box-shadow:0 8px 28px rgba(58,47,34,.18);padding:8px;display:none;flex-direction:column;gap:6px;z-index:30;min-width:100px}
+  .imm-type-picker.show{display:flex}
+  .imm-type-btn{display:flex;align-items:center;gap:8px;padding:9px 14px;border:none;background:transparent;cursor:pointer;border-radius:8px;font-size:.88rem;color:#3a2f22;white-space:nowrap;transition:.15s}
+  .imm-type-btn:hover{background:rgba(196,150,74,.10);color:#C4964A}
+  .imm-type-icon{display:flex;align-items:center;color:#C4964A}
 
 </style>
 
@@ -281,6 +289,26 @@
 
       </div>
 
+      <!-- 上传到资料库 + 类型选择面板 -->
+      <div class="imm-upload-wrap" id="immUploadWrap">
+        <button class="immersive-upload-btn" id="immersiveUploadBtn" type="button" title="上传到资料库" aria-label="上传">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </button>
+        <!-- 类型选择气泡 -->
+        <div class="imm-type-picker" id="immTypePicker">
+          <button class="imm-type-btn" data-type="audio" id="immPickAudio">
+            <span class="imm-type-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></span><span>语音</span>
+          </button>
+          <button class="imm-type-btn" data-type="image" id="immPickImage">
+            <span class="imm-type-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span><span>图片</span>
+          </button>
+        </div>
+      </div>
+      <input type="file" id="immersiveImageInput" accept="image/*" hidden>
+      <input type="file" id="immersiveAudioInput" accept="audio/*" hidden>
+
     </div>
 
   </div>
@@ -339,22 +367,22 @@
       <div class="premium-card pcard-link" data-href="memorial.html" style="cursor:pointer" title="点击进入：念念影像制作">
         <div class="pcard-icon">影</div>
         <div class="pcard-title">影像制作 · 全自动流程</div>
-        <div class="pcard-body">从照片到叙事配乐，从旁白到字幕——六道工序全部自动完成，<br>交付一部有温度的追思短片。</div>
+        <div class="pcard-body">从照片到叙事配乐，从旁白到字幕——六道工序全部自动完成，交付一部有温度的追思短片。</div>
       </div>
       <div class="premium-card pcard-link" data-href="dialogue.html" style="cursor:pointer" title="点击进入：数字人对话">
         <div class="pcard-icon">存</div>
         <div class="pcard-title">永久留存 · 随时重温</div>
-        <div class="pcard-body">影像和档案永久云端保存，<br>家人可以随时通过数字人与 Ta 重新对话，<br>记忆不会随时光消逝。</div>
+        <div class="pcard-body">影像和档案永久云端保存，家人可以随时通过数字人与 Ta 重新对话，记忆不会随时光消逝。</div>
       </div>
       <div class="premium-card pcard-link" data-href="biography.html" style="cursor:pointer" title="点击进入：念念传记写作">
         <div class="pcard-icon">传</div>
         <div class="pcard-title">念念传记 · 永久记录</div>
-        <div class="pcard-body">生成完整个人传记，<br>上传照片自动排版 · 保存到资料库，<br>支持下载留存。</div>
+        <div class="pcard-body">生成完整个人传记，上传照片自动排版 · 保存到资料库，支持下载留存。</div>
       </div>
       <div class="premium-card pcard-link" data-href="diary.html" style="cursor:pointer" title="点击进入：念念日记">
         <div class="pcard-icon">记</div>
         <div class="pcard-title">念念日记 · 留住此刻</div>
-        <div class="pcard-body">上传今日的照片，<br>写下想对 Ta 说的话与生活片段，<br>让思念被温柔地记录下来。</div>
+        <div class="pcard-body">上传今日的照片，写下想对 Ta 说的话与生活片段，让思念被温柔地记录下来。</div>
       </div>
     </div>
 

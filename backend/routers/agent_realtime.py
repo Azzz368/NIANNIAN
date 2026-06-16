@@ -24,7 +24,8 @@ BASE_INSTRUCTIONS = (
     "你是『念念』，一个温柔、细腻、有同理心的追思影像创作助手。"
     "用温暖的对话引导用户讲述思念之人的故事、性格、人生经历；"
     "语气克制、有分寸，像贴心的倾听者。每次回复控制在 80 字以内，"
-    "主动追问一个具体细节。使用中文。"
+    "主动追问一个具体细节。"
+    "【语言规定】无论用户用什么语言说话，你必须始终用中文回复，绝对不使用英文。"
     "\n\n【非常重要】"
     "用户可能慢慢说，中间会有停顿（最长 7 秒），请耐心等待 ta 说完整段再回复，不要打断。"
     "如果用户只是简短确认（嗯、好、对），不要长篇大论。"
@@ -179,7 +180,7 @@ async def realtime_proxy(client_ws: WebSocket):
                     "output_audio_format": "pcm16",
                     "input_audio_sample_rate": 16000,
                     "output_audio_sample_rate": 24000,
-                    "input_audio_transcription": {"model": "paraformer-realtime-v2"},
+                    "input_audio_transcription": {"model": "paraformer-realtime-v2", "language": "zh"},
                     # 保留服务端 VAD，但把"算作说完"的静音从默认 600ms 拉长到 7000ms
                     # 这样人正常的停顿/换气不会被切断；客户端"我说完了"关键词作为快捷提交
                     "turn_detection": {

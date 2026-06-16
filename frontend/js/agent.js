@@ -1,4 +1,4 @@
-// agent.js — 念念智能体
+﻿// agent.js — 念念智能体
 // 文字模式：
 //   - 输入 → /api/agent/chat (SSE) 流式回复，不朗读
 //   - 按住麦克风键 = 录音；松开 = 停止 + 上传 DashScope Paraformer 精准识别
@@ -131,6 +131,9 @@
               fullText += evt.delta;
               if (!aiEl) { thinkEl.remove(); aiEl = appendBubble('ai', ''); }
               aiEl.querySelector('.bubble-text').textContent = fullText;
+              // 同步更新光球沉浸式文字区域
+              var _imAi = document.getElementById('immersiveAiText');
+              if (_imAi) _imAi.textContent = fullText;
               scrollBottom();
             } else if (evt.type === 'error') {
               thinkEl.remove(); appendBubble('ai', '抱歉，念念暂时无法回应。');
@@ -144,6 +147,85 @@
 
     if (fullText) state.history.push({ role:'assistant', content: fullText });
     state.isThinking = false; setInputLock(false); scrollBottom();
+  }
+
+  // ─── 图片上传并分析（主界面 + 号按钮）────────────────────────────
+  async function sendImageMessage(file) {
+    if (!file || state.isThinking) return;
+    state.isThinking = true;
+
+    appendBubble('user', '[图片] ' + file.name);
+    state.history.push({ role: 'user', content: '[图片：' + file.name + ']' });
+
+    var thinkEl = showThinkBubble();
+    var fullText = ''; var aiEl = null;
+
+    // Step 1: 上传到当前对象资料库
+    var mid = window.NianAuth && window.NianAuth.getActiveMemorialId ? window.NianAuth.getActiveMemorialId() : null;
+    if (mid && window.NianAuth && window.NianAuth.isAuthed()) {
+      try {
+        var fd = new FormData();
+        fd.append('file', file);
+        fd.append('description', '');
+        var ur = await window.NianAuth.fetch('/api/memorials/' + encodeURIComponent(mid) + '/upload', { method: 'POST', body: fd });
+        if (ur.ok) {
+          var ud = await ur.json();
+          var utags = ((ud.asset || {}).tags || []).slice(0, 4).join('、');
+          showToast('已入资料库' + (utags ? '：' + utags : ''), 2800);
+        }
+      } catch(e) { console.warn('[img-lib] upload failed:', e); }
+    }
+
+    // Step 2: 发给 Qwen VL 分析（念念做视觉回应）
+    try {
+      var headers = {};
+      var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
+      if (tok) headers['Authorization'] = 'Bearer ' + tok;
+
+      var form = new FormData();
+      form.append('image', file);
+      form.append('history', JSON.stringify(state.history.slice(-20)));
+      if (mid) form.append('memorial_id', mid);
+
+      var resp = await fetch('/api/agent/image-chat', { method: 'POST', headers: headers, body: form });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+      var reader = resp.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      while (true) {
+        var rr = await reader.read();
+        if (rr.done) break;
+        buf += decoder.decode(rr.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (var ii = 0; ii < lines.length; ii++) {
+          var ln = lines[ii];
+          if (!ln.startsWith('data:')) continue;
+          var rw = ln.slice(5).trim();
+          if (rw === '[DONE]') break;
+          try {
+            var ev = JSON.parse(rw);
+            if (ev.type === 'text') {
+              fullText += ev.delta;
+              if (!aiEl) { thinkEl.remove(); aiEl = appendBubble('ai', ''); }
+              aiEl.querySelector('.bubble-text').textContent = fullText;
+              var _imAi2 = document.getElementById('immersiveAiText');
+              if (_imAi2) _imAi2.textContent = fullText;
+              scrollBottom();
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(e) {
+      thinkEl.remove();
+      appendBubble('ai', '图片分析失败：' + e.message);
+    }
+
+    if (fullText) state.history.push({ role: 'assistant', content: fullText });
+    state.isThinking = false;
+    setInputLock(false);
+    scrollBottom();
   }
 
   // ─── 文字模式：按住录音 ────────────────────────────────────────
@@ -596,10 +678,10 @@
   function openUploadModal(file){
     pendingFile = file;
     var prev = $('uploadPreview');
-    var icon = '📄';
-    if (/^image\//.test(file.type)) icon = '🖼';
-    else if (/^audio\//.test(file.type)) icon = '🎵';
-    else if (/^video\//.test(file.type)) icon = '🎬';
+    var icon = '[文件]';
+    if (/^image\//.test(file.type)) icon = '[图片]';
+    else if (/^audio\//.test(file.type)) icon = '[音频]';
+    else if (/^video\//.test(file.type)) icon = '[视频]';
     var size = (file.size/1024).toFixed(1) + ' KB';
     if (file.size > 1024*1024) size = (file.size/1024/1024).toFixed(1) + ' MB';
     prev.innerHTML = '<span class="ic">' + icon + '</span><div><div style="font-weight:600">' + escHtml(file.name) + '</div><div style="color:#8a7654;font-size:.78rem">' + size + '</div></div>';
@@ -630,9 +712,9 @@
       var d = await r.json();
       var asset = d.asset || {};
       var tags = (asset.tags || []).slice(0,4).join('、');
-      appendBubble('user', '📎 我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
+      appendBubble('user', '我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
       appendBubble('ai', '我把这份资料收下了。' + (tags ? '我读到了：' + tags + '。' : '') + ' 这些内容已经存进 Ta 的资料库里了，我们继续聊。');
-      showToast('📎 已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
+      showToast('已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
       closeUploadModal();
     } catch(e){
       console.error(e);
@@ -741,6 +823,57 @@
       });
       fInp.addEventListener('change', function(){
         if (fInp.files && fInp.files[0]) openUploadModal(fInp.files[0]);
+      });
+    }
+
+    // 主界面光球聊天框右侧 + 号上传按钮 → 类型选择气泡
+    var immUploadBtn  = $('immersiveUploadBtn');
+    var immTypePicker = $('immTypePicker');
+    var immImageInput = $('immersiveImageInput');
+    var immAudioInput = $('immersiveAudioInput');
+
+    function closeImmPicker(){ if (immTypePicker) immTypePicker.classList.remove('show'); }
+
+    if (immUploadBtn && immTypePicker) {
+      immUploadBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (!window.NianAuth || !window.NianAuth.isAuthed()) {
+          if (confirm('上传文件需要先登录，是否前往登录？')) location.href = '/static/login.html';
+          return;
+        }
+        immTypePicker.classList.toggle('show');
+      });
+      // 点外部关闭
+      document.addEventListener('click', function(e){
+        if (!$('immUploadWrap').contains(e.target)) closeImmPicker();
+      });
+    }
+    // 选择「语音」
+    var immPickAudio = $('immPickAudio');
+    if (immPickAudio && immAudioInput) {
+      immPickAudio.addEventListener('click', function(){
+        closeImmPicker();
+        immAudioInput.click();
+      });
+      immAudioInput.addEventListener('change', function(){
+        if (immAudioInput.files && immAudioInput.files[0]) {
+          openUploadModal(immAudioInput.files[0]);
+          immAudioInput.value = '';
+        }
+      });
+    }
+    // 选择「图片」
+    var immPickImage = $('immPickImage');
+    if (immPickImage && immImageInput) {
+      immPickImage.addEventListener('click', function(){
+        closeImmPicker();
+        immImageInput.click();
+      });
+      immImageInput.addEventListener('change', function() {
+        if (immImageInput.files && immImageInput.files[0]) {
+          openUploadModal(immImageInput.files[0]);
+          immImageInput.value = '';
+        }
       });
     }
     var uc = $('uploadCancel'), uok = $('uploadConfirm');
@@ -925,7 +1058,7 @@
       if (dsBtn) dsBtn.disabled = true;
       if (dsResult) {
         dsResult.className = 'session-search-result show';
-        dsResult.innerHTML = '<div class="session-search-thinking"><span>\ud83d\udd0d</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
+        dsResult.innerHTML = '<div class="session-search-thinking"><span>...</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
       }
       var headers = { 'Content-Type': 'application/json' };
       var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
@@ -1021,14 +1154,20 @@
       if (dsBtn) dsBtn.disabled = true;
       if (dsResult) {
         dsResult.className = 'session-search-result show';
-        dsResult.innerHTML = '<div class="session-search-thinking"><span>\uD83D\uDD0D</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
+        dsResult.innerHTML = '<div class="session-search-thinking"><span>...</span><span>\u8054\u7f51\u641c\u7d22\u4e2d\uff0c\u7ea6\u952e15\u79d2...</span></div>';
       }
       var headers = { 'Content-Type': 'application/json' };
       var tok = window.NianAuth && window.NianAuth.getToken ? window.NianAuth.getToken() : null;
       if (tok) headers['Authorization'] = 'Bearer ' + tok;
+      // 获取当前人物的 memorial_id 和 user_id
+      var mid = window.NianAuth && window.NianAuth.getActiveMemorialId ? window.NianAuth.getActiveMemorialId() : null;
+      var spSel2 = document.getElementById('sessionMemSelect');
+      if (!mid && spSel2) mid = spSel2.value || null;
+      var userInfo = window.NianAuth && window.NianAuth.getUser ? window.NianAuth.getUser() : null;
+      var uid = userInfo ? (userInfo.user_id || userInfo.id || null) : null;
       fetch('/api/intake/deep-search', {
         method: 'POST', headers: headers,
-        body: JSON.stringify({ query: q, extra: ex, session_id: null })
+        body: JSON.stringify({ query: q, extra: ex, session_id: null, memorial_id: mid || null, user_id: uid || null })
       }).then(function(r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -1038,15 +1177,59 @@
         if (!dsResult) return;
         dsResult.innerHTML = '';
         dsResult.className = 'session-search-result show';
+        // 来源标签
+        if (data.model) {
+          var tag = document.createElement('div');
+          tag.style.cssText = 'font-size:.72rem;margin-bottom:8px;padding:2px 8px;border-radius:10px;display:inline-block;'
+            + (data.fallback
+              ? 'background:rgba(180,140,60,.15);color:#8a6820;'
+              : 'background:rgba(60,160,100,.15);color:#2a7a50;');
+          tag.textContent = data.fallback ? '\u77e5\u8bc6\u5e93' : '\u8054\u7f51\u641c\u7d22\uff08' + data.model + '\uff09';
+          dsResult.appendChild(tag);
+        }
+        // 归档提示
+        if (data.dossier_updated) {
+          var archiveNote = document.createElement('div');
+          archiveNote.style.cssText = 'font-size:.72rem;margin-bottom:8px;margin-left:4px;color:#5a9a72;display:inline-block;margin-left:6px;';
+          archiveNote.textContent = '\u5df2\u5f52\u6863\u5e76\u540c\u6b65\u5230\u8d44\u6599\u5e93';
+          dsResult.appendChild(archiveNote);
+          dsResult.appendChild(document.createElement('br'));
+        }
+        // 提取字段速览
+        if (data.fields && Object.keys(data.fields).length > 0) {
+          var f = data.fields;
+          var chips = [];
+          if (f.deceased_name) chips.push(f.deceased_name);
+          if (f.birth_date) chips.push(f.birth_date);
+          if (f.occupation) chips.push(f.occupation);
+          if (f.quotes && f.quotes.length) chips.push(f.quotes.length + '\u6761\u91d1\u53e5');
+          if (f.objects && f.objects.length) chips.push(f.objects.length + '\u4ef6\u7269\u54c1');
+          if (f.core_memories && f.core_memories.length) chips.push(f.core_memories.length + '\u6761\u6838\u5fc3\u8bb0\u5fc6');
+          if (chips.length) {
+            var chipRow = document.createElement('div');
+            chipRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px;';
+            chips.forEach(function(c) {
+              var ch = document.createElement('span');
+              ch.style.cssText = 'background:rgba(90,120,80,.1);color:#3a5a30;font-size:.7rem;padding:1px 7px;border-radius:8px;';
+              ch.textContent = c;
+              chipRow.appendChild(ch);
+            });
+            dsResult.appendChild(chipRow);
+          }
+        }
+        // 全文展示（可滚动，不截断）
+        var scrollBox = document.createElement('div');
+        scrollBox.style.cssText = 'max-height:260px;overflow-y:auto;margin-bottom:6px;padding-right:4px;';
         var p = document.createElement('p');
         p.style.cssText = 'margin:0;white-space:pre-wrap;font-size:.81rem;color:#3a2f22;line-height:1.7';
-        p.textContent = text.length > 600 ? text.slice(0, 600) + '...' : text;
-        dsResult.appendChild(p);
+        p.textContent = text;
+        scrollBox.appendChild(p);
+        dsResult.appendChild(scrollBox);
         var applyBtn = document.createElement('button');
         applyBtn.textContent = '\u53d1\u9001\u7ed9\u5ff5\u5ff5\u53c2\u8003';
         applyBtn.style.cssText = 'margin-top:10px;padding:7px 0;background:linear-gradient(135deg,#C4964A,#E8C57A);border:none;border-radius:7px;color:#fff;font-size:.82rem;cursor:pointer;width:100%;font-family:inherit';
         applyBtn.addEventListener('click', function() {
-          var summary = '\u4ee5\u4e0b\u662f\u5173\u4e8e\u300c' + q + '\u300d\u7684\u80cc\u666f\u8d44\u6599\uff0c\u8bf7\u53c2\u8003\uff1a\n' + text.slice(0, 500);
+          var summary = '\u4ee5\u4e0b\u662f\u5173\u4e8e\u300c' + q + '\u300d\u7684\u80cc\u666f\u8d44\u6599\uff0c\u8bf7\u53c2\u8003\uff1a\n' + text.slice(0, 800);
           var agentInp = document.getElementById('agentInput');
           var agentSend = document.getElementById('agentSend');
           if (agentInp && agentSend) {
@@ -1184,3 +1367,4 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 })();
+

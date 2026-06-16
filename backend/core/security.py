@@ -2,7 +2,7 @@
 import os, time, hmac, hashlib, json, base64, uuid
 import bcrypt
 import jwt
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, Query, HTTPException, Depends
 
 JWT_SECRET = os.getenv("JWT_SECRET", "nian-dev-secret-change-me-in-prod")
 JWT_ALG = "HS256"
@@ -37,11 +37,19 @@ def decode_token(tok: str) -> dict:
         raise HTTPException(status_code=401, detail=f"无效令牌: {e}")
 
 
-async def get_current_user(authorization: str = Header(default="")) -> dict:
-    """FastAPI 依赖：解析 Bearer token，返回 { user_id, email, is_owner }"""
-    if not authorization or not authorization.lower().startswith("bearer "):
+async def get_current_user(
+    authorization: str = Header(default=""),
+    token: str = Query(default=""),
+) -> dict:
+    """FastAPI 依赖：解析 Bearer token。支持 Authorization header 和 ?token= query 参数两种方式。"""
+    # 优先 header，其次 query param（用于 img/a 标签直接请求）
+    tok = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        tok = authorization.split(" ", 1)[1].strip()
+    elif token:
+        tok = token
+    if not tok:
         raise HTTPException(status_code=401, detail="缺少登录令牌")
-    tok = authorization.split(" ", 1)[1].strip()
     payload = decode_token(tok)
     return {
         "user_id": payload.get("sub"),

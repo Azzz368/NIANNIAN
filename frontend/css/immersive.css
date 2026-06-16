@@ -244,6 +244,31 @@ html, body {
   border-color: rgba(196, 150, 74, 0.7);
 }
 
+/* ── 主界面聊天框右侧上传图片按钮（透明 + 号） ── */
+.immersive-upload-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1.5px dashed rgba(196, 150, 74, 0.5);
+  color: #8a7654;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+  flex-shrink: 0;
+}
+.immersive-upload-btn:hover {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(196, 150, 74, 0.85);
+  border-style: solid;
+  transform: scale(1.06);
+  box-shadow: 0 4px 16px rgba(196, 150, 74, 0.22);
+}
+
 /* ── Session Panel Overlay ── */
 #sessionPanel {
   position: fixed;
@@ -613,6 +638,13 @@ html, body {
 
   /* ── 书本（会话）按钮 ── */
   .session-panel-btn {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+  }
+
+  /* ── 上传图片按钮 ── */
+  .immersive-upload-btn {
     flex: 0 0 auto;
     width: 42px;
     height: 42px;

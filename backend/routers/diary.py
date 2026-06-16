@@ -687,6 +687,7 @@ async def generate_diary(
     title: str = Form(""),
     text: str = Form(""),
     tone: str = Form("温柔、克制、真实"),
+    deceased_name: str = Form(""),
     images: List[UploadFile] = File(default=[]),
 ) -> Dict[str, Any]:
     diary_id = uuid.uuid4().hex[:16]
@@ -696,6 +697,7 @@ async def generate_diary(
     clean_text = text.strip()
     clean_tone = tone.strip() or "温柔、克制、真实"
     clean_user_id = user_id.strip() or "local"
+    clean_deceased = deceased_name.strip()
 
     print(f"[diary] generate request id={diary_id} title={clean_title!r} text_len={len(clean_text)} images={len(images or [])}")
 
@@ -739,7 +741,14 @@ async def generate_diary(
         })
 
     skill_images = _public_image_items(image_items)
-    common_payload = {"title": clean_title, "date": _today_cn(), "user_text": clean_text, "tone": clean_tone, "images": skill_images}
+    common_payload = {
+        "title": clean_title,
+        "date": _today_cn(),
+        "user_text": clean_text,
+        "tone": clean_tone,
+        "deceased_name": clean_deceased,
+        "images": skill_images,
+    }
 
     pairing = _run_skill("DIARY01", "DIARY01-media-pairing.md", common_payload)
     if pairing.get("error"):
@@ -847,7 +856,7 @@ async def generate_diary_json(req: DiaryJsonRequest) -> Dict[str, Any]:
             raise HTTPException(413, f"{item.filename or '图片'} 超过 10MB")
         files.append(_MemoryUploadFile(raw, item.filename or f"image_{index}.jpg", item.mime or "image/jpeg"))
 
-    return await generate_diary(user_id=req.user_id, title=req.title, text=req.text, tone=req.tone, images=files)  # type: ignore[arg-type]
+    return await generate_diary(user_id=req.user_id, title=req.title, text=req.text, tone=req.tone, deceased_name="", images=files)  # type: ignore[arg-type]
 
 
 @router.post("/generate-pdf")

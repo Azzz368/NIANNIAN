@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 念念传记写作功能，改为三步式界面，模仿追思影像建档样式
  */
 
@@ -1284,8 +1284,8 @@
         const actions = $('bioResultActions');
         if (actions) {
             actions.innerHTML += `
-                <button class="btn btn-secondary" id="btnExportPDF" type="button">📄 导出 PDF</button>
-                <button class="btn btn-secondary" id="btnExportDOCX" type="button">📝 导出 Word</button>
+                <button class="btn btn-secondary" id="btnExportPDF" type="button">导出 PDF</button>
+                <button class="btn btn-secondary" id="btnExportDOCX" type="button">导出 Word</button>
             `;
         
             $('btnExportPDF')?.addEventListener('click', exportToPDF);
@@ -1454,7 +1454,7 @@
         const preview = $('uploadPreview');
         if (!preview) return;
         preview.innerHTML = state.uploadQueue.map(file => {
-            const icon = file.type.startsWith('image/') ? '🖼' : (file.type.startsWith('audio/') ? '🎵' : (file.type.startsWith('video/') ? '🎬' : '📄'));
+            const icon = file.type.startsWith('image/') ? '[图]' : (file.type.startsWith('audio/') ? '[音]' : (file.type.startsWith('video/') ? '[视]' : '[文]'));
             const size = file.size > 1024 * 1024 ? (file.size / 1024 / 1024).toFixed(1) + ' MB' : (file.size / 1024).toFixed(1) + ' KB';
             return `<div class="upload-modal-row"><span class="ic">${icon}</span><div style="text-align:left"><div style="font-weight:600">${escapeHtml(file.name)}</div><div style="color:#8a7654;font-size:.85rem">${size}</div></div></div>`;
         }).join('');
@@ -1509,3 +1509,4 @@
 
     document.addEventListener('DOMContentLoaded', init);
 })();
+

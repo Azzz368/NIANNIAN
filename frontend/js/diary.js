@@ -17,6 +17,8 @@ const state = {
   speechRecognition: null,
   speechText: '',
   speechInterim: '',
+  deceasedName: '',   // 资料库中的纪念对象姓名
+  mid: '',            // 当前 active memorial id
 };
 
 function formatToday() {
@@ -452,6 +454,7 @@ async function generateDiary() {
   formData.append('title', title || '今日记忆');
   formData.append('text', text);
   formData.append('tone', '温柔、真实、有生活感');
+  if (state.deceasedName) formData.append('deceased_name', state.deceasedName);
   state.images.forEach(item => {
     formData.append('images', item.file, item.name);
   });
@@ -497,9 +500,31 @@ document.addEventListener('DOMContentLoaded', () => {
   ensureGenerateUi();
   renderDate();
   loadDraft();
+  loadFromLibrary();   // 从资料库加载 deceased_name
   $('diaryImages').addEventListener('change', e => handleImages(e.target.files));
   $('btnSaveDiary').addEventListener('click', saveDraft);
   $('btnClearDiary').addEventListener('click', clearDraft);
   $('btnVoiceDiary').addEventListener('click', toggleVoiceInput);
   $('btnGenerateDiary').addEventListener('click', generateDiary);
 });
+
+// 从资料库读取当前 active memorial 的 deceased_name，显示在页面并在生成时传给 API
+async function loadFromLibrary() {
+  if (!window.NianAuth || !NianAuth.isAuthed()) return;
+  const mid = NianAuth.getActiveMemorialId();
+  if (!mid) return;
+  state.mid = mid;
+  try {
+    const resp = await NianAuth.fetch(`/api/memorials/${encodeURIComponent(mid)}`);
+    if (!resp.ok) return;
+    const mdata = await resp.json();
+    const name = (mdata.dossier?.subject?.name) || mdata.meta?.name || '';
+    if (!name) return;
+    state.deceasedName = name;
+    // 在页面顶部副标题处显示"为 Ta 写下今天"
+    const sub = document.querySelector('.hero-sub');
+    if (sub) sub.textContent = `为「${name}」写下今天的记录，让思念被温柔保存。`;
+    const badge = document.querySelector('.topbar-badge');
+    if (badge) badge.textContent = name;
+  } catch(e) { /* 静默忽略 */ }
+}

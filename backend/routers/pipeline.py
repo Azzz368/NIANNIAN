@@ -65,13 +65,14 @@ def run_all(sid: str) -> Dict[str, Any]:
 
 
 @router.post("/scene/image/{sid}/{idx}")
-def scene_image(sid: str, idx: int) -> Dict[str, Any]:
-    """为单个分镜生成首帧图片（返回 data URL）"""
+def scene_image(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+    """为单个分镜生成首帧图片（ref_b64 可选：传入参考图 base64 则启用图生图）"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
-    return sm.gen_scene_image(sid, idx)
+    ref_b64 = (payload or {}).get("ref_b64", "")
+    return sm.gen_scene_image(sid, idx, ref_b64=ref_b64)
 
 
 @router.get("/characters/{sid}")

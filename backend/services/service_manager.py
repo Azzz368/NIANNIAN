@@ -211,88 +211,128 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
         return {"error": True, "step": mv_id, "message": str(exc)}
 
 
-# ── 深度搜索（302.ai perplexity/sonar-pro）────────────────────────────────
-_SEARCH_MODELS = ["perplexity/sonar-pro", "perplexity/sonar", "gpt-4o-search-preview"]
+# ── 深度搜索（302.ai perplexity/sonar-pro → Tavily → 知识库）────────────────
+_SEARCH_MODELS = ["perplexity/sonar-pro", "perplexity/sonar", "gpt-4o-search-preview",
+                  "web-search-pro", "moonshot-v1-128k-search"]
 
 _DEEP_SEARCH_SYSTEM = """你是念念追思影像制作助手，具备联网实时搜索能力。
-用户想了解某位人物的生平资料，以便制作追思影像。请联网搜索后，用温暖自然的中文整理：
+用户想了解某位人物的生平资料，以便制作追思影像。请联网搜索后，**严格按以下 JSON 格式输出，不加任何解释或 Markdown**：
 
-### 一、基本信息
-全名、生卒年月（如有）、主要职业/身份、籍贯。
+{
+  "organized": "用温暖自然的中文整理，包含：\\n### 一、基本信息\\n全名、生卒年月、主要职业/身份、籍贯。\\n\\n### 二、人生经历亮点\\n按时间顺序列出3-6个重要节点。\\n\\n### 三、性格与精神遗产\\n性格、价值观、主要贡献（100字以内）。\\n\\n### 四、适合追思影像的素材线索\\n2-4个最具画面感的场景或情感记忆点。",
+  "name": "姓名",
+  "gender": "男 或 女 或 不便告知",
+  "birth_date": "XXXX年X月X日 或 XXXX年 或 空",
+  "death_date": "XXXX年X月X日 或 XXXX年 或 空（健在则填空）",
+  "occupation": "主要职业或身份",
+  "locations": ["出生地或主要居住地，最多3个"],
+  "personality_keywords": ["性格关键词，最多5个"],
+  "quotes": ["代表性金句，原文，最多5条；没有则空数组"],
+  "objects": ["代表性物件，最多5个；没有则空数组"],
+  "core_memories": [
+    {"title": "记忆标题（10字以内）", "content": "具体描述（60-100字）"}
+  ]
+}
 
-### 二、人生经历亮点
-按时间顺序列出 3-6 个重要节点。
+信息不足的字段：字符串填空字符串，数组填空数组。若无公开资料请在 organized 里如实说明。"""
 
-### 三、性格与精神遗产
-性格、价值观、主要贡献（100字以内）。
-
-### 四、适合追思影像的素材线索
-2-4 个最具画面感的场景、故事或情感记忆点。
-
-若无公开资料请如实告知。输出语气温暖，不要使用"根据搜索结果"等机械表述。"""
-
-_FILL_SYSTEM = """根据已整理资料，提取以下字段，严格输出 JSON，不加任何解释：
+_FILL_SYSTEM = """根据已整理的人物资料，提取以下字段，严格输出 JSON，不加任何解释：
 {
   "deceased_name": "姓名",
   "deceased_gender": "男 或 女 或 不便告知",
-  "birth_date": "XXXX年X月X日 或 空",
-  "death_date": "XXXX年X月X日 或 空",
-  "occupation": "主要职业",
-  "family_memory_text": "家属视角的温暖回忆叙述，200-350字"
+  "birth_date": "XXXX年X月X日 或 XXXX年 或 空",
+  "death_date": "XXXX年X月X日 或 XXXX年 或 空（健在则填空）",
+  "occupation": "主要职业或身份",
+  "locations": ["出生地或主要居住地，数组，最多3个"],
+  "personality_keywords": ["性格关键词，数组，最多5个"],
+  "quotes": ["代表性金句或名言，原文，数组，最多5条；没有则空数组"],
+  "objects": ["代表性物件或标志性事物，数组，最多5个；没有则空数组"],
+  "core_memories": [
+    {"title": "记忆标题", "content": "具体描述，80-150字"}
+  ],
+  "family_memory_text": "以家属或后辈视角写的温暖回忆叙述，200-350字"
 }
-信息不足的字段填空字符串。"""
+信息不足的字段：字符串填空字符串，数组填空数组。"""
+
+
+def _parse_deep_search_json(raw: str) -> Dict[str, Any]:
+    """
+    解析 deep_search 返回的 JSON（可能包裹在 ```json``` 代码块里）。
+    优先提取完整 JSON 对象；若解析失败则把整段文字当 organized 字段返回。
+    """
+    import json as _j, re as _r
+    text = raw.strip()
+    # 去掉可能的代码块包裹
+    m = _r.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, _r.S)
+    if m:
+        text = m.group(1)
+    else:
+        # 取第一个 { 到最后一个 }
+        s, e = text.find("{"), text.rfind("}")
+        if s != -1 and e > s:
+            text = text[s:e + 1]
+    try:
+        data = _j.loads(text)
+        if isinstance(data, dict) and data.get("organized"):
+            return data
+    except Exception:
+        pass
+    # 解析失败：整段文字当叙述文本
+    return {"organized": raw.strip()}
 
 
 def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
-    """优先使用 DashScope qwen-plus（联网搜索能力强），失败降级 302.ai → 知识库。"""
-    user_msg = f"请帮我搜索并整理：{query}"
+    """
+    优先 DashScope qwen-max/qwen-plus（enable_search 真实联网），
+    失败则尝试 302.ai 搜索模型，最终降级到 302.ai 知识库。
+    返回结构：{"organized": "...", "name": "...", "quotes": [...], "core_memories": [...], ...}
+    """
+    import os as _os
+    user_msg = f"请帮我搜索并整理关于以下人物的生平资料：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
 
-    # ── 1) 首选：DashScope qwen-plus（阿里通义千问，联网搜索质量高）──
-    try:
-        import os as _os
-        import dashscope  # type: ignore
-        api_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
-        if api_key:
-            dashscope.api_key = api_key
-            # 使用国际区或国内区（默认国内）
+    def _try_parse(content: str, model: str, fallback: bool) -> Dict[str, Any]:
+        parsed = _parse_deep_search_json(content)
+        parsed["model"] = model
+        parsed["fallback"] = fallback
+        return parsed
+
+    # ── 1) 首选：DashScope（enable_search 真实联网）──
+    ds_key = _os.environ.get("DASHSCOPE_API_KEY", "").strip()
+    if ds_key:
+        try:
+            from openai import OpenAI as _OpenAI
             region = _os.environ.get("DASHSCOPE_REGION", "").strip().lower()
-            if region == "intl":
-                dashscope.base_http_api_url = "https://dashscope-intl.aliyuncs.com/api/v1"
-
-            messages: Any = [
-                {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
-                {"role": "user",   "content": user_msg},
-            ]
-            # qwen-plus 支持联网搜索 enable_search=True
-            resp = dashscope.Generation.call(  # type: ignore[arg-type]
-                api_key=api_key,
-                model="qwen-plus",
-                messages=messages,
-                result_format="message",
-                enable_search=True,
-                temperature=0.4,
-                max_tokens=1400,
+            ds_base = (
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+                if region == "intl"
+                else "https://dashscope.aliyuncs.com/compatible-mode/v1"
             )
-            # 兼容两种返回结构
-            if resp and getattr(resp, "status_code", 200) == 200:
-                output = getattr(resp, "output", None) or {}
-                if isinstance(output, dict):
-                    choices = output.get("choices") or []
-                    if choices:
-                        msg = choices[0].get("message", {}) or {}
-                        content = (msg.get("content") or "").strip()
-                        if content:
-                            return {"organized": content, "model": "qwen-plus（联网）", "fallback": False}
-                # text 字段兜底
-                text = (getattr(output, "text", "") if hasattr(output, "text") else output.get("text", "")) if output else ""
-                if text:
-                    return {"organized": text.strip(), "model": "qwen-plus（联网）", "fallback": False}
-    except Exception as e:
-        print(f"[deep_search] qwen-plus failed: {e}")
+            _ds = _OpenAI(api_key=ds_key, base_url=ds_base)
+            for ds_model in ["qwen-max", "qwen-plus"]:
+                try:
+                    resp = _ds.chat.completions.create(
+                        model=ds_model,
+                        messages=[
+                            {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                            {"role": "user",   "content": user_msg},
+                        ],
+                        extra_body={"enable_search": True},
+                        temperature=0.4,
+                        max_tokens=4500,
+                    )
+                    content = (resp.choices[0].message.content or "").strip()
+                    if content:
+                        return _try_parse(content, f"{ds_model}（联网）", False)
+                except Exception as _e:
+                    print(f"[deep_search] DashScope {ds_model} failed: {_e}")
+        except Exception as e:
+            print(f"[deep_search] DashScope init failed: {e}")
+    else:
+        print("[deep_search] DASHSCOPE_API_KEY not set, skipping")
 
-    # ── 2) 次选：302.ai perplexity sonar 系列 ──
+    # ── 2) 次选：302.ai 搜索模型系列 ──
     for model in _SEARCH_MODELS:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -302,20 +342,19 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.4,
-                max_tokens=1400,
+                max_tokens=4500,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
-                return {"organized": content, "model": model, "fallback": False}
+                return _try_parse(content, model, False)
         except Exception:
             continue
 
-    # ── 3) 降级：纯知识库模式（无联网）──
-    kb_prefix = (
-        "【提示：联网搜索模型暂时不可用，以下内容来自 AI 知识库，"
-        "可能存在知识截止日期限制，建议核实后再填写。】\n\n"
+    # ── 3) 降级：302.ai 知识库 ──
+    kb_system = _DEEP_SEARCH_SYSTEM.replace(
+        "具备联网实时搜索能力。",
+        "请根据已有知识尽量全面作答；若信息存在时效性，请在 organized 字段里注明（信息可能有更新）。",
     )
-    kb_system = _DEEP_SEARCH_SYSTEM.replace("具备联网实时搜索能力。", "请根据已有知识回答。")
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
             resp = PRIMARY_CLIENT.chat.completions.create(
@@ -325,11 +364,11 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.5,
-                max_tokens=1200,
+                max_tokens=4500,
             )
             content = (resp.choices[0].message.content or "").strip()
             if content:
-                return {"organized": kb_prefix + content, "model": f"{m}（知识库模式）", "fallback": True}
+                return _try_parse(content, f"{m}（知识库）", True)
         except Exception:
             continue
 
@@ -337,26 +376,12 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
 
 
 def deep_search_extract_fields(organized: str, query: str) -> Dict[str, Any]:
-    """从整理文本中提取可填表单字段"""
-    import json as _json, re as _re
-    for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
-        try:
-            resp = PRIMARY_CLIENT.chat.completions.create(
-                model=m,
-                messages=[
-                    {"role": "system", "content": _FILL_SYSTEM},
-                    {"role": "user",   "content": f"搜索词：{query}\n\n整理资料：\n{organized}"},
-                ],
-                temperature=0.2,
-                max_tokens=700,
-            )
-            raw = resp.choices[0].message.content or "{}"
-            mt = _re.search(r"\{.*\}", raw, _re.S)
-            if mt:
-                return _json.loads(mt.group())
-        except Exception:
-            continue
+    """
+    兼容旧调用：deep_search 现在已经一次性返回结构化字段，
+    此函数仅作为保留接口，直接返回空（字段已在 deep_search 结果里）。
+    """
     return {}
+
 
 
 # ── 念念 AI 对话（intake step3）────────────────────────────────────────────
@@ -746,8 +771,8 @@ def get_characters(sid: str) -> Dict[str, Any]:
     return {"main": main_role, "supporting": supporting}
 
 
-def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
-    """为单个分镜生成图片。返回 {url: data-url} 或 {error, message}"""
+def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, Any]:
+    """为单个分镜生成图片。ref_b64 为参考图 base64（有则图生图用 gemini-3-pro-image-preview，否则纯文生图）。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -766,7 +791,7 @@ def gen_scene_image(sid: str, scene_idx: int) -> Dict[str, Any]:
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_302(image_prompt)
+    b64, err = generate_image_302(image_prompt, reference_b64=ref_b64 or None)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
