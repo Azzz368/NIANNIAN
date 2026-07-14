@@ -2,6 +2,7 @@
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import FileResponse
 
 from services import service_manager as sm
 from services import session_store
@@ -105,4 +106,33 @@ def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(Non
         raise HTTPException(404, "session not found")
     image_url = (payload or {}).get("image_url", "")
     return sm.gen_scene_video(sid, idx, image_url)
+
+
+@router.post("/final-cut/{sid}")
+def final_cut(sid: str, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+    """用 ffmpeg 把各分镜已生成的视频按顺序拼接为一条完整成片。
+    payload 可选 {"scene_indices": [0,1,2]} 指定顺序/子集，默认按全部分镜顺序拼接。
+    """
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    scene_indices = (payload or {}).get("scene_indices")
+    result = sm.merge_scene_videos(sid, scene_indices=scene_indices)
+    if result.get("error"):
+        raise HTTPException(400, result.get("message") or "拼接失败")
+    return result
+
+
+@router.get("/final-cut/{sid}/file")
+def final_cut_file(sid: str):
+    """下载/播放最近一次拼接完成的成片 MP4。"""
+    try:
+        s = session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    path = s.get("final_cut_path")
+    if not path:
+        raise HTTPException(404, "尚未生成成片，请先调用 /pipeline/final-cut/{sid}")
+    return FileResponse(path, media_type="video/mp4", filename="final_cut.mp4")
 

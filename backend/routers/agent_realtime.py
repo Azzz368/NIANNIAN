@@ -27,7 +27,9 @@ BASE_INSTRUCTIONS = (
     "主动追问一个具体细节。"
     "【语言规定】无论用户用什么语言说话，你必须始终用中文回复，绝对不使用英文。"
     "\n\n【非常重要】"
-    "用户可能慢慢说，中间会有停顿（最长 7 秒），请耐心等待 ta 说完整段再回复，不要打断。"
+    "用户可能慢慢说，中间会有停顿；客户端已经做了缓冲控制，只有在用户明确说完"
+    "（或客户端主动请求完整回答时）才会让你正式作答，所以每次收到完整回答请求时，"
+    "都当作用户已经说完了这一段，直接给出实质性的回应，不要再问「你说完了吗」。"
     "如果用户只是简短确认（嗯、好、对），不要长篇大论。"
     "永远不要重复自我介绍。如果上下文已经在聊某个人，直接接着聊，"
     "**不要再问『今天想聊谁』或者『你是谁』**。"
@@ -181,13 +183,17 @@ async def realtime_proxy(client_ws: WebSocket):
                     "input_audio_sample_rate": 16000,
                     "output_audio_sample_rate": 24000,
                     "input_audio_transcription": {"model": "paraformer-realtime-v2", "language": "zh"},
-                    # 保留服务端 VAD，但把"算作说完"的静音从默认 600ms 拉长到 7000ms
-                    # 这样人正常的停顿/换气不会被切断；客户端"我说完了"关键词作为快捷提交
+                    # v3：把"是否要说话"的决定权交给客户端，服务端 VAD 只负责快速切分/提交音频，
+                    # 不再自动生成回复（create_response=false）。这样客户端可以在用户停顿时
+                    # 先插入一句极简的"嗯/然后呢"类回声反馈，只有在用户说「我说完了」或
+                    # 沉默较久之后，才由客户端主动请求一次完整回答，避免 AI 抢话打断用户。
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.5,
                         "prefix_padding_ms": 300,
-                        "silence_duration_ms": 7000,
+                        "silence_duration_ms": 700,
+                        "create_response": False,
+                        "interrupt_response": True,
                     },
                 },
             }

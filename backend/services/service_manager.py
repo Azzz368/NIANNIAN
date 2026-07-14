@@ -2,6 +2,8 @@
 # 统一出口 —— routers 只允许从这里 import。
 # 通过 backend/services/__init__.py 已经将项目根加入 sys.path，
 # 因此可以直接复用根目录下的 llm_client / skill_loader 等模块。
+import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -841,6 +843,110 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"视频未返回 URL：{res}"}
     scene["_video_url"] = url
     return {"url": url}
+
+
+def _ffmpeg_bin() -> str:
+    """FFmpeg 可执行文件路径：优先读取 FFMPEG_PATH 环境变量，否则回退到 PATH 中的 ffmpeg。"""
+    return os.environ.get("FFMPEG_PATH", "ffmpeg").strip() or "ffmpeg"
+
+
+def merge_scene_videos(sid: str, scene_indices: Optional[List[int]] = None) -> Dict[str, Any]:
+    """把各分镜已生成的短视频（scene["_video_url"]）按顺序用 ffmpeg 拼接为一条完整成片。
+
+    依赖服务器已安装 ffmpeg：优先读取 FFMPEG_PATH 环境变量指定的可执行文件路径，
+    未设置则默认调用 PATH 中的 `ffmpeg`（Render 部署见 render.yaml 的 buildCommand）。
+    """
+    import base64
+    import shutil
+    import subprocess
+    import tempfile
+
+    import requests as _requests
+
+    s = session_store.require(sid)
+    mv04 = s["mv_outputs"].get("MV04")
+    scenes = _get_scenes_from_mv04(mv04)
+    if not scenes:
+        return {"error": True, "message": "分镜尚未生成，请先完成分镜制作"}
+
+    idxs = scene_indices if scene_indices is not None else list(range(len(scenes)))
+    urls: List[str] = []
+    for i in idxs:
+        if 0 <= i < len(scenes):
+            u = scenes[i].get("_video_url")
+            if u:
+                urls.append(u)
+    if not urls:
+        return {"error": True, "message": "没有任何分镜已生成视频，请先完成分镜视频渲染"}
+
+    ffmpeg_bin = _ffmpeg_bin()
+    if not (shutil.which(ffmpeg_bin) or os.path.isfile(ffmpeg_bin)):
+        return {
+            "error": True,
+            "message": f"未检测到 ffmpeg（{ffmpeg_bin}）。请在部署环境中安装 ffmpeg，"
+                        f"或设置环境变量 FFMPEG_PATH 指向其可执行文件路径。",
+        }
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="nn_finalcut_"))
+    try:
+        clip_paths: List[Path] = []
+        for i, url in enumerate(urls):
+            dest = tmp_dir / f"clip_{i:03d}.mp4"
+            try:
+                if url.startswith("data:"):
+                    _, b64data = url.split(",", 1)
+                    dest.write_bytes(base64.b64decode(b64data))
+                else:
+                    r = _requests.get(url, timeout=120, stream=True)
+                    r.raise_for_status()
+                    with open(dest, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024 * 64):
+                            if chunk:
+                                f.write(chunk)
+            except Exception as e:
+                return {"error": True, "message": f"下载第 {i+1} 个分镜视频失败：{e}"}
+            clip_paths.append(dest)
+
+        # ── 统一转码为同一分辨率/帧率/编码，避免 concat demuxer 因参数不一致而失败 ──
+        norm_paths: List[Path] = []
+        for i, p in enumerate(clip_paths):
+            np_ = tmp_dir / f"norm_{i:03d}.mp4"
+            cmd = [
+                ffmpeg_bin, "-y", "-i", str(p),
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+                       "pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                str(np_),
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if proc.returncode != 0 or not np_.exists():
+                return {"error": True, "message": f"片段 {i+1} 转码失败：{proc.stderr[-500:]}"}
+            norm_paths.append(np_)
+
+        concat_list = tmp_dir / "concat_list.txt"
+        with open(concat_list, "w", encoding="utf-8") as f:
+            for p in norm_paths:
+                f.write(f"file '{p.as_posix()}'\n")
+
+        output_name = f"final_cut_{sid}_{int(time.time())}.mp4"
+        output_path = FINAL_DIR / output_name
+        cmd = [
+            ffmpeg_bin, "-y", "-f", "concat", "-safe", "0",
+            "-i", str(concat_list), "-c", "copy", str(output_path),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if proc.returncode != 0 or not output_path.exists():
+            return {"error": True, "message": f"拼接失败：{proc.stderr[-500:]}"}
+
+        s["final_cut_path"] = str(output_path)
+        return {
+            "url": f"/api/pipeline/final-cut/{sid}/file",
+            "filename": output_name,
+            "clip_count": len(urls),
+        }
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── 人物传记生成 Pipeline（BIO01~BIO05）────────────────────────────────
