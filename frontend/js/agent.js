@@ -508,8 +508,15 @@
         commitTurn('长时间沉默', false);
       }, randomBetween(FINAL_SILENCE_MIN_MS, FINAL_SILENCE_MAX_MS));
     }
+    function scheduleBufferWindowIfIdle(){
+      // 麦克风阵列环境音会让服务端 VAD 频繁误判"用户在说话"，导致 speech_started/committed
+      // 反复触发。如果倒计时已经在跑，说明我们已经在等一段"有效文字"，不要被噪音打断重置，
+      // 否则永远等不到反馈/兜底触发。只有当前没有任何倒计时在跑时才开始新一轮等待。
+      if (!state.fillerTimer && !state.finalTimer) scheduleBufferWindow();
+    }
     state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
-    state._scheduleBufferWindow = scheduleBufferWindow;
+    state._scheduleBufferWindow = scheduleBufferWindowIfIdle;
+    state._restartBufferWindow = scheduleBufferWindow;
     state._clearBufferTimers = function(){ clearFillerTimer(); clearFinalTimer(); };
 
     ws.onopen = function(){
@@ -563,13 +570,20 @@
 
   function handleUpstreamEvent(msg){
     var t = msg.type || '';
-    if (t === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
-      appendBubble('user', msg.transcript);
-      state.lastUserText = msg.transcript;
-      // 关键词触发立即提交（防止用户说完了但还没到 7 秒）
-      if (/我说完了|说完了|讲完了|说完啦|讲完啦|就这样|就这样吧|先这样|先这样吧|先说这些|先说到这|就先这样|这样就行|这样就好|好了就这样|暂时就这样|over|done/i.test(msg.transcript)) {
-        try { state._commitTurn && state._commitTurn('关键词「说完了」'); } catch(e){}
+    if (t === 'conversation.item.input_audio_transcription.completed') {
+      var text = (msg.transcript || '').trim();
+      if (text) {
+        // 识别到真正有效的文字 → 用户确实在说话，重新给一段完整的等待窗口
+        appendBubble('user', text);
+        state.lastUserText = text;
+        try { state._restartBufferWindow && state._restartBufferWindow(); } catch(e){}
+        // 关键词触发立即提交（防止用户说完了但还没到兜底时间）
+        if (/我说完了|说完了|讲完了|说完啦|讲完啦|就这样|就这样吧|先这样|先这样吧|先说这些|先说到这|就先这样|这样就行|这样就好|好了就这样|暂时就这样|over|done/i.test(text)) {
+          try { state._commitTurn && state._commitTurn('关键词「说完了」'); } catch(e){}
+        }
       }
+      // text 为空：说明这段被 VAD 切分出来的音频没有识别出任何有效文字（多半是麦克风阵列拾取的
+      // 环境噪音），不当作"用户还在说话"，不重置倒计时，让 scheduleBufferWindowIfIdle 继续计时。
       return;
     }
     // 服务端 VAD：用户开始/停止说话 → 同步 UI 渐弱动画
@@ -577,8 +591,8 @@
       state.aiSpeaking = false;
       if (typeof clearFade === 'function') {} // no-op
       var el1 = document.querySelector('.live-wave'); if (el1) el1.classList.remove('fading');
-      // 用户又开始说话了：说明上一次只是短暂停顿，取消回声反馈/兜底计时
-      try { state._clearBufferTimers && state._clearBufferTimers(); } catch(e){}
+      // 注意：不在这里清除回声/兜底倒计时——麦克风阵列的环境音会让 VAD 频繁误判"开始说话"，
+      // 真正的重置只在收到有效识别文字（input_audio_transcription.completed 且非空）时才发生。
       setLiveStatus('听到你了，慢慢说…', true);
       return;
     }
@@ -595,7 +609,8 @@
         state.manualCommitPending = false;
         setLiveStatus('念念正在思考...', true);
       } else {
-        // 服务端自动切分提交的一段音频，可能只是用户的短暂停顿，先进入缓冲等待窗口
+        // 服务端自动切分提交的一段音频，可能只是用户的短暂停顿，也可能是噪音误触发。
+        // 只有当前没有倒计时在跑时才开始新一轮等待，避免噪音反复把倒计时推后。
         try { state._scheduleBufferWindow && state._scheduleBufferWindow(); } catch(e){}
       }
       return;
@@ -656,7 +671,7 @@
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
     if (state._clearBufferTimers) { try { state._clearBufferTimers(); } catch(e){} }
-    state._commitTurn = null; state._scheduleBufferWindow = null; state._clearBufferTimers = null;
+    state._commitTurn = null; state._scheduleBufferWindow = null; state._restartBufferWindow = null; state._clearBufferTimers = null;
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; state.lastUserText = ''; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
