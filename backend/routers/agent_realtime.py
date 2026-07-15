@@ -183,16 +183,14 @@ async def realtime_proxy(client_ws: WebSocket):
                     "input_audio_sample_rate": 16000,
                     "output_audio_sample_rate": 24000,
                     "input_audio_transcription": {"model": "paraformer-realtime-v2", "language": "zh"},
-                    # v3：把"是否要说话"的决定权交给客户端，服务端 VAD 只负责快速切分/提交音频，
-                    # 不再自动生成回复（create_response=false）。这样客户端可以在用户停顿时
-                    # 先插入一句极简的"嗯/然后呢"类回声反馈，只有在用户说「我说完了」或
-                    # 沉默较久之后，才由客户端主动请求一次完整回答，避免 AI 抢话打断用户。
+                    # 只使用服务端 VAD 做音频切分：检测到用户停顿即自动提交这段语音并生成回复
+                    # （create_response=true），不做额外的客户端等待/回声缓冲。
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.5,
                         "prefix_padding_ms": 300,
                         "silence_duration_ms": 700,
-                        "create_response": False,
+                        "create_response": True,
                         "interrupt_response": True,
                     },
                 },

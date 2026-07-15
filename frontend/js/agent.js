@@ -420,24 +420,13 @@
     var ws = new WebSocket(wsUrl);
     state.ws = ws;
 
-    // ─── 停止检测 state（服务端 VAD 只负责快速切分音频，不自动生成回复；
-    //      是否说话、说什么由客户端的"缓冲"逻辑决定，避免用户中途停顿就被 AI 打断）─
+    // ─── 停止检测 state（只用服务端 VAD 做音频切分：VAD 判定一段话说完 → 立即提交并
+    //      请求完整回答，不做额外的等待/回声反馈缓冲）─
     state.committing = false;
     state.fadeActive = false;
     state.aiSpeaking = false; window.aiActiveVolume=0;
     state.manualCommitPending = false;  // 是否正等待"我说完了/手动提交"触发的完整回答
-    state.fillerCount = 0;              // 本轮已发出的简短回声反馈次数（嗯/然后呢…）
-    state.maxFillers = 2;                // 最多连续回声反馈次数，超过后直接给完整回答
-    state.fillerTimer = null;           // 检测到停顿后，等一小段时间再决定是否回声
-    state.finalTimer = null;            // 兜底：即使用户没说"我说完了"，沉默太久也要给完整回答
-    state.lastUserText = '';            // 最近一段用户转写文本，用于判断是否邀请点评
-    var FILLER_DELAY_MIN_MS = 1500;     // 停顿超过此区间下限（随机取值）→ 认为用户可能只是短暂停顿
-    var FILLER_DELAY_MAX_MS = 2500;     // 停顿超过此区间上限，尽快回一句简短反馈，避免冷场太久
-    var FINAL_SILENCE_MIN_MS = 5000;    // 停顿超过此区间（随机取值，且没再开口）→ 直接给完整回答
-    var FINAL_SILENCE_MAX_MS = 8000;
-    var INVITE_OPINION_RE = /你觉得呢|你说呢|你说.{0,3}是吧|你说对吧|你怎么看|你看呢|对不对|是不是|你说是不|你说好不好|你说好吗/i;
-    var FILLER_PHRASES = ['嗯', '然后呢', '然后？', '接着呢？', '我在听', '哦？'];
-    function randomBetween(min, max){ return min + Math.random() * (max - min); }
+    state.lastUserText = '';            // 最近一段用户转写文本
 
     function stopAiPlayback(){
       // 用户一开口就立即打断 AI：停掉所有已排队/正在播放的语音片段，并让上游取消当前回答，
@@ -463,77 +452,18 @@
       state.fadeActive = false;
       var el = liveWaveEl(); if (el) el.classList.remove('fading');
     }
-    function clearFillerTimer(){ if (state.fillerTimer) { clearTimeout(state.fillerTimer); state.fillerTimer = null; } }
-    function clearFinalTimer(){ if (state.finalTimer) { clearTimeout(state.finalTimer); state.finalTimer = null; } }
-    function sendResponseCreate(instructionsOverride){
-      var resp = { modalities: ['audio','text'] };
-      if (instructionsOverride) resp.instructions = instructionsOverride;
-      try { ws.send(JSON.stringify({ type: 'response.create', response: resp })); } catch(e){}
-    }
-    function sendFillerResponse(){
-      state.fillerCount++;
-      var invited = state.lastUserText && INVITE_OPINION_RE.test(state.lastUserText);
-      if (invited) {
-        // 用户明确邀请点评/认同（"你觉得呢"/"你说是吧"之类）→ 给一句真诚的简短评价，而不是干巴巴的回声词
-        setLiveStatus('念念给你一点小小的回应…', true);
-        sendResponseCreate(
-          '用户刚才的话里在邀请你给出看法或认同（比如说了"你觉得呢/你说是吧"之类）。' +
-          '请像朋友随口聊天一样，用一句非常简短、真诚的口语化反应表达你的想法或认同，' +
-          '不超过 15 个字，说完就停，不要展开长篇分析，也不要再提新问题。'
-        );
-      } else {
-        // 默认：只是短暂停顿，随机挑一个简短的倾听词，避免每次都说同一句显得机械
-        var phrase = FILLER_PHRASES[Math.floor(Math.random() * FILLER_PHRASES.length)];
-        setLiveStatus('念念先应一声，继续听你说…', true);
-        sendResponseCreate(
-          '用户可能话还没说完，只是短暂停顿。请只用一个非常简短的口头回应词回应，' +
-          '就说"' + phrase + '"这个词（或换成同类的"嗯/然后呢/然后？/接着呢？/我在听/哦？"之一），不超过 6 个字。' +
-          '绝对不要开始正式回答、不要总结、不要评价、不要提新问题，说完这一个词就停。'
-        );
-      }
-    }
-    function commitTurn(reason, alsoCommitBuffer){
+    function commitTurn(reason){
+      // 用户说了"我说完了"之类的关键词 → 提前把当前缓冲区提交，不用等 VAD 的 700ms 静音判定。
+      // 服务端已设置 create_response=true，提交后会自动生成回复，这里不用再手动请求一次。
       if (state.committing) return;
       state.committing = true;
       state.manualCommitPending = true;
-      clearFade(); clearFillerTimer(); clearFinalTimer();
-      state.fillerCount = 0;
+      clearFade();
       setLiveStatus('已提交（' + reason + '），念念正在思考...', true);
-      // alsoCommitBuffer=false 用于"长时间沉默"兜底：此时用户早已停止说话，
-      // 当前录音缓冲区通常已被服务端自动提交过（是空的），再提交一次可能报错，
-      // 所以只发 response.create，直接对已有的对话内容生成完整回答。
-      if (alsoCommitBuffer !== false) {
-        try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
-      } else {
-        state.manualCommitPending = false;  // 没有发起真正的 commit，不必等待 committed 回调
-      }
-      sendResponseCreate();
+      try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
       setTimeout(function(){ state.committing = false; }, 1500);
     }
-    function scheduleBufferWindow(){
-      // 服务端已自动提交了一段用户语音（VAD 检测到短暂停顿），先不急着让 AI 长篇回应，
-      // 给用户一个继续说下去的窗口（1.5~2.5 秒随机，尽快回应但不打断）；
-      // 超时后回声反馈，再等 5~8 秒（随机）仍无动静才给完整回答。
-      clearFillerTimer(); clearFinalTimer();
-      state.fillerTimer = setTimeout(function(){
-        if (state.fillerCount < state.maxFillers) {
-          sendFillerResponse();
-        }
-      }, randomBetween(FILLER_DELAY_MIN_MS, FILLER_DELAY_MAX_MS));
-      state.finalTimer = setTimeout(function(){
-        commitTurn('长时间沉默', false);
-      }, randomBetween(FINAL_SILENCE_MIN_MS, FINAL_SILENCE_MAX_MS));
-    }
-    function scheduleBufferWindowIfIdle(){
-      // 麦克风阵列环境音会让服务端 VAD 频繁误判"用户在说话"，导致 speech_started/committed
-      // 反复触发。如果倒计时已经在跑，说明我们已经在等一段"有效文字"，不要被噪音打断重置，
-      // 否则永远等不到反馈/兜底触发。只有当前没有任何倒计时在跑时才开始新一轮等待。
-      if (!state.fillerTimer && !state.finalTimer) scheduleBufferWindow();
-    }
     state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
-    state._scheduleBufferWindow = scheduleBufferWindowIfIdle;
-    state._restartBufferWindow = scheduleBufferWindow;
-    state._clearBufferTimers = function(){ clearFillerTimer(); clearFinalTimer(); };
     state._stopAiPlayback = stopAiPlayback;
 
     ws.onopen = function(){
@@ -590,17 +520,13 @@
     if (t === 'conversation.item.input_audio_transcription.completed') {
       var text = (msg.transcript || '').trim();
       if (text) {
-        // 识别到真正有效的文字 → 用户确实在说话，重新给一段完整的等待窗口
         appendBubble('user', text);
         state.lastUserText = text;
-        try { state._restartBufferWindow && state._restartBufferWindow(); } catch(e){}
-        // 关键词触发立即提交（防止用户说完了但还没到兜底时间）
+        // 关键词触发立即提交（VAD 自动 commit 后一般已经在生成回答了，这里作为兜底）
         if (/我说完了|说完了|讲完了|说完啦|讲完啦|就这样|就这样吧|先这样|先这样吧|先说这些|先说到这|就先这样|这样就行|这样就好|好了就这样|暂时就这样|over|done/i.test(text)) {
           try { state._commitTurn && state._commitTurn('关键词「说完了」'); } catch(e){}
         }
       }
-      // text 为空：说明这段被 VAD 切分出来的音频没有识别出任何有效文字（多半是麦克风阵列拾取的
-      // 环境噪音），不当作"用户还在说话"，不重置倒计时，让 scheduleBufferWindowIfIdle 继续计时。
       return;
     }
     // 服务端 VAD：用户开始/停止说话 → 同步 UI 渐弱动画
@@ -610,30 +536,22 @@
       if (state.aiSpeaking || state.activeAudioSources.length) {
         try { state._stopAiPlayback && state._stopAiPlayback(); } catch(e){}
       }
-      if (typeof clearFade === 'function') {} // no-op
       var el1 = document.querySelector('.live-wave'); if (el1) el1.classList.remove('fading');
-      // 注意：不在这里清除回声/兜底倒计时——麦克风阵列的环境音会让 VAD 频繁误判"开始说话"，
-      // 真正的重置只在收到有效识别文字（input_audio_transcription.completed 且非空）时才发生。
       setLiveStatus('听到你了，慢慢说…', true);
       return;
     }
     if (t === 'input_audio_buffer.speech_stopped') {
-      // 服务端检测到停顿：先别急着回应，给用户一个继续说下去的窗口
+      // 服务端 VAD 检测到停顿，正在切分这段音频
       var el2 = document.querySelector('.live-wave'); if (el2) el2.classList.add('fading');
-      setLiveStatus('正在等你继续…', true);
+      setLiveStatus('正在处理…', true);
       return;
     }
     if (t === 'input_audio_buffer.committed') {
+      // 服务端已设置 create_response=true，VAD 提交这段语音后上游会自动生成回复，
+      // 这里只需要同步 UI 状态，不用再手动请求一次，避免重复触发。
       var el3 = document.querySelector('.live-wave'); if (el3) el3.classList.remove('fading');
-      if (state.manualCommitPending) {
-        // 手动提交（"我说完了"关键词 / 长时间沉默兜底）→ 已在 commitTurn 里发出完整回答请求
-        state.manualCommitPending = false;
-        setLiveStatus('念念正在思考...', true);
-      } else {
-        // 服务端自动切分提交的一段音频，可能只是用户的短暂停顿，也可能是噪音误触发。
-        // 只有当前没有倒计时在跑时才开始新一轮等待，避免噪音反复把倒计时推后。
-        try { state._scheduleBufferWindow && state._scheduleBufferWindow(); } catch(e){}
-      }
+      state.manualCommitPending = false;
+      setLiveStatus('念念正在思考...', true);
       return;
     }
     if (t === 'response.audio_transcript.delta' && msg.delta) {
@@ -698,8 +616,7 @@
     if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
-    if (state._clearBufferTimers) { try { state._clearBufferTimers(); } catch(e){} }
-    state._commitTurn = null; state._scheduleBufferWindow = null; state._restartBufferWindow = null; state._clearBufferTimers = null; state._stopAiPlayback = null;
+    state._commitTurn = null; state._stopAiPlayback = null;
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; state.lastUserText = ''; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
