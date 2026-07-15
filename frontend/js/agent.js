@@ -428,8 +428,13 @@
     state.maxFillers = 2;                // 最多连续回声反馈次数，超过后直接给完整回答
     state.fillerTimer = null;           // 检测到停顿后，等一小段时间再决定是否回声
     state.finalTimer = null;            // 兜底：即使用户没说"我说完了"，沉默太久也要给完整回答
-    var FILLER_DELAY_MS = 1200;         // 停顿超过此时长 → 认为用户可能只是短暂停顿，回一句"嗯"
-    var FINAL_SILENCE_MS = 6000;        // 停顿超过此时长（且没再开口）→ 直接给完整回答，避免冷场
+    state.lastUserText = '';            // 最近一段用户转写文本，用于判断是否邀请点评
+    var FILLER_DELAY_MIN_MS = 4500;     // 停顿超过此区间下限（随机取值）→ 认为用户可能只是短暂停顿
+    var FILLER_DELAY_MAX_MS = 6000;     // 停顿超过此区间上限，回一句简短反馈
+    var FINAL_SILENCE_MS = 10000;       // 停顿超过此时长（且没再开口）→ 直接给完整回答，避免冷场
+    var INVITE_OPINION_RE = /你觉得呢|你说呢|你说.{0,3}是吧|你说对吧|你怎么看|你看呢|对不对|是不是|你说是不|你说好不好|你说好吗/i;
+    var FILLER_PHRASES = ['嗯', '然后呢', '然后？', '接着呢？', '我在听', '哦？'];
+    function randomBetween(min, max){ return min + Math.random() * (max - min); }
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
@@ -450,12 +455,25 @@
     }
     function sendFillerResponse(){
       state.fillerCount++;
-      setLiveStatus('念念先应一声，继续听你说…', true);
-      sendResponseCreate(
-        '用户可能话还没说完，只是短暂停顿。请只用一个非常简短的口头回应词回应，' +
-        '例如"嗯"、"然后呢"、"我在听"、"哦？"之类，不超过 6 个字。' +
-        '绝对不要开始正式回答、不要总结、不要提新问题，说完这一个词就停。'
-      );
+      var invited = state.lastUserText && INVITE_OPINION_RE.test(state.lastUserText);
+      if (invited) {
+        // 用户明确邀请点评/认同（"你觉得呢"/"你说是吧"之类）→ 给一句真诚的简短评价，而不是干巴巴的回声词
+        setLiveStatus('念念给你一点小小的回应…', true);
+        sendResponseCreate(
+          '用户刚才的话里在邀请你给出看法或认同（比如说了"你觉得呢/你说是吧"之类）。' +
+          '请像朋友随口聊天一样，用一句非常简短、真诚的口语化反应表达你的想法或认同，' +
+          '不超过 15 个字，说完就停，不要展开长篇分析，也不要再提新问题。'
+        );
+      } else {
+        // 默认：只是短暂停顿，随机挑一个简短的倾听词，避免每次都说同一句显得机械
+        var phrase = FILLER_PHRASES[Math.floor(Math.random() * FILLER_PHRASES.length)];
+        setLiveStatus('念念先应一声，继续听你说…', true);
+        sendResponseCreate(
+          '用户可能话还没说完，只是短暂停顿。请只用一个非常简短的口头回应词回应，' +
+          '就说"' + phrase + '"这个词（或换成同类的"嗯/然后呢/然后？/接着呢？/我在听/哦？"之一），不超过 6 个字。' +
+          '绝对不要开始正式回答、不要总结、不要评价、不要提新问题，说完这一个词就停。'
+        );
+      }
     }
     function commitTurn(reason, alsoCommitBuffer){
       if (state.committing) return;
@@ -477,13 +495,13 @@
     }
     function scheduleBufferWindow(){
       // 服务端已自动提交了一段用户语音（VAD 检测到短暂停顿），先不急着让 AI 长篇回应，
-      // 给用户一个继续说下去的窗口；超时后回声反馈，再超时后才给完整回答。
+      // 给用户一个继续说下去的窗口（4.5~6 秒随机，避免机械感）；超时后回声反馈，再超时后才给完整回答。
       clearFillerTimer(); clearFinalTimer();
       state.fillerTimer = setTimeout(function(){
         if (state.fillerCount < state.maxFillers) {
           sendFillerResponse();
         }
-      }, FILLER_DELAY_MS);
+      }, randomBetween(FILLER_DELAY_MIN_MS, FILLER_DELAY_MAX_MS));
       state.finalTimer = setTimeout(function(){
         commitTurn('长时间沉默', false);
       }, FINAL_SILENCE_MS);
@@ -545,9 +563,10 @@
     var t = msg.type || '';
     if (t === 'conversation.item.input_audio_transcription.completed' && msg.transcript) {
       appendBubble('user', msg.transcript);
+      state.lastUserText = msg.transcript;
       // 关键词触发立即提交（防止用户说完了但还没到 7 秒）
-      if (/我说完了|说完了|讲完了|over|done/i.test(msg.transcript)) {
-        try { state._commitTurn && state._commitTurn('关键词「我说完了」'); } catch(e){}
+      if (/我说完了|说完了|讲完了|说完啦|讲完啦|就这样|就这样吧|先这样|先这样吧|先说这些|先说到这|就先这样|这样就行|这样就好|好了就这样|暂时就这样|over|done/i.test(msg.transcript)) {
+        try { state._commitTurn && state._commitTurn('关键词「说完了」'); } catch(e){}
       }
       return;
     }
@@ -636,7 +655,7 @@
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
     if (state._clearBufferTimers) { try { state._clearBufferTimers(); } catch(e){} }
     state._commitTurn = null; state._scheduleBufferWindow = null; state._clearBufferTimers = null;
-    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; window.aiActiveVolume=0;
+    state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; state.lastUserText = ''; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
     cleanupLive();
