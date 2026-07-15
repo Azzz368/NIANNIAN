@@ -515,18 +515,27 @@ def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
         f"生成一幅电影感的追思纪念场景：{prompt}。"
         f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
     )
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": full_prompt},
+                {"type": "image_url", "image_url": {"url": public_url}},
+            ],
+        }
+    ]
+
+    # 优先用流式调用：302.ai 网关对该模型在 stream=false 时经常只返回占位符
+    # `![image]()`，图片数据只在流式分片里才会真正吐出。
+    b64, err = _call_gemini_image_stream(messages, "[image_ref]")
+    if b64:
+        return b64, None
+    _log_r.warning(f"[image_ref] 流式调用未取到图片（{err}），回退非流式调用...")
+
     try:
         resp = PRIMARY_CLIENT.chat.completions.create(
             model=IMAGE_REF_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": full_prompt},
-                        {"type": "image_url", "image_url": {"url": public_url}},
-                    ],
-                }
-            ],
+            messages=messages,
             stream=False,
         )
     except Exception as exc:
@@ -619,12 +628,35 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
     # 适用于 ![image]() 空URL 但图片实际在 message 的非标准字段中
     try:
         raw_dict = resp.model_dump() if hasattr(resp, "model_dump") else {}
+    except Exception:
+        raw_dict = {}
+    b64, err = _deep_scan_for_image(raw_dict, log_tag)
+    if b64:
+        return b64, None
+
+    # 真的只有文字
+    _log.warning(f"{log_tag} 模型返回纯文字，未找到图片：{str(content)[:120]}")
+    return None, f"gemini 返回文字而非图片：{str(content)[:80]}"
+
+
+def _deep_scan_for_image(raw_dict: dict, log_tag: str = "") -> tuple:
+    """
+    深扫任意 JSON 可序列化结构（非流式 resp.model_dump() 或流式 chunk 列表），
+    找藏在非标准字段里的图片数据。适用于 302.ai 网关把图片放在非标准位置的情况。
+    返回 (b64_string, None) 或 (None, error_msg)。
+    """
+    import re as _re
+    import json as _json
+    import logging as _log_ds
+    _log = _log_ds.getLogger("llm_client.deep_scan")
+
+    try:
         raw_str = _json.dumps(raw_dict, ensure_ascii=False)
 
         # E1: 找 data:image/...;base64, 开头的 base64 串
         data_url_hits = _re.findall(r'data:image/[^;]+;base64,([A-Za-z0-9+/=]{200,})', raw_str)
         for hit in data_url_hits:
-            _log.info(f"{log_tag} 格式E1：model_dump 中发现 data:image base64（长度={len(hit)}）")
+            _log.info(f"{log_tag} 格式E1：深扫中发现 data:image base64（长度={len(hit)}）")
             return hit, None
 
         # E2: 找 file.302.ai 或其他 CDN URL
@@ -636,7 +668,7 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
             if url in seen_e or '![image]' in url:
                 continue
             seen_e.add(url)
-            _log.info(f"{log_tag} 格式E2：model_dump 中发现 CDN URL {url[:60]}")
+            _log.info(f"{log_tag} 格式E2：深扫中发现 CDN URL {url[:60]}")
             b64 = _download_url_to_b64(url, log_tag)
             if b64:
                 return b64, None
@@ -672,11 +704,89 @@ def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
             return b64_hit, None
 
     except Exception as _e_scan:
-        _log.warning(f"{log_tag} model_dump 深扫出错：{_e_scan}")
+        _log.warning(f"{log_tag} 深扫出错：{_e_scan}")
 
-    # 真的只有文字
-    _log.warning(f"{log_tag} 模型返回纯文字，未找到图片：{str(content)[:120]}")
-    return None, f"gemini 返回文字而非图片：{str(content)[:80]}"
+    return None, "深扫未发现图片数据"
+
+
+def _call_gemini_image_stream(messages: list, log_tag: str = "") -> tuple:
+    """
+    流式调用 gemini-3-pro-image-preview（经 302.ai 网关）。
+    背景：302.ai 网关对该模型在 stream=false 时只返回占位符 `![image]()`，
+    图片数据实际生成了（usage.completion_tokens_details.image_tokens > 0），
+    但只会通过流式分片（SSE delta）逐步吐出，非流式聚合响应里会被丢弃。
+    因此改用 stream=True，累积所有分片的文本与原始 chunk，再复用既有的
+    markdown/裸URL/深扫解析逻辑提取图片。
+    返回 (b64_string, None) 或 (None, error_msg)。
+    """
+    import logging as _log_s
+    _log = _log_s.getLogger("llm_client.image_stream")
+
+    full_text = ""
+    raw_chunks = []
+    try:
+        stream = PRIMARY_CLIENT.chat.completions.create(
+            model=IMAGE_REF_MODEL,
+            messages=messages,
+            stream=True,
+        )
+        for chunk in stream:
+            try:
+                raw_chunks.append(chunk.model_dump() if hasattr(chunk, "model_dump") else {})
+            except Exception:
+                pass
+            try:
+                delta = chunk.choices[0].delta
+                piece = getattr(delta, "content", None)
+                if piece:
+                    full_text += piece
+            except Exception:
+                continue
+    except Exception as exc:
+        return None, f"{IMAGE_REF_MODEL} 流式调用失败：{exc}"
+
+    b64, err = _extract_image_from_string(full_text, log_tag)
+    if b64:
+        return b64, None
+
+    b64, err = _deep_scan_for_image({"stream_chunks": raw_chunks}, log_tag)
+    if b64:
+        return b64, None
+
+    _log.warning(f"{log_tag} 流式响应未找到图片：{full_text[:120]}")
+    return None, f"gemini 流式返回未包含图片：{full_text[:80]}"
+
+
+def _extract_image_from_string(content: str, log_tag: str = "") -> tuple:
+    """从字符串 content 中提取图片：markdown 图片链接 或 裸 HTTPS URL。"""
+    import re as _re
+    import logging as _log_es
+    _log = _log_es.getLogger("llm_client.extract_str")
+
+    if not content:
+        return None, "空内容"
+
+    md_matches = _re.findall(r'!\[.*?\]\((https?://[^\s)]+)\)', content)
+    for url in md_matches:
+        _log.info(f"{log_tag} markdown 图片链接 {url[:60]}")
+        b64 = _download_url_to_b64(url, log_tag)
+        if b64:
+            return b64, None
+
+    url_matches = _re.findall(r'https?://\S+\.(?:png|jpg|jpeg|webp|gif)(?:\?\S*)?', content, _re.IGNORECASE)
+    url_matches += _re.findall(r'https://file\.302\.ai/\S+', content)
+    seen = set()
+    for url in url_matches:
+        url = url.rstrip('.')
+        if url in seen:
+            continue
+        seen.add(url)
+        _log.info(f"{log_tag} 裸 URL {url[:60]}")
+        b64 = _download_url_to_b64(url, log_tag)
+        if b64:
+            return b64, None
+
+    return None, "字符串中未找到图片链接"
 
 
 def _download_url_to_b64(url: str, log_tag: str = "") -> Optional[str]:
@@ -721,10 +831,18 @@ def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tupl
         f"风格要求：电影质感、暖色调、16:9 构图、photorealistic, cinematic still, 8K。"
         f"请直接输出生成的图片。"
     )
+    messages = [{"role": "user", "content": full_prompt}]
+
+    # 优先流式调用（原因见 _call_gemini_image_stream 注释：非流式经常只拿到占位符）
+    b64, err = _call_gemini_image_stream(messages, "[image_noref]")
+    if b64:
+        return b64, None
+    _log_i.warning(f"[image_noref] 流式调用未取到图片（{err}），回退非流式调用...")
+
     try:
         resp = PRIMARY_CLIENT.chat.completions.create(
             model=IMAGE_REF_MODEL,
-            messages=[{"role": "user", "content": full_prompt}],
+            messages=messages,
             stream=False,
         )
     except Exception as exc:
