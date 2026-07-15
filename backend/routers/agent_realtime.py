@@ -2,6 +2,7 @@
 # v2: 注入 dossier+对话记忆, 关闭服务端 VAD, 断开时持久化对话+提取档案
 import os
 import json
+import random
 import asyncio
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -171,6 +172,9 @@ async def realtime_proxy(client_ws: WebSocket):
             ping_interval=20,
             ping_timeout=30,
         ) as upstream:
+            # 沉默兜底：每次连接随机取 1.5~3 秒静音阈值，避免每次都卡在同一个时间点，
+            # 到点即视为用户说完了，自动生成完整回答（不再需要"我说完了"之类的关键词）。
+            silence_ms = random.randint(1500, 3000)
             session_cfg = {
                 "event_id": "evt_nn_session_init",
                 "type": "session.update",
@@ -184,12 +188,12 @@ async def realtime_proxy(client_ws: WebSocket):
                     "output_audio_sample_rate": 24000,
                     "input_audio_transcription": {"model": "paraformer-realtime-v2", "language": "zh"},
                     # 只使用服务端 VAD 做音频切分：检测到用户停顿即自动提交这段语音并生成回复
-                    # （create_response=true），不做额外的客户端等待/回声缓冲。
+                    # （create_response=true），不做额外的客户端等待/回声缓冲/关键词触发。
                     "turn_detection": {
                         "type": "server_vad",
                         "threshold": 0.5,
                         "prefix_padding_ms": 300,
-                        "silence_duration_ms": 700,
+                        "silence_duration_ms": silence_ms,
                         "create_response": True,
                         "interrupt_response": True,
                     },

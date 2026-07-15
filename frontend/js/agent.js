@@ -420,12 +420,9 @@
     var ws = new WebSocket(wsUrl);
     state.ws = ws;
 
-    // ─── 停止检测 state（只用服务端 VAD 做音频切分：VAD 判定一段话说完 → 立即提交并
-    //      请求完整回答，不做额外的等待/回声反馈缓冲）─
-    state.committing = false;
-    state.fadeActive = false;
+    // ─── 停止检测 state（只用服务端 VAD 做音频切分：VAD 判定一段话说完（随机 1.5~3 秒静音）
+    //      → 立即提交并自动生成完整回答，不需要任何关键词，也不做额外的等待/回声反馈缓冲）─
     state.aiSpeaking = false; window.aiActiveVolume=0;
-    state.manualCommitPending = false;  // 是否正等待"我说完了/手动提交"触发的完整回答
     state.lastUserText = '';            // 最近一段用户转写文本
 
     function stopAiPlayback(){
@@ -443,27 +440,6 @@
     }
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
-    function startFade(){
-      if (state.fadeActive) return;
-      state.fadeActive = true;
-      var el = liveWaveEl(); if (el) el.classList.add('fading');
-    }
-    function clearFade(){
-      state.fadeActive = false;
-      var el = liveWaveEl(); if (el) el.classList.remove('fading');
-    }
-    function commitTurn(reason){
-      // 用户说了"我说完了"之类的关键词 → 提前把当前缓冲区提交，不用等 VAD 的 700ms 静音判定。
-      // 服务端已设置 create_response=true，提交后会自动生成回复，这里不用再手动请求一次。
-      if (state.committing) return;
-      state.committing = true;
-      state.manualCommitPending = true;
-      clearFade();
-      setLiveStatus('已提交（' + reason + '），念念正在思考...', true);
-      try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
-      setTimeout(function(){ state.committing = false; }, 1500);
-    }
-    state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
     state._stopAiPlayback = stopAiPlayback;
 
     ws.onopen = function(){
@@ -522,10 +498,6 @@
       if (text) {
         appendBubble('user', text);
         state.lastUserText = text;
-        // 关键词触发立即提交（VAD 自动 commit 后一般已经在生成回答了，这里作为兜底）
-        if (/我说完了|说完了|讲完了|说完啦|讲完啦|就这样|就这样吧|先这样|先这样吧|先说这些|先说到这|就先这样|这样就行|这样就好|好了就这样|暂时就这样|over|done/i.test(text)) {
-          try { state._commitTurn && state._commitTurn('关键词「说完了」'); } catch(e){}
-        }
       }
       return;
     }
@@ -548,9 +520,8 @@
     }
     if (t === 'input_audio_buffer.committed') {
       // 服务端已设置 create_response=true，VAD 提交这段语音后上游会自动生成回复，
-      // 这里只需要同步 UI 状态，不用再手动请求一次，避免重复触发。
+      // 这里只需要同步 UI 状态。
       var el3 = document.querySelector('.live-wave'); if (el3) el3.classList.remove('fading');
-      state.manualCommitPending = false;
       setLiveStatus('念念正在思考...', true);
       return;
     }
@@ -595,7 +566,7 @@
     }
     if (t === 'response.audio.done') {
       state.aiSpeaking = false;
-      setLiveStatus('请继续说话…（说完后说「我说完了」即可）', true);
+      setLiveStatus('请继续说话…', true);
       return;
     }
     if (t === 'session.created' || t === 'session.updated') { console.log('[ws]', t); return; }
@@ -616,7 +587,7 @@
     if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
-    state._commitTurn = null; state._stopAiPlayback = null;
+    state._stopAiPlayback = null;
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; state.lastUserText = ''; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
