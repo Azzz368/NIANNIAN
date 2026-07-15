@@ -886,49 +886,73 @@ _KLING_ACCESS_KEY_ID     = os.getenv("KLING_ACCESS_KEY_ID", "")
 _KLING_ACCESS_KEY_SECRET = os.getenv("KLING_ACCESS_KEY_SECRET", "")
 
 
+def _verify_image_url(url: str, log: Any) -> bool:
+    """校验一个图床 URL 真的能拿到图片二进制数据（Content-Type: image/*），
+    而不是一个 HTML 预览页——tmpfiles.org 目前的 /dl/ 直链已经会返回网页而非文件，
+    直接把这种 URL 交给可灵会报 "Image format is invalid"。"""
+    try:
+        r = _requests.get(url, timeout=15, stream=True)
+        ctype = (r.headers.get("Content-Type") or "").lower()
+        ok = r.status_code == 200 and ctype.startswith("image/")
+        if not ok:
+            log.warning(f"[upload] 校验失败：status={r.status_code} content-type={ctype}")
+        return ok
+    except Exception as e:
+        log.warning(f"[upload] 校验异常：{e}")
+        return False
+
+
 def _upload_image_to_public(img_bytes: bytes, ext: str = "png") -> Optional[str]:
     """
     将图片字节上传到图床，返回公开 HTTPS URL。
-    链路：tmpfiles.org（48h）→ litterbox.catbox.moe（1h）→ None
-    可灵官方 API image 字段只接受 HTTPS URL，不接受 base64。
+    链路：litterbox.catbox.moe（1h，稳定返回正确 Content-Type）→ tmpfiles.org（备用，
+    目前该服务的直链经常返回 HTML 预览页而非原始文件，已加校验兜底跳过）。
+    可灵官方 API image/first_frame 字段只接受能直接下载出图片二进制的 HTTPS URL。
     """
     import logging as _logging
     _log = _logging.getLogger("llm_client.upload")
+    mime = f"image/{ext}"
 
-    # ── 方案1: tmpfiles.org ──────────────────────────────────────────────────
+    # ── 方案1: litterbox.catbox.moe（1小时有效，Content-Type 正确）─────────
+    try:
+        r = _requests.post(
+            "https://litterbox.catbox.moe/resources/internals/api.php",
+            data={"reqtype": "fileupload", "time": "1h"},
+            files={"fileToUpload": (f"frame.{ext}", img_bytes, mime)},
+            timeout=30,
+        )
+        if r.status_code == 200 and r.text.strip().startswith("https://"):
+            url = r.text.strip()
+            if _verify_image_url(url, _log):
+                _log.info(f"[upload] litterbox 成功: {url}")
+                return url
+            _log.warning(f"[upload] litterbox 返回的 URL 未通过图片校验: {url}")
+        else:
+            _log.warning(f"[upload] litterbox 失败 status={r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        _log.warning(f"[upload] litterbox 异常: {e}")
+
+    # ── 方案2: tmpfiles.org（48h，备用；目前直链有时会返回 HTML 预览页）───
     try:
         r = _requests.post(
             "https://tmpfiles.org/api/v1/upload",
-            files={"file": (f"frame.{ext}", img_bytes, f"image/{ext}")},
+            files={"file": (f"frame.{ext}", img_bytes, mime)},
             timeout=30,
         )
         if r.status_code == 200:
             page_url = r.json().get("data", {}).get("url", "")
             if page_url:
                 direct_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-                _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
-                return direct_url
-        _log.warning(f"[upload] tmpfiles.org 失败 status={r.status_code}: {r.text[:200]}")
+                if _verify_image_url(direct_url, _log):
+                    _log.info(f"[upload] tmpfiles.org 成功: {direct_url}")
+                    return direct_url
+                _log.warning(f"[upload] tmpfiles.org 返回的 URL 未通过图片校验: {direct_url}")
+        else:
+            _log.warning(f"[upload] tmpfiles.org 失败 status={r.status_code}: {r.text[:200]}")
     except Exception as e:
         _log.warning(f"[upload] tmpfiles.org 异常: {e}")
 
-    # ── 方案2: litterbox.catbox.moe（1小时有效）─────────────────────────────
-    try:
-        r = _requests.post(
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-            data={"reqtype": "fileupload", "time": "1h"},
-            files={"fileToUpload": (f"frame.{ext}", img_bytes, f"image/{ext}")},
-            timeout=30,
-        )
-        if r.status_code == 200 and r.text.strip().startswith("https://"):
-            url = r.text.strip()
-            _log.info(f"[upload] litterbox 成功: {url}")
-            return url
-        _log.warning(f"[upload] litterbox 失败 status={r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        _log.warning(f"[upload] litterbox 异常: {e}")
-
-    _log.error("[upload] 所有图床均失败")
+    _log.error("[upload] 所有图床均失败或未通过图片格式校验")
     return None
 
 
