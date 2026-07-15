@@ -6,6 +6,7 @@ outputs/
 .DS_Store
 Thumbs.db
 302ai-skill/
+node_modules/
 
 # Backend runtime
 backend/*.log
