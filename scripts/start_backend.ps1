@@ -3,7 +3,7 @@
 #   .\start_backend.ps1
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Definition)
 Set-Location $root
 
 # 自动加载 .env（与 Streamlit 共用）
@@ -25,4 +25,8 @@ Write-Host "       健康检查：http://localhost:8000/api/health" -ForegroundC
 Write-Host ""
 
 Set-Location "$root\backend"
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+$python = Join-Path $root ".venv\Scripts\python.exe"
+if (-not (Test-Path $python)) {
+    $python = "python"
+}
+& $python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload

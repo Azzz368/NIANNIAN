@@ -3,9 +3,14 @@ services:
     name: niannian-memorial
     runtime: python
     rootDir: .
-    buildCommand: pip install -r backend/requirements.txt && python -m playwright install chromium
+    buildCommand: apt-get update && apt-get install -y ffmpeg && pip install -r backend/requirements.txt && python -m playwright install chromium
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      # ─── FFmpeg（分镜视频拼接功能依赖）───
+      # apt 安装后 ffmpeg 已在 PATH 中，一般无需手动设置；
+      # 若运行时找不到，可显式指定绝对路径（Render 官方 Python 镜像通常是 /usr/bin/ffmpeg）
+      - key: FFMPEG_PATH
+        value: /usr/bin/ffmpeg
       - key: AI302_API_KEY
         sync: false          # 在 Render 控制台手动填写，不写进代码
       - key: AI302_TEXT_MODEL

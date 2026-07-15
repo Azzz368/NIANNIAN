@@ -418,10 +418,18 @@
     var ws = new WebSocket(wsUrl);
     state.ws = ws;
 
-    // ─── 停止检测 state（服务端 VAD 已设为 7s 静音，这里只做 UI 渐弱提示 + 关键词快捷提交）─
+    // ─── 停止检测 state（服务端 VAD 只负责快速切分音频，不自动生成回复；
+    //      是否说话、说什么由客户端的"缓冲"逻辑决定，避免用户中途停顿就被 AI 打断）─
     state.committing = false;
     state.fadeActive = false;
     state.aiSpeaking = false; window.aiActiveVolume=0;
+    state.manualCommitPending = false;  // 是否正等待"我说完了/手动提交"触发的完整回答
+    state.fillerCount = 0;              // 本轮已发出的简短回声反馈次数（嗯/然后呢…）
+    state.maxFillers = 2;                // 最多连续回声反馈次数，超过后直接给完整回答
+    state.fillerTimer = null;           // 检测到停顿后，等一小段时间再决定是否回声
+    state.finalTimer = null;            // 兜底：即使用户没说"我说完了"，沉默太久也要给完整回答
+    var FILLER_DELAY_MS = 1200;         // 停顿超过此时长 → 认为用户可能只是短暂停顿，回一句"嗯"
+    var FINAL_SILENCE_MS = 6000;        // 停顿超过此时长（且没再开口）→ 直接给完整回答，避免冷场
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
@@ -433,16 +441,56 @@
       state.fadeActive = false;
       var el = liveWaveEl(); if (el) el.classList.remove('fading');
     }
-    function commitTurn(reason){
+    function clearFillerTimer(){ if (state.fillerTimer) { clearTimeout(state.fillerTimer); state.fillerTimer = null; } }
+    function clearFinalTimer(){ if (state.finalTimer) { clearTimeout(state.finalTimer); state.finalTimer = null; } }
+    function sendResponseCreate(instructionsOverride){
+      var resp = { modalities: ['audio','text'] };
+      if (instructionsOverride) resp.instructions = instructionsOverride;
+      try { ws.send(JSON.stringify({ type: 'response.create', response: resp })); } catch(e){}
+    }
+    function sendFillerResponse(){
+      state.fillerCount++;
+      setLiveStatus('念念先应一声，继续听你说…', true);
+      sendResponseCreate(
+        '用户可能话还没说完，只是短暂停顿。请只用一个非常简短的口头回应词回应，' +
+        '例如"嗯"、"然后呢"、"我在听"、"哦？"之类，不超过 6 个字。' +
+        '绝对不要开始正式回答、不要总结、不要提新问题，说完这一个词就停。'
+      );
+    }
+    function commitTurn(reason, alsoCommitBuffer){
       if (state.committing) return;
       state.committing = true;
-      clearFade();
+      state.manualCommitPending = true;
+      clearFade(); clearFillerTimer(); clearFinalTimer();
+      state.fillerCount = 0;
       setLiveStatus('已提交（' + reason + '），念念正在思考...', true);
-      try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
-      try { ws.send(JSON.stringify({ type: 'response.create', response: { modalities: ['audio','text'] } })); } catch(e){}
+      // alsoCommitBuffer=false 用于"长时间沉默"兜底：此时用户早已停止说话，
+      // 当前录音缓冲区通常已被服务端自动提交过（是空的），再提交一次可能报错，
+      // 所以只发 response.create，直接对已有的对话内容生成完整回答。
+      if (alsoCommitBuffer !== false) {
+        try { ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })); } catch(e){}
+      } else {
+        state.manualCommitPending = false;  // 没有发起真正的 commit，不必等待 committed 回调
+      }
+      sendResponseCreate();
       setTimeout(function(){ state.committing = false; }, 1500);
     }
+    function scheduleBufferWindow(){
+      // 服务端已自动提交了一段用户语音（VAD 检测到短暂停顿），先不急着让 AI 长篇回应，
+      // 给用户一个继续说下去的窗口；超时后回声反馈，再超时后才给完整回答。
+      clearFillerTimer(); clearFinalTimer();
+      state.fillerTimer = setTimeout(function(){
+        if (state.fillerCount < state.maxFillers) {
+          sendFillerResponse();
+        }
+      }, FILLER_DELAY_MS);
+      state.finalTimer = setTimeout(function(){
+        commitTurn('长时间沉默', false);
+      }, FINAL_SILENCE_MS);
+    }
     state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
+    state._scheduleBufferWindow = scheduleBufferWindow;
+    state._clearBufferTimers = function(){ clearFillerTimer(); clearFinalTimer(); };
 
     ws.onopen = function(){
       setLiveStatus('已连接，请开始说话…', true);
@@ -508,18 +556,27 @@
       state.aiSpeaking = false;
       if (typeof clearFade === 'function') {} // no-op
       var el1 = document.querySelector('.live-wave'); if (el1) el1.classList.remove('fading');
+      // 用户又开始说话了：说明上一次只是短暂停顿，取消回声反馈/兜底计时
+      try { state._clearBufferTimers && state._clearBufferTimers(); } catch(e){}
       setLiveStatus('听到你了，慢慢说…', true);
       return;
     }
     if (t === 'input_audio_buffer.speech_stopped') {
-      // 服务端检测到停顿，正在等 7 秒确认。给用户视觉反馈：音浪渐弱
+      // 服务端检测到停顿：先别急着回应，给用户一个继续说下去的窗口
       var el2 = document.querySelector('.live-wave'); if (el2) el2.classList.add('fading');
-      setLiveStatus('正在等你继续…（再停顿几秒就会发送）', true);
+      setLiveStatus('正在等你继续…', true);
       return;
     }
     if (t === 'input_audio_buffer.committed') {
       var el3 = document.querySelector('.live-wave'); if (el3) el3.classList.remove('fading');
-      setLiveStatus('念念正在思考...', true);
+      if (state.manualCommitPending) {
+        // 手动提交（"我说完了"关键词 / 长时间沉默兜底）→ 已在 commitTurn 里发出完整回答请求
+        state.manualCommitPending = false;
+        setLiveStatus('念念正在思考...', true);
+      } else {
+        // 服务端自动切分提交的一段音频，可能只是用户的短暂停顿，先进入缓冲等待窗口
+        try { state._scheduleBufferWindow && state._scheduleBufferWindow(); } catch(e){}
+      }
       return;
     }
     if (t === 'response.audio_transcript.delta' && msg.delta) {
@@ -558,7 +615,7 @@
     }
     if (t === 'response.audio.done') {
       state.aiSpeaking = false;
-      setLiveStatus('请继续说话…（说完后说「我说完了」或停顿 7 秒即可）', true);
+      setLiveStatus('请继续说话…（说完后说「我说完了」即可）', true);
       return;
     }
     if (t === 'session.created' || t === 'session.updated') { console.log('[ws]', t); return; }
@@ -577,6 +634,8 @@
     if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
+    if (state._clearBufferTimers) { try { state._clearBufferTimers(); } catch(e){} }
+    state._commitTurn = null; state._scheduleBufferWindow = null; state._clearBufferTimers = null;
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
