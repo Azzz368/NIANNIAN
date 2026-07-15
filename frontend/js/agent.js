@@ -429,9 +429,10 @@
     state.fillerTimer = null;           // 检测到停顿后，等一小段时间再决定是否回声
     state.finalTimer = null;            // 兜底：即使用户没说"我说完了"，沉默太久也要给完整回答
     state.lastUserText = '';            // 最近一段用户转写文本，用于判断是否邀请点评
-    var FILLER_DELAY_MIN_MS = 4500;     // 停顿超过此区间下限（随机取值）→ 认为用户可能只是短暂停顿
-    var FILLER_DELAY_MAX_MS = 6000;     // 停顿超过此区间上限，回一句简短反馈
-    var FINAL_SILENCE_MS = 10000;       // 停顿超过此时长（且没再开口）→ 直接给完整回答，避免冷场
+    var FILLER_DELAY_MIN_MS = 1500;     // 停顿超过此区间下限（随机取值）→ 认为用户可能只是短暂停顿
+    var FILLER_DELAY_MAX_MS = 2500;     // 停顿超过此区间上限，尽快回一句简短反馈，避免冷场太久
+    var FINAL_SILENCE_MIN_MS = 5000;    // 停顿超过此区间（随机取值，且没再开口）→ 直接给完整回答
+    var FINAL_SILENCE_MAX_MS = 8000;
     var INVITE_OPINION_RE = /你觉得呢|你说呢|你说.{0,3}是吧|你说对吧|你怎么看|你看呢|对不对|是不是|你说是不|你说好不好|你说好吗/i;
     var FILLER_PHRASES = ['嗯', '然后呢', '然后？', '接着呢？', '我在听', '哦？'];
     function randomBetween(min, max){ return min + Math.random() * (max - min); }
@@ -495,7 +496,8 @@
     }
     function scheduleBufferWindow(){
       // 服务端已自动提交了一段用户语音（VAD 检测到短暂停顿），先不急着让 AI 长篇回应，
-      // 给用户一个继续说下去的窗口（4.5~6 秒随机，避免机械感）；超时后回声反馈，再超时后才给完整回答。
+      // 给用户一个继续说下去的窗口（1.5~2.5 秒随机，尽快回应但不打断）；
+      // 超时后回声反馈，再等 5~8 秒（随机）仍无动静才给完整回答。
       clearFillerTimer(); clearFinalTimer();
       state.fillerTimer = setTimeout(function(){
         if (state.fillerCount < state.maxFillers) {
@@ -504,7 +506,7 @@
       }, randomBetween(FILLER_DELAY_MIN_MS, FILLER_DELAY_MAX_MS));
       state.finalTimer = setTimeout(function(){
         commitTurn('长时间沉默', false);
-      }, FINAL_SILENCE_MS);
+      }, randomBetween(FINAL_SILENCE_MIN_MS, FINAL_SILENCE_MAX_MS));
     }
     state._commitTurn = commitTurn;  // 暴露给 handleUpstreamEvent 关键词检测
     state._scheduleBufferWindow = scheduleBufferWindow;
