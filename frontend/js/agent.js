@@ -27,6 +27,7 @@
     procNode: null,
     playCtx: null,
     playTime: 0,
+    activeAudioSources: [],    // 当前正在播放/已排队的 AI 语音 AudioBufferSourceNode，用于被打断时立即停止
     liveAiBubble: null,
     liveAiText: '',
     liveUserBubble: null,
@@ -382,6 +383,7 @@
     var needResample = srcRate !== 16000;
     try { state.playCtx = new AudioCtx({ sampleRate: 24000 }); } catch(e) { state.playCtx = new AudioCtx(); }
     state.playTime = 0;
+    state.activeAudioSources = [];
 
     // AnalyserNode 实时跟踪 AI 输出音量（驱动光晕动效）
     try {
@@ -436,6 +438,20 @@
     var INVITE_OPINION_RE = /你觉得呢|你说呢|你说.{0,3}是吧|你说对吧|你怎么看|你看呢|对不对|是不是|你说是不|你说好不好|你说好吗/i;
     var FILLER_PHRASES = ['嗯', '然后呢', '然后？', '接着呢？', '我在听', '哦？'];
     function randomBetween(min, max){ return min + Math.random() * (max - min); }
+
+    function stopAiPlayback(){
+      // 用户一开口就立即打断 AI：停掉所有已排队/正在播放的语音片段，并让上游取消当前回答，
+      // 这样不需要按住/关闭麦克风按钮，效果跟真人对话中被打断一样自然。
+      state.activeAudioSources.forEach(function(src){
+        try { src.onended = null; src.stop(0); } catch(e){}
+      });
+      state.activeAudioSources.length = 0;
+      state.playTime = state.playCtx ? state.playCtx.currentTime : 0;
+      state.aiSpeaking = false; window.aiActiveVolume = 0;
+      if (state.liveAiText) state.history.push({ role:'assistant', content: state.liveAiText });
+      state.liveAiBubble = null; state.liveAiText = '';
+      try { ws.send(JSON.stringify({ type: 'response.cancel' })); } catch(e){}
+    }
 
     function liveWaveEl(){ return document.querySelector('.live-wave, #liveWave, .agent-live-wave'); }
     function startFade(){
@@ -518,6 +534,7 @@
     state._scheduleBufferWindow = scheduleBufferWindowIfIdle;
     state._restartBufferWindow = scheduleBufferWindow;
     state._clearBufferTimers = function(){ clearFillerTimer(); clearFinalTimer(); };
+    state._stopAiPlayback = stopAiPlayback;
 
     ws.onopen = function(){
       setLiveStatus('已连接，请开始说话…', true);
@@ -588,7 +605,11 @@
     }
     // 服务端 VAD：用户开始/停止说话 → 同步 UI 渐弱动画
     if (t === 'input_audio_buffer.speech_started') {
-      state.aiSpeaking = false;
+      // 用户一开口，不管手上有没有按住麦克风按钮，只要 AI 正在说话就立即打断它，
+      // 像真人对话一样：你说话，对方马上停下来听你说。
+      if (state.aiSpeaking || state.activeAudioSources.length) {
+        try { state._stopAiPlayback && state._stopAiPlayback(); } catch(e){}
+      }
       if (typeof clearFade === 'function') {} // no-op
       var el1 = document.querySelector('.live-wave'); if (el1) el1.classList.remove('fading');
       // 注意：不在这里清除回声/兜底倒计时——麦克风阵列的环境音会让 VAD 频繁误判"开始说话"，
@@ -643,6 +664,11 @@
         src.buffer = buf; src.connect(state.playAnalyser || state.playCtx.destination);
         var now = state.playCtx.currentTime;
         var startAt = Math.max(state.playTime, now + 0.02);
+        state.activeAudioSources.push(src);
+        src.onended = function(){
+          var idx = state.activeAudioSources.indexOf(src);
+          if (idx !== -1) state.activeAudioSources.splice(idx, 1);
+        };
         src.start(startAt);
         state.playTime = startAt + buf.duration;
       } catch(e) { console.warn('[play] failed', e); }
@@ -667,11 +693,13 @@
     if (state.micNode)  { try { state.micNode.disconnect();  } catch(e){} state.micNode  = null; }
     if (state.audioCtx) { try { state.audioCtx.close(); } catch(e){} state.audioCtx = null; }
     if (state._volRAF) { cancelAnimationFrame(state._volRAF); state._volRAF = null; }
+    state.activeAudioSources.forEach(function(src){ try { src.onended = null; src.stop(0); } catch(e){} });
+    state.activeAudioSources.length = 0;
     if (state.playAnalyser) { try { state.playAnalyser.disconnect(); } catch(e){} state.playAnalyser = null; }
     if (state.playCtx)  { try { state.playCtx.close();  } catch(e){} state.playCtx  = null; }
     if (state.ws) { try { state.ws.close(); } catch(e){} state.ws = null; }
     if (state._clearBufferTimers) { try { state._clearBufferTimers(); } catch(e){} }
-    state._commitTurn = null; state._scheduleBufferWindow = null; state._restartBufferWindow = null; state._clearBufferTimers = null;
+    state._commitTurn = null; state._scheduleBufferWindow = null; state._restartBufferWindow = null; state._clearBufferTimers = null; state._stopAiPlayback = null;
     state.liveAiBubble = null; state.liveAiText = ''; state.liveUserBubble = null; state.lastUserText = ''; window.aiActiveVolume=0;
   }
   function stopLiveMode(){
