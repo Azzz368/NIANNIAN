@@ -39,6 +39,11 @@ FINAL_DIR   = OUTPUTS_DIR / "final_cuts"
 for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
+# ── 【测试阶段临时限制】分镜数量上限 ──────────────────────────────────────
+# 每次生成视频耗时较长（Kling 单条约 3~6 分钟），测试阶段先限制分镜数量，
+# 避免一次跑太多耗费时间/额度。正式发布前把这个值改成 None（不限制）即可。
+TESTING_MAX_SCENES: Optional[int] = 3
+
 
 def indent_markdown_paragraphs(text: str, indent: str = "　　") -> str:
     """将 Markdown 文本中每个自然段首行前加上指定缩进。"""
@@ -191,6 +196,19 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
                 "status": "error", "duration_sec": elapsed, "error": result.get("message", "unknown")
             }
             return {"error": True, "step": mv_id, "message": result.get("message")}
+
+        # 【测试阶段临时限制】MV04 分镜生成后，把分镜数量截断到 TESTING_MAX_SCENES，
+        # 避免测试时一次生成太多图片/视频。正式发布前把 TESTING_MAX_SCENES 改为 None 即可恢复。
+        if mv_id == "MV04" and TESTING_MAX_SCENES is not None and isinstance(result, dict):
+            sc = result.get("scenes")
+            if isinstance(sc, list) and len(sc) > TESTING_MAX_SCENES:
+                result["scenes"] = sc[:TESTING_MAX_SCENES]
+            elif isinstance(sc, dict) and len(sc) > TESTING_MAX_SCENES:
+                keys = sorted(sc.keys())[:TESTING_MAX_SCENES]
+                result["scenes"] = {k: sc[k] for k in keys}
+            sb = result.get("storyboard")
+            if isinstance(sb, list) and len(sb) > TESTING_MAX_SCENES:
+                result["storyboard"] = sb[:TESTING_MAX_SCENES]
 
         s["mv_outputs"][mv_id] = result
         gate_manager.approve(gate, mv_id)
