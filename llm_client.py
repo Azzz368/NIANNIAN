@@ -61,9 +61,9 @@ AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 TOKENSTAR_BASE_URL     = os.getenv("TOKENSTAR_BASE_URL", "https://api.tokenstar.world").rstrip("/")
 TOKENSTAR_API_KEY      = os.getenv("TOKENSTAR_API_KEY", "")
 TOKENSTAR_IMAGE_MODEL  = os.getenv("TOKENSTAR_IMAGE_MODEL", "gpt-image-2")
-# TokenStar 文档明确列出方形 2048x2048 等常用尺寸；生成后统一中心裁剪为 16:9，
-# 因此不依赖未文档化的任意宽高参数，且输出始终适配影视制作台与后续图生视频。
-TOKENSTAR_IMAGE_SOURCE_SIZE = os.getenv("TOKENSTAR_IMAGE_SOURCE_SIZE", "2048x2048")
+# 影视制作台优先直接请求原生 16:9 画布；后处理仍会校验输出比例，
+# 以兼容网关回退为其他尺寸的情况。
+TOKENSTAR_IMAGE_SOURCE_SIZE = os.getenv("TOKENSTAR_IMAGE_SOURCE_SIZE", "2048x1152")
 
 # ── 图床（首帧图上传，用于 Kling 图生视频）──────────────────────────────────────
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "")
@@ -534,7 +534,9 @@ def _crop_image_b64_to_16_9(image_b64: str) -> tuple:
             target_height = (target_width * 9) // 16
 
         left = (width - target_width) // 2
-        top = (height - target_height) // 2
+        # 人像影视镜头通常将脸部放在上三分之一；相比居中裁剪，向上偏移可
+        # 保留头顶和面部，避免方形源图转 16:9 时先把人物头部裁掉。
+        top = int((height - target_height) * 0.20)
         cropped = image.crop((left, top, left + target_width, top + target_height))
         output = BytesIO()
         cropped.save(output, format="PNG", optimize=True)
@@ -563,11 +565,18 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
     if not TOKENSTAR_API_KEY:
         return None, "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 图片生成"
 
+    composition_rules = (
+        "构图为硬性要求：横向 16:9 电影中景或全景，主角完整头部、脸部、肩膀和关键动作"
+        "必须全部位于画面内；头顶至少保留 10% 的安全留白。主角位于画面中央或中央偏左的"
+        "安全区域，不能贴近任何边缘。禁止裁切头顶、脸部、手臂、手部或身体关键部位；"
+        "禁止极端特写、局部特写、人物出框。不要出现文字、横幅、标志、水印。"
+    )
     full_prompt = (
         "请严格遵循以下分镜描述，生成一幅电影感的追思纪念场景图片。"
         f"分镜描述：{prompt}。"
         "风格要求：16:9 横向电影构图，主体和关键动作保持在画面中央安全区域，"
         "电影质感、暖色调、photorealistic, cinematic still, 8K。"
+        f"{composition_rules}"
     )
     headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
 
