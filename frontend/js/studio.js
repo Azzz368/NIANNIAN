@@ -28,6 +28,15 @@ function setThink(on, label) {
   if (on && label) $('genThinkLabel').textContent = label;
 }
 
+function normalizeSceneMedia(sc) {
+  if (!sc || typeof sc !== 'object') return sc;
+  if (!sc._img_url && sc._image_data_url) sc._img_url = sc._image_data_url;
+  if (!sc._vid_url && sc._video_url) sc._vid_url = sc._video_url;
+  if (sc._img_url && !sc._img_status) sc._img_status = 'done';
+  if (sc._vid_url && !sc._vid_status) sc._vid_status = 'done';
+  return sc;
+}
+
 // ───── 角色档案展示（含照片选择槽）─────
 function renderCharSummary() {
   const box = $('charSummary');
@@ -284,7 +293,7 @@ async function genScenes() {
     else if (res.result.scenes && typeof res.result.scenes === 'object') {
       scenes = Object.keys(res.result.scenes).sort().map(k => res.result.scenes[k]);
     } else if (Array.isArray(res.result.storyboard)) scenes = res.result.storyboard;
-    state.scenes = scenes.filter(x => x && typeof x === 'object');
+    state.scenes = scenes.filter(x => x && typeof x === 'object').map(normalizeSceneMedia);
     setPill('MV04', 'done');
     setThink(false);
     hide('phaseGenScenes');
@@ -400,21 +409,24 @@ function renderRefPhotoBar() {
 }
 
 
-// ───── 最终合成 MV06 ─────
+// ───── 最终合成 MV06（调用服务端 FFmpeg 拼接）─────
 async function finalCut() {
   const btn = $('btnFinalCut');
   const old = btn.textContent;
   btn.disabled = true; btn.textContent = '合成中...';
   setPill('MV06', 'active');
   try {
-    const res = await apiPost(`/pipeline/run/MV06/${state.sid}`, {});
-    if (res.error) throw new Error(res.message || 'MV06 失败');
+    const generatedCount = state.scenes.filter(sc => sc._vid_url || sc._video_url).length;
+    if (!generatedCount) throw new Error('没有可合成的分镜视频，请先生成至少一段短视频');
+
+    const res = await apiPost(`/pipeline/final-cut/${state.sid}`, {});
+    if (res.error) throw new Error(res.message || '最终影像合成失败');
     setPill('MV06', 'done');
-    const url = (res.result && (res.result.final_video_url || res.result.url)) || '';
+    const url = res.url || res.final_video_url || '';
     $('finalOutput').innerHTML = url
       ? `<video controls style="width:100%;border-radius:10px;" src="${esc(url)}"></video>
          <div style="margin-top:8px;"><a class="btn btn-primary" href="${esc(url)}" download="niannian-memorial.mp4" target="_blank">下载完整影像</a></div>`
-      : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(res.result, null, 2))}</pre>`;
+      : `<pre style="background:var(--surf2);padding:10px;border-radius:8px;font-size:.78rem;overflow-x:auto;">${esc(JSON.stringify(res, null, 2))}</pre>`;
     show('phaseFinal');
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   } catch (e) {
@@ -444,8 +456,9 @@ async function bootstrap() {
   try {
     const r = await apiGet(`/pipeline/scenes/${state.sid}`);
     if (r.ready && Array.isArray(r.scenes) && r.scenes.length) {
-      state.scenes = r.scenes;
+      state.scenes = r.scenes.map(normalizeSceneMedia);
       setPill('MV04', 'done');
+      if (state.scenes.every(sc => sc._vid_url)) setPill('MV05', 'done');
       hide('phaseGenScenes');
       show('phaseScenes');
       renderScenes();
