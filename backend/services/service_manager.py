@@ -22,7 +22,7 @@ from llm_client import (  # type: ignore
     describe_image,
     transcribe_audio,
     build_scene_prompts,
-    generate_image_302,
+    generate_image_tokenstar,
     generate_video_302ai_i2v,
     generate_video_kling,
 )
@@ -792,7 +792,7 @@ def get_characters(sid: str) -> Dict[str, Any]:
 
 
 def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, Any]:
-    """为单个分镜生成图片。ref_b64 为参考图 base64（有则图生图用 gemini-3-pro-image-preview，否则纯文生图）。"""
+    """为单个分镜生成图片。首帧图统一使用 TokenStar gpt-image-2。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
     mv03 = s["mv_outputs"].get("MV03")
@@ -811,7 +811,7 @@ def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, An
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_302(image_prompt, reference_b64=ref_b64 or None)
+    b64, err = generate_image_tokenstar(image_prompt, reference_b64=ref_b64 or None)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
@@ -860,6 +860,14 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     if not url:
         return {"error": True, "message": f"视频未返回 URL：{res}"}
     scene["_video_url"] = url
+
+    # 逐镜接口不经过 run_pipeline_step；全部视频生成后主动完成 MV05 门控，
+    # 避免界面已完成渲染而服务端仍显示 pending。
+    if scenes and all(item.get("_video_url") for item in scenes):
+        gate_manager.approve(s["gate"], "MV05")
+        s["pipeline_state"]["MV05"] = {
+            "status": "approved", "duration_sec": None, "error": None,
+        }
     return {"url": url}
 
 
@@ -958,6 +966,10 @@ def merge_scene_videos(sid: str, scene_indices: Optional[List[int]] = None) -> D
             return {"error": True, "message": f"拼接失败：{proc.stderr[-500:]}"}
 
         s["final_cut_path"] = str(output_path)
+        gate_manager.approve(s["gate"], "MV06")
+        s["pipeline_state"]["MV06"] = {
+            "status": "approved", "duration_sec": None, "error": None,
+        }
         return {
             "url": f"/api/pipeline/final-cut/{sid}/file",
             "filename": output_name,

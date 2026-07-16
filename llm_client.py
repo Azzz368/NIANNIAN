@@ -55,6 +55,13 @@ IMAGE_REF_MODEL     = os.getenv("AI302_IMAGE_REF_MODEL",    "gemini-3-pro-image-
 VIDEO_GEN_MODEL     = os.getenv("AI302_VIDEO_GEN_MODEL",    "kling-v1-5-pro")
 AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 
+# ── TokenStar 图片生成（影视制作台首帧图专用）────────────────────────────────
+# 图片请求不复用 302.ai 网关：纯文生图走 /images/generations，
+# 有人物参考图时走 /images/edits，以便将参考照片作为编辑输入。
+TOKENSTAR_BASE_URL     = os.getenv("TOKENSTAR_BASE_URL", "https://api.tokenstar.world").rstrip("/")
+TOKENSTAR_API_KEY      = os.getenv("TOKENSTAR_API_KEY", "")
+TOKENSTAR_IMAGE_MODEL  = os.getenv("TOKENSTAR_IMAGE_MODEL", "gpt-image-2")
+
 # ── 图床（首帧图上传，用于 Kling 图生视频）──────────────────────────────────────
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "")
 
@@ -358,6 +365,25 @@ def build_scene_prompts(
       主角（逝者）始终从 ancestor_photo_url 传入，无需在 cast_roles 里重复。
     返回 {"image_prompt": "...", "video_prompt": "...", "_cast_ref": "...（供调用方记录）"}
     """
+    # `scene` 是会被前端原地补写的运行时对象，可能已经包含
+    # `_image_data_url`（完整图片 Base64）和 `_video_url` 等缓存字段。
+    # 绝不能直接 json.dumps(scene) 发送给 Prompt 模型，否则一次图片缓存就会
+    # 膨胀为数十万 token，并在后续“重新生成”时重复计费。
+    prompt_scene_fields = (
+        "scene_id", "id", "scene_ref", "time", "duration", "shot_type",
+        "description", "scene_desc", "visual", "voice_script", "narration",
+        "asset_type", "mj_prompt", "negative_prompt", "motion", "prompt_start",
+        "prompt_video",
+    )
+    prompt_scene: Dict[str, Any] = {}
+    for field in prompt_scene_fields:
+        value = scene.get(field)
+        if isinstance(value, str) and value.strip():
+            # 分镜文字正常远小于该上限；上限用于阻断异常长字段再次造成巨额请求。
+            prompt_scene[field] = value.strip()[:4000]
+        elif isinstance(value, (int, float, bool)):
+            prompt_scene[field] = value
+
     # ── 提取角色 DNA 描述 ──────────────────────────────────────────────────────
     dna_lines = []
     if character_bible:
@@ -422,7 +448,7 @@ def build_scene_prompts(
     )
 
     user_payload = {
-        "scene": scene,
+        "scene": prompt_scene,
         "主角角色DNA（必须锚定）": dna_text,
         "场景环境描述（融入背景）": scene_lib_desc or "（未提供场景描述）",
         "电影配角表（如场景涉及多人，需在prompt中标注）": cast_text,
@@ -485,64 +511,81 @@ def _generate_image_wavespeed(prompt: str, model: str) -> tuple:
         return None, str(exc)
 
 
-def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
-    """
-    有参考照片时的图生图：使用 gemini-3-pro-image-preview（由 AI302_IMAGE_REF_MODEL 控制）。
-    流程：
-      1. 将参考图 base64 → 上传图床 → 获取公开 HTTPS URL
-      2. 将 URL + Prompt 发给 gemini-3-pro-image-preview（302.ai 网关）
-      3. 解析响应中的 image 块，返回生成图 base64
-    返回 (b64_string, None) 成功；(None, error_message) 失败。
-    """
-    import logging as _log_ref
-    _log_r = _log_ref.getLogger("llm_client.image_ref")
-
-    # ── Step 1: 上传参考图到图床，获取公开 URL ──────────────────────────────
+def _tokenstar_image_b64(response: Any) -> tuple:
+    """读取 TokenStar gpt-image 响应的 data[0].b64_json。"""
     try:
-        ref_bytes = base64.b64decode(reference_b64)
-    except Exception as e:
-        return None, f"参考图 base64 解码失败：{e}"
+        payload = response.json()
+        image_b64 = payload.get("data", [{}])[0].get("b64_json", "")
+        if isinstance(image_b64, str) and image_b64:
+            return image_b64, None
+        return None, "TokenStar 未返回 data[0].b64_json"
+    except (ValueError, AttributeError, IndexError, TypeError) as exc:
+        return None, f"TokenStar 图片响应解析失败：{exc}"
 
-    _log_r.info("[image_ref] 上传参考图到图床...")
-    public_url = _upload_image_to_public(ref_bytes, "png")
-    if not public_url:
-        return None, "参考图上传图床失败，无法获取公开 URL"
-    _log_r.info(f"[image_ref] 图床上传成功：{public_url}")
 
-    # ── Step 2: 调用 gemini-3-pro-image-preview ─────────────────────────────
+def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -> tuple:
+    """影视制作台图片生成：使用 TokenStar `gpt-image-2`，不调用 302.ai。"""
+    import logging as _log_img
+
+    logger = _log_img.getLogger("llm_client.tokenstar_image")
+    if not TOKENSTAR_API_KEY:
+        return None, "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 图片生成"
+
     full_prompt = (
-        f"请严格保留参考图中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。"
-        f"生成一幅电影感的追思纪念场景：{prompt}。"
-        f"风格：电影质感、暖色调、16:9 构图。请直接输出生成的图片。"
+        "请严格遵循以下分镜描述，生成一幅电影感的追思纪念场景图片。"
+        f"分镜描述：{prompt}。"
+        "风格要求：电影质感、暖色调、16:9 电影构图、photorealistic, cinematic still, 8K。"
     )
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": full_prompt},
-                {"type": "image_url", "image_url": {"url": public_url}},
-            ],
-        }
-    ]
-
-    # 优先用流式调用：302.ai 网关对该模型在 stream=false 时经常只返回占位符
-    # `![image]()`，图片数据只在流式分片里才会真正吐出。
-    b64, err = _call_gemini_image_stream(messages, "[image_ref]")
-    if b64:
-        return b64, None
-    _log_r.warning(f"[image_ref] 流式调用未取到图片（{err}），回退非流式调用...")
+    headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
 
     try:
-        resp = PRIMARY_CLIENT.chat.completions.create(
-            model=IMAGE_REF_MODEL,
-            messages=messages,
-            stream=False,
-        )
-    except Exception as exc:
-        _log_r.warning(f"[image_ref] API 调用失败：{exc}")
-        return None, f"gemini-3-pro-image-preview 调用失败：{exc}"
+        if reference_b64:
+            try:
+                reference_bytes = base64.b64decode(reference_b64, validate=True)
+            except Exception as exc:
+                return None, f"参考图 base64 解码失败：{exc}"
 
-    return _parse_gemini_image_response(resp, "[image_ref]")
+            full_prompt = (
+                "严格保留上传参考照片中人物的面部特征、年龄、肤色和外貌，"
+                "将其作为画面主角。" + full_prompt
+            )
+            logger.info("[tokenstar_image] 调用 gpt-image-2 图像编辑接口")
+            response = _requests.post(
+                f"{TOKENSTAR_BASE_URL}/v1/images/edits",
+                headers=headers,
+                data={
+                    "model": TOKENSTAR_IMAGE_MODEL,
+                    "prompt": full_prompt,
+                    "n": "1",
+                    "output_format": "png",
+                },
+                files={"image": ("reference.png", reference_bytes, "image/png")},
+                timeout=180,
+            )
+        else:
+            logger.info("[tokenstar_image] 调用 gpt-image-2 文生图接口")
+            response = _requests.post(
+                f"{TOKENSTAR_BASE_URL}/v1/images/generations",
+                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "model": TOKENSTAR_IMAGE_MODEL,
+                    "prompt": full_prompt,
+                    "n": 1,
+                    "output_format": "png",
+                },
+                timeout=180,
+            )
+        response.raise_for_status()
+    except _requests.RequestException as exc:
+        response_text = getattr(getattr(exc, "response", None), "text", "")
+        return None, f"TokenStar 图片生成请求失败：{str(exc)} {response_text[:500]}"
+
+    return _tokenstar_image_b64(response)
+
+
+def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
+    """兼容旧调用名；实际委托 TokenStar gpt-image-2 图像编辑接口。"""
+    return generate_image_tokenstar(prompt, reference_b64=reference_b64)
 
 
 def _parse_gemini_image_response(resp, log_tag: str = "") -> tuple:
@@ -805,51 +848,8 @@ def _download_url_to_b64(url: str, log_tag: str = "") -> Optional[str]:
 
 
 def generate_image_302(prompt: str, reference_b64: Optional[str] = None) -> tuple:
-    """
-    生成图像主入口 —— 统一使用 gemini-3-pro-image-preview（IMAGE_REF_MODEL）。
-    · 有参考照片 → 上传图床获取 HTTPS URL，图文一起发给 gemini，保留人物形象
-    · 无参考照片 → 纯文本 prompt 发给 gemini，直接生成分镜图
-    返回 (b64_string, None) 成功；(None, error_message) 失败。
-    """
-    import logging as _log_img
-    import requests as _rq_img
-    _log_i = _log_img.getLogger("llm_client.image")
-
-    # ── 有参考照片：委托 generate_image_302_ref ──────────────────────────────
-    if reference_b64:
-        b64, err = generate_image_302_ref(prompt, reference_b64)
-        if b64:
-            _log_i.info("[image] gemini 图生图成功（有参考图）")
-            return b64, None
-        return None, err
-
-    # ── 无参考照片：纯文本生图，同样走 gemini-3-pro-image-preview ────────────
-    _log_i.info(f"[image] 调用 {IMAGE_REF_MODEL} 纯文本生图")
-    full_prompt = (
-        f"请严格遵循以下分镜描述，生成一幅电影感的追思纪念场景图片。"
-        f"分镜描述：{prompt}。"
-        f"风格要求：电影质感、暖色调、16:9 构图、photorealistic, cinematic still, 8K。"
-        f"请直接输出生成的图片。"
-    )
-    messages = [{"role": "user", "content": full_prompt}]
-
-    # 优先流式调用（原因见 _call_gemini_image_stream 注释：非流式经常只拿到占位符）
-    b64, err = _call_gemini_image_stream(messages, "[image_noref]")
-    if b64:
-        return b64, None
-    _log_i.warning(f"[image_noref] 流式调用未取到图片（{err}），回退非流式调用...")
-
-    try:
-        resp = PRIMARY_CLIENT.chat.completions.create(
-            model=IMAGE_REF_MODEL,
-            messages=messages,
-            stream=False,
-        )
-    except Exception as exc:
-        _log_i.warning(f"[image] {IMAGE_REF_MODEL} 调用失败：{exc}")
-        return None, str(exc)
-
-    return _parse_gemini_image_response(resp, "[image_noref]")
+    """兼容旧调用名；影视制作台图片生成已完全切换到 TokenStar。"""
+    return generate_image_tokenstar(prompt, reference_b64=reference_b64)
 
 
 # ── 视频生成（可灵官方 API，kling-v3，首帧模式）────────────────────────────
