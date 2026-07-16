@@ -61,6 +61,9 @@ AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 TOKENSTAR_BASE_URL     = os.getenv("TOKENSTAR_BASE_URL", "https://api.tokenstar.world").rstrip("/")
 TOKENSTAR_API_KEY      = os.getenv("TOKENSTAR_API_KEY", "")
 TOKENSTAR_IMAGE_MODEL  = os.getenv("TOKENSTAR_IMAGE_MODEL", "gpt-image-2")
+# TokenStar 文档明确列出方形 2048x2048 等常用尺寸；生成后统一中心裁剪为 16:9，
+# 因此不依赖未文档化的任意宽高参数，且输出始终适配影视制作台与后续图生视频。
+TOKENSTAR_IMAGE_SOURCE_SIZE = os.getenv("TOKENSTAR_IMAGE_SOURCE_SIZE", "2048x2048")
 
 # ── 图床（首帧图上传，用于 Kling 图生视频）──────────────────────────────────────
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "")
@@ -511,13 +514,42 @@ def _generate_image_wavespeed(prompt: str, model: str) -> tuple:
         return None, str(exc)
 
 
+def _crop_image_b64_to_16_9(image_b64: str) -> tuple:
+    """将 TokenStar 图片居中裁剪为精确 16:9，返回 PNG Base64。"""
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageOps
+
+        image = Image.open(BytesIO(base64.b64decode(image_b64)))
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        width, height = image.size
+        if width < 16 or height < 9:
+            return None, f"生成图片尺寸异常：{width}x{height}"
+
+        target_height = min(height, (width * 9) // 16)
+        target_width = (target_height * 16) // 9
+        if target_width > width:
+            target_width = width
+            target_height = (target_width * 9) // 16
+
+        left = (width - target_width) // 2
+        top = (height - target_height) // 2
+        cropped = image.crop((left, top, left + target_width, top + target_height))
+        output = BytesIO()
+        cropped.save(output, format="PNG", optimize=True)
+        return base64.b64encode(output.getvalue()).decode(), None
+    except Exception as exc:
+        return None, f"生成图片 16:9 裁剪失败：{exc}"
+
+
 def _tokenstar_image_b64(response: Any) -> tuple:
-    """读取 TokenStar gpt-image 响应的 data[0].b64_json。"""
+    """读取 TokenStar gpt-image 响应，并统一转换为精确 16:9 PNG。"""
     try:
         payload = response.json()
         image_b64 = payload.get("data", [{}])[0].get("b64_json", "")
         if isinstance(image_b64, str) and image_b64:
-            return image_b64, None
+            return _crop_image_b64_to_16_9(image_b64)
         return None, "TokenStar 未返回 data[0].b64_json"
     except (ValueError, AttributeError, IndexError, TypeError) as exc:
         return None, f"TokenStar 图片响应解析失败：{exc}"
@@ -534,7 +566,8 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
     full_prompt = (
         "请严格遵循以下分镜描述，生成一幅电影感的追思纪念场景图片。"
         f"分镜描述：{prompt}。"
-        "风格要求：电影质感、暖色调、16:9 电影构图、photorealistic, cinematic still, 8K。"
+        "风格要求：16:9 横向电影构图，主体和关键动作保持在画面中央安全区域，"
+        "电影质感、暖色调、photorealistic, cinematic still, 8K。"
     )
     headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
 
@@ -557,6 +590,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
                     "model": TOKENSTAR_IMAGE_MODEL,
                     "prompt": full_prompt,
                     "n": "1",
+                    "size": TOKENSTAR_IMAGE_SOURCE_SIZE,
                     "output_format": "png",
                 },
                 files={"image": ("reference.png", reference_bytes, "image/png")},
@@ -571,6 +605,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
                     "model": TOKENSTAR_IMAGE_MODEL,
                     "prompt": full_prompt,
                     "n": 1,
+                    "size": TOKENSTAR_IMAGE_SOURCE_SIZE,
                     "output_format": "png",
                 },
                 timeout=180,
