@@ -42,7 +42,7 @@ for _d in (OUTPUTS_DIR, UPLOADS_DIR, FINAL_DIR):
 # ── 【测试阶段临时限制】分镜数量上限 ──────────────────────────────────────
 # 每次生成视频耗时较长（Kling 单条约 3~6 分钟），测试阶段先限制分镜数量，
 # 避免一次跑太多耗费时间/额度。正式发布前把这个值改成 None（不限制）即可。
-TESTING_MAX_SCENES: Optional[int] = 3
+TESTING_MAX_SCENES: Optional[int] = 6
 
 
 def indent_markdown_paragraphs(text: str, indent: str = "　　") -> str:
