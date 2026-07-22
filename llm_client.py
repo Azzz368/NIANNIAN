@@ -1458,7 +1458,7 @@ def generate_video_tokenstar_i2v(
     duration: int = 5,
     mode: str = "std",
     aspect_ratio: str = "16:9",
-    sound: str = "off",
+    sound: str = "on",
     resolution: str = "1080p",
     poll: bool = True,
     max_wait: int = 600,
