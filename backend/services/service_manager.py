@@ -23,8 +23,7 @@ from llm_client import (  # type: ignore
     transcribe_audio,
     build_scene_prompts,
     generate_image_tokenstar,
-    generate_video_302ai_i2v,
-    generate_video_kling,
+    generate_video_tokenstar_i2v,
 )
 from skill_loader import load_skill  # type: ignore
 from core import storage as core_storage  # type: ignore
@@ -846,8 +845,8 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
-    # 调用可灵官方 API（含 302.ai 自动 fallback，与 archive/streamlit/pages/studio.py 完全一致）
-    res = generate_video_kling(
+    # 统一调用 TokenStar Kling 图生视频接口，不回退到 302.ai 或旧可灵官方接口。
+    res = generate_video_tokenstar_i2v(
         prompt=video_prompt,
         image_url=image_url,
         duration=5,

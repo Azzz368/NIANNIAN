@@ -4,8 +4,7 @@
   文本结构化分析（家属访谈 / MV01-06）: claude-sonnet-4-6  →（失败自动回退）→ gpt-5.4
   图像内容理解（describe_image）       : gemini-2.0-pro-image-preview
   图像生成（generate_image_302）        : gemini-2.0-pro-image-preview
-  视频生成（generate_video_kling）      : 优先可灵官方直连（kling-v3，首帧模式）
-                                         → 自动回退 302.ai（m2v_26_image2video_5s）
+    视频生成（generate_video_kling）      : TokenStar Kling 图生视频（首帧模式）
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
   AI302_API_KEY          = sk-xxxxxxxxxxxx       ← 必填，图文/视频 302.ai 备用均使用
@@ -14,8 +13,8 @@
   AI302_VISION_MODEL     = gemini-2.0-pro-image-preview
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
   AI302_AUDIO_MODEL      = whisper-1
-  KLING_ACCESS_KEY_ID    = （可灵官方 AccessKey ID，留空则自动走 302.ai 备用）
-  KLING_ACCESS_KEY_SECRET= （可灵官方 AccessKey Secret，留空则自动走 302.ai 备用）
+    TOKENSTAR_API_KEY      = TokenStar API 密钥（影视制作台图片与视频共用）
+    TOKENSTAR_KLING_MODEL  = kling-v3（可选）
   LOCAL_LLM_BASE_URL     =  （本地备用，可留空）
   LOCAL_LLM_MODEL        =
 """
@@ -1451,8 +1450,123 @@ def generate_video_kling(
             "source": "kling", "error": f"等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
 
-# 兼容旧调用名（studio.py 等地方仍用 generate_video_302）
-generate_video_302 = generate_video_kling
+def generate_video_tokenstar_i2v(
+    prompt: str,
+    image_url: Optional[str] = None,
+    image_tail_url: Optional[str] = None,
+    negative_prompt: str = "",
+    duration: int = 5,
+    mode: str = "std",
+    aspect_ratio: str = "16:9",
+    sound: str = "off",
+    resolution: str = "1080p",
+    poll: bool = True,
+    max_wait: int = 600,
+    element_list: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """通过 TokenStar 的 Kling ``/v1/videos/image2video`` 生成首帧视频。
+
+    TokenStar 当前接口要求顶层 ``image`` 字段，且不支持 ``aspect_ratio``。
+    ``element_list`` 仅接受已由 CreateAigcElement 创建并确认 Status=succeed 的
+    ``element_id``；本制作台暂未创建主体元素时不传该字段。
+    """
+    import logging as _logging
+
+    log_v = _logging.getLogger("llm_client.tokenstar_i2v")
+    if not TOKENSTAR_API_KEY:
+        return {"error": "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 图生视频", "source": "tokenstar"}
+    if not image_url:
+        return {"error": "图生视频必须提供首帧图片", "source": "tokenstar"}
+
+    public_image = _resolve_video_frame_image(image_url, log_v)
+    if not public_image or not public_image.startswith("https://"):
+        return {
+            "error": "首帧图片无法转换为 TokenStar 可下载的公开 HTTPS 地址",
+            "source": "tokenstar",
+        }
+
+    if image_tail_url:
+        log_v.warning("[tokenstar_i2v] 当前图生视频接口不支持尾帧图，已忽略 image_tail_url")
+    if negative_prompt:
+        log_v.info("[tokenstar_i2v] 当前接口未提供 negative_prompt 字段，已忽略")
+    if aspect_ratio != "16:9":
+        log_v.info("[tokenstar_i2v] image2video 不支持 aspect_ratio，已忽略")
+    if resolution != "1080p":
+        log_v.info("[tokenstar_i2v] image2video 当前请求不传 resolution，已忽略")
+
+    body: Dict[str, Any] = {
+        "model_name": os.getenv("TOKENSTAR_KLING_MODEL", "kling-v3"),
+        "image": public_image,
+        "prompt": prompt,
+        "duration": str(duration),
+        "mode": mode,
+        "sound": sound,
+    }
+    if element_list:
+        body["element_list"] = element_list
+
+    headers = {
+        "Authorization": f"Bearer {TOKENSTAR_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    submit_url = f"{TOKENSTAR_BASE_URL}/v1/videos/image2video"
+    try:
+        response = _requests.post(submit_url, headers=headers, json=body, timeout=60)
+        response_data = response.json()
+    except Exception as exc:
+        return {"error": f"TokenStar 图生视频请求异常：{exc}", "source": "tokenstar"}
+
+    if response.status_code >= 400 or response_data.get("code", 0) not in (0, None):
+        error = response_data.get("error", {}) if isinstance(response_data, dict) else {}
+        message = error.get("message") or response_data.get("message") or str(response_data)
+        return {"error": f"TokenStar 图生视频提交失败：{message}", "source": "tokenstar"}
+
+    task_data = response_data.get("data", {})
+    task_id = task_data.get("task_id") or task_data.get("id")
+    if not task_id:
+        return {"error": f"TokenStar 未返回 task_id：{response_data}", "source": "tokenstar"}
+    if not poll:
+        return {"task_id": task_id, "status": "submitted", "source": "tokenstar"}
+
+    poll_url = f"{TOKENSTAR_BASE_URL}/v1/videos/image2video/{task_id}"
+    elapsed, interval = 0, 10
+    while elapsed < max_wait:
+        time.sleep(interval)
+        elapsed += interval
+        try:
+            poll_response = _requests.get(poll_url, headers=headers, timeout=20)
+            poll_data = poll_response.json()
+        except Exception:
+            continue
+
+        if poll_response.status_code >= 400 or poll_data.get("code", 0) not in (0, None):
+            error = poll_data.get("error", {}) if isinstance(poll_data, dict) else {}
+            message = error.get("message") or poll_data.get("message") or str(poll_data)
+            return {"error": f"TokenStar 图生视频查询失败：{message}", "task_id": task_id, "source": "tokenstar"}
+
+        task_data = poll_data.get("data", {})
+        status = str(task_data.get("task_status") or task_data.get("status") or "").lower()
+        if status in ("succeed", "succeeded", "success", "done"):
+            videos = task_data.get("task_result", {}).get("videos", [])
+            video_url = videos[0].get("url", "") if videos and isinstance(videos[0], dict) else ""
+            if video_url:
+                return {"url": video_url, "task_id": task_id, "source": "tokenstar"}
+            return {"error": "TokenStar 任务成功但未返回视频 URL", "task_id": task_id, "source": "tokenstar"}
+        if status in ("failed", "failure", "fail"):
+            reason = task_data.get("task_status_msg") or task_data.get("message") or "未知原因"
+            return {"error": f"TokenStar 视频任务失败：{reason}", "task_id": task_id, "source": "tokenstar"}
+
+    return {
+        "error": f"TokenStar 图生视频等待超时（{max_wait}s）",
+        "task_id": task_id,
+        "status": "processing",
+        "source": "tokenstar",
+    }
+
+
+# 保留既有调用名，所有新请求统一改走 TokenStar 图生视频接口。
+generate_video_kling = generate_video_tokenstar_i2v
+generate_video_302 = generate_video_tokenstar_i2v
 
 
 
