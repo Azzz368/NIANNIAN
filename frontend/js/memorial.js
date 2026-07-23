@@ -16,6 +16,11 @@ const FIELD_IDS = [
   'speaker_name', 'speaker_relation', 'speaker_style',
 ];
 
+const CHAT_CONTEXT_FIELDS = [
+  'deceased_name', 'deceased_gender', 'birth_date', 'death_date', 'occupation',
+  'family_memory_text', 'last_wishes', 'speaker_name', 'speaker_relation', 'speaker_style',
+];
+
 function readForm() {
   const f = {};
   FIELD_IDS.forEach(k => {
@@ -40,6 +45,12 @@ function writeForm(data) {
     const r = document.querySelector(`input[name="gender"][value="${data.deceased_gender}"]`);
     if (r) r.checked = true;
   }
+}
+
+function hasChatContextChanged(previous, current) {
+  return CHAT_CONTEXT_FIELDS.some(key =>
+    String(previous[key] ?? '') !== String(current[key] ?? '')
+  );
 }
 
 // ───── 步骤导航 ─────
@@ -71,14 +82,17 @@ function showStep(n) {
 async function gotoStep2() {
   const f = readForm();
   if (!f.deceased_name) { toast('请先填写逝者姓名'); return; }
+  const resetChat = state.chatHistory.length > 0 && hasChatContextChanged(state.form, f);
   state.form = { ...state.form, ...f };
   try {
     const res = await apiPost('/intake/submit', {
       session_id: getSessionId() || null,
       form_data: state.form,
+      reset_chat: resetChat,
     });
     setSessionId(res.session_id);
     state.form = res.form_data;
+    if (resetChat) state.chatHistory = [];
     showStep(2);
   } catch (e) { toast('保存失败：' + e.message); }
 }
@@ -88,14 +102,17 @@ async function gotoStep3() {
   if (!f.family_memory_text || f.family_memory_text.length < 20) {
     toast('请填写家庭回忆与生平故事（至少 20 字）'); return;
   }
+  const resetChat = state.chatHistory.length > 0 && hasChatContextChanged(state.form, f);
   state.form = { ...state.form, ...f };
   try {
     const res = await apiPost('/intake/submit', {
       session_id: getSessionId(),
       form_data: state.form,
+      reset_chat: resetChat,
     });
     setSessionId(res.session_id);
     state.form = res.form_data;
+    if (resetChat) state.chatHistory = [];
     showStep(3);
     // 自动获取开场白
     await fetchGreeting();

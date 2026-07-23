@@ -98,7 +98,7 @@ def patch_form(sid: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         if s is None:
             raise KeyError(f"session not found: {sid}")
         for k, v in fields.items():
-            if v not in (None, ""):
+            if v is not None:
                 s["form_data"][k] = v
         s["updated_at"] = time.time()
         return s

@@ -15,6 +15,7 @@ router = APIRouter(prefix="/intake", tags=["intake"])
 class IntakeSubmit(BaseModel):
     session_id: Optional[str] = None
     form_data: Dict[str, Any] = {}
+    reset_chat: bool = False
 
 
 @router.post("/submit")
@@ -29,6 +30,8 @@ def submit(payload: IntakeSubmit) -> Dict[str, Any]:
     else:
         sid = session_store.create_session(payload.form_data)
         s = session_store.require(sid)
+    if payload.reset_chat:
+        s["chat_history"] = []
     return {
         "session_id": s["session_id"],
         "form_data":  s["form_data"],
