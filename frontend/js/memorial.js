@@ -217,21 +217,63 @@ async function startProduce() {
     if (!confirm('您还没有和念念充分对话，确定要直接开始制作吗？')) return;
   }
   // 跳转到前期确认台
-  window.location.href = 'pipeline.html';
+  const mid = state.form.memorial_id || (window.NianAuth && NianAuth.getActiveMemorialId()) || '';
+  window.location.href = mid ? `pipeline.html?mid=${encodeURIComponent(mid)}` : 'pipeline.html';
 }
 
 // ───── 文件上传 ─────
+function getActiveMemorialId() {
+  return window.NianAuth && NianAuth.isAuthed() ? NianAuth.getActiveMemorialId() : '';
+}
+
+async function persistReferencePhoto(asset, memorialId = '') {
+  state.form = {
+    ...state.form,
+    main_reference_asset_id: asset.asset_id || '',
+    main_reference_photo_url: asset.url || '',
+    memorial_id: memorialId || state.form.memorial_id || '',
+  };
+  const sid = getSessionId();
+  if (!sid) return;
+  const res = await apiPost('/intake/submit', { session_id: sid, form_data: state.form });
+  state.form = res.form_data;
+}
+
+async function uploadToMemorialLibrary(mid, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('description', '影视制作台上传的主角形象参考照片');
+  const res = await NianAuth.fetch(`/api/memorials/${encodeURIComponent(mid)}/upload`, {
+    method: 'POST', body: fd,
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 async function handleUpload(files) {
   const sid = getSessionId();
   if (!sid) { toast('请先填写基本信息'); return; }
   const list = document.getElementById('uploadList');
+  const memorialId = getActiveMemorialId();
   for (const f of files) {
-    const fd = new FormData();
-    fd.append('session_id', sid);
-    fd.append('period', 'default');
-    fd.append('file', f);
     try {
-      const res = await apiUpload('/assets/upload', fd);
+      let asset;
+      if (memorialId) {
+        const res = await uploadToMemorialLibrary(memorialId, f);
+        asset = res.asset;
+      } else {
+        const fd = new FormData();
+        fd.append('session_id', sid);
+        fd.append('period', 'default');
+        fd.append('file', f);
+        const res = await apiUpload('/assets/upload', fd);
+        asset = res.asset;
+      }
+
+      // 最新上传的图片自动成为主角参考图；在分镜制作台仍可随时更换。
+      if (f.type.startsWith('image/')) {
+        await persistReferencePhoto(asset, memorialId);
+      }
       if (f.type.startsWith('image/')) {
         const url = URL.createObjectURL(f);
         list.insertAdjacentHTML('beforeend', `<img class="upload-thumb" src="${url}" alt="">`);
@@ -240,7 +282,7 @@ async function handleUpload(files) {
       }
     } catch (e) { toast('上传失败：' + e.message); }
   }
-  toast('上传完成');
+  toast('上传完成，已设为主角参考图');
 }
 
 // ───── 启动时：尝试从已有 session 恢复 ─────
@@ -255,6 +297,8 @@ async function bootstrap() {
       state.chatHistory = res.chat_history || [];
     } catch { /* 过期则忽略 */ }
   }
+  const memorialId = getActiveMemorialId();
+  if (memorialId) state.form.memorial_id = memorialId;
   // 从资料库预填：若有 active memorial，将 dossier 数据填入空字段
   await prefillFromLibrary();
 }

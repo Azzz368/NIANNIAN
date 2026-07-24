@@ -3,7 +3,7 @@ const { apiGet, apiPost, getSessionId, toast, esc } = window.NN;
 
 const state = {
   sid:            getSessionId(),
-  mid:            new URLSearchParams(location.search).get('mid') || '',  // 来自素材库的 memorial_id
+  mid:            new URLSearchParams(location.search).get('mid') || (window.NianAuth && NianAuth.getActiveMemorialId()) || '',
   scenes:         [],
   chars:          null,
   mv04:           null,
@@ -58,6 +58,14 @@ function renderCharSummary() {
         <img src="${esc(dispUrl)}" alt="参考图">
       </div>
       <div class="char-ref-badge" style="color:var(--green);">✓ 已选参考图</div>`;
+  } else if (main.photo_url) {
+    const tok = localStorage.getItem('nian_token') || '';
+    const dispUrl = main.photo_url + (main.photo_url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+    photoHtml = `
+      <div class="char-photo-slot has-photo" id="mainPhotoSlot" title="点击更换参考照片">
+        <img src="${esc(dispUrl)}" alt="主角参考图">
+      </div>
+      <div class="char-ref-badge" style="color:var(--green);">✓ 主角参考图</div>`;
   } else if (hasLib) {
     photoHtml = `
       <div class="char-photo-slot" id="mainPhotoSlot" title="点击选择参考照片">
@@ -353,6 +361,29 @@ async function genSceneVideo(idx) {
 }
 
 // ───── 素材库照片加载 & 参考图选择 ─────
+function isImageAsset(asset) {
+  return asset.kind === 'image' || /^image\//i.test(asset.mime || '') ||
+    /\.(jpe?g|png|webp|gif)$/i.test(asset.filename || '');
+}
+
+async function selectPreferredReferencePhoto() {
+  if (state.refB64 || !state.libImages.length) return;
+  const preferredId = state.chars?.main?.reference_asset_id || '';
+  const preferredUrl = state.chars?.main?.photo_url || '';
+  const preferredIndex = state.libImages.findIndex(a =>
+    (preferredId && a.asset_id === preferredId) || (preferredUrl && a.url === preferredUrl)
+  );
+  await selectRefPhotoFromLib(preferredIndex >= 0 ? preferredIndex : 0);
+}
+
+function refreshReferencePhotoUi() {
+  renderCharSummary();
+  if (state.libImages.length) {
+    renderRefPhotoBar();
+    $('refPhotoBar').classList.remove('hidden');
+  }
+}
+
 async function loadLibraryAssets() {
   if (!state.mid) return;
   const tok = localStorage.getItem('nian_token') || '';
@@ -363,19 +394,28 @@ async function loadLibraryAssets() {
     });
     if (!res.ok) return;
     const d = await res.json();
-    state.libImages = (d.assets || []).filter(a => a.kind === 'image');
-    // 重新渲染角色档案（现在有照片列表了）
-    renderCharSummary();
-    if (state.libImages.length) {
-      renderRefPhotoBar();
-      $('refPhotoBar').classList.remove('hidden');
-      // 自动预选第一张照片
-      if (!state.refB64) {
-        await selectRefPhotoFromLib(0);
-      }
-    }
+    state.libImages = (d.assets || []).filter(isImageAsset);
+    refreshReferencePhotoUi();
+    await selectPreferredReferencePhoto();
   } catch(e) {
     console.warn('[studio] 加载素材库照片失败:', e);
+  }
+}
+
+async function loadSessionAssets() {
+  if (!state.sid) return;
+  try {
+    const res = await apiGet(`/assets/list/${state.sid}`);
+    const sessionImages = (res.assets || [])
+      .filter(isImageAsset)
+      .map((asset, index) => ({ ...asset, asset_id: asset.asset_id || `session-image-${index}` }));
+    if (!sessionImages.length) return;
+    const knownUrls = new Set(state.libImages.map(asset => asset.url));
+    state.libImages.push(...sessionImages.filter(asset => !knownUrls.has(asset.url)));
+    refreshReferencePhotoUi();
+    await selectPreferredReferencePhoto();
+  } catch(e) {
+    console.warn('[studio] 加载会话照片失败:', e);
   }
 }
 
@@ -467,6 +507,8 @@ async function bootstrap() {
 
   // 3. 加载素材库图片（若 URL 含 ?mid=）
   await loadLibraryAssets();
+  // 未登录上传的照片保存在会话中，也同样可作为 GPT Image 图生图参考。
+  await loadSessionAssets();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

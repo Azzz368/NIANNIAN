@@ -769,7 +769,8 @@ def get_characters(sid: str) -> Dict[str, Any]:
         "name": main_name,
         "role_label": f"主角 · 逝者（{form.get('speaker_relation','至亲')}）" if form.get("speaker_relation") else "主角 · 逝者",
         "description": "；".join(main_desc_parts) or "（暂无详细外貌描述）",
-        "photo_url": "",
+        "photo_url": form.get("main_reference_photo_url") or "",
+        "reference_asset_id": form.get("main_reference_asset_id") or "",
     }
 
     # 配角：优先 MV03 supporting_cast，其次 cast_roles

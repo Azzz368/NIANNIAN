@@ -3,6 +3,7 @@ const { apiGet, apiPost, getSessionId, toast, esc } = window.NN;
 
 const state = {
   sid: getSessionId(),
+  mid: new URLSearchParams(location.search).get('mid') || (window.NianAuth && NianAuth.getActiveMemorialId()) || '',
   scenes: [],
 };
 
@@ -106,6 +107,10 @@ async function bootstrap() {
     toast('会话已过期，请重新填写');
     setTimeout(() => location.href = 'memorial.html', 1500);
     return;
+  }
+  if (state.mid) {
+    const studioLink = document.getElementById('btnToStudio');
+    if (studioLink) studioLink.href = `studio.html?mid=${encodeURIComponent(state.mid)}`;
   }
   await loadPreview();
 }
