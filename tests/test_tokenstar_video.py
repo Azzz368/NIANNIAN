@@ -1,7 +1,18 @@
 import unittest
+import base64
+import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+BACKEND_DIR = ROOT_DIR / "backend"
+for path in (ROOT_DIR, BACKEND_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
 import llm_client
+from backend.services import service_manager
 
 
 def _response(status, payload, headers=None):
@@ -106,6 +117,36 @@ class TokenStarVideoTests(unittest.TestCase):
 
         self.assertEqual(result["task_id"], "task-2")
         self.assertIn("ImageDownloadError", result["error"])
+
+
+class PublicSceneFrameTests(unittest.TestCase):
+    def test_generated_frame_uses_public_https_service_url(self):
+        image_b64 = base64.b64encode(b"fake-png-bytes").decode("ascii")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(service_manager, "UPLOADS_DIR", Path(temp_dir)):
+                url = service_manager._public_scene_frame_url(
+                    "session-123",
+                    3,
+                    image_b64,
+                    public_base_url="https://nian.example/",
+                )
+                saved = list(Path(temp_dir).glob("*.png"))
+
+        self.assertTrue(url.startswith("https://nian.example/api/assets/file/"))
+        self.assertEqual(len(saved), 1)
+
+    def test_localhost_is_not_exposed_to_tokenstar(self):
+        image_b64 = base64.b64encode(b"fake-png-bytes").decode("ascii")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(service_manager, "UPLOADS_DIR", Path(temp_dir)):
+                url = service_manager._public_scene_frame_url(
+                    "session-123",
+                    0,
+                    image_b64,
+                    public_base_url="http://127.0.0.1:8000/",
+                )
+
+        self.assertEqual(url, "")
 
 
 if __name__ == "__main__":

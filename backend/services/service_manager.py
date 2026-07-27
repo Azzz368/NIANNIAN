@@ -791,7 +791,51 @@ def get_characters(sid: str) -> Dict[str, Any]:
     return {"main": main_role, "supporting": supporting}
 
 
-def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, Any]:
+def _public_scene_frame_url(
+    sid: str,
+    scene_idx: int,
+    image_b64: str,
+    public_base_url: str = "",
+) -> str:
+    """Persist a generated frame and return a safe public HTTPS URL when available."""
+    import base64 as _base64
+    import hashlib as _hashlib
+    import ipaddress as _ipaddress
+    from urllib.parse import quote as _quote, urlparse as _urlparse
+
+    base = (public_base_url or "").strip().rstrip("/")
+    try:
+        parsed = _urlparse(base)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not host or host == "localhost" or host.endswith(".local"):
+            return ""
+        try:
+            ip = _ipaddress.ip_address(host)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return ""
+        except ValueError:
+            pass
+
+        image_bytes = _base64.b64decode(image_b64, validate=True)
+        digest = _hashlib.sha256(image_bytes).hexdigest()[:16]
+        safe_sid = "".join(ch for ch in sid if ch.isalnum())[:40] or "session"
+        filename = f"{safe_sid}_scene_{scene_idx:03d}_{digest}.png"
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        frame_path = UPLOADS_DIR / filename
+        if not frame_path.exists():
+            frame_path.write_bytes(image_bytes)
+        return f"{base}/api/assets/file/{_quote(filename)}"
+    except Exception as exc:
+        print(f"[scene-frame] public frame cache failed: {exc}")
+        return ""
+
+
+def gen_scene_image(
+    sid: str,
+    scene_idx: int,
+    ref_b64: str = "",
+    public_base_url: str = "",
+) -> Dict[str, Any]:
     """为单个分镜生成图片。首帧图统一使用 TokenStar gpt-image-2。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
@@ -816,13 +860,26 @@ def gen_scene_image(sid: str, scene_idx: int, ref_b64: str = "") -> Dict[str, An
         return {"error": True, "message": err or "图片生成失败"}
 
     data_url = f"data:image/png;base64,{b64}"
+    public_url = _public_scene_frame_url(
+        sid,
+        scene_idx,
+        b64,
+        public_base_url=public_base_url,
+    )
     # 缓存到 scene
     scene["_image_data_url"] = data_url
     scene["_image_prompt"]   = image_prompt
-    return {"url": data_url}
+    if public_url:
+        scene["_image_public_url"] = public_url
+    return {"url": data_url, "public_url": public_url}
 
 
-def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, Any]:
+def gen_scene_video(
+    sid: str,
+    scene_idx: int,
+    image_url: str = "",
+    public_base_url: str = "",
+) -> Dict[str, Any]:
     """为单个分镜生成视频。image_url 可为 data URL 或 https URL。"""
     s = session_store.require(sid)
     mv04 = s["mv_outputs"].get("MV04")
@@ -832,7 +889,24 @@ def gen_scene_video(sid: str, scene_idx: int, image_url: str = "") -> Dict[str, 
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
-    image_url = image_url or scene.get("_image_data_url", "")
+    # 生产环境优先使用当前服务托管的稳定 HTTPS 首帧，避免依赖临时图床。
+    # 对于升级前已生成的 base64 首帧，在首次生成视频时补写公开缓存。
+    public_image_url = scene.get("_image_public_url", "")
+    raw_image_url = image_url or scene.get("_image_data_url", "")
+    if not public_image_url and isinstance(raw_image_url, str) and raw_image_url.startswith("data:"):
+        try:
+            image_b64 = raw_image_url.split(",", 1)[1]
+            public_image_url = _public_scene_frame_url(
+                sid,
+                scene_idx,
+                image_b64,
+                public_base_url=public_base_url,
+            )
+            if public_image_url:
+                scene["_image_public_url"] = public_image_url
+        except Exception:
+            public_image_url = ""
+    image_url = public_image_url or raw_image_url
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
 

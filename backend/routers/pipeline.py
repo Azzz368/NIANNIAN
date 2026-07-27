@@ -1,7 +1,8 @@
 # backend/routers/pipeline.py
 from typing import Any, Dict, Optional
+import os
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from services import service_manager as sm
@@ -66,14 +67,25 @@ def run_all(sid: str) -> Dict[str, Any]:
 
 
 @router.post("/scene/image/{sid}/{idx}")
-def scene_image(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+def scene_image(
+    request: Request,
+    sid: str,
+    idx: int,
+    payload: Optional[Dict[str, Any]] = Body(None),
+) -> Dict[str, Any]:
     """为单个分镜生成首帧图片（ref_b64 可选：传入参考图 base64 则启用图生图）"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
     ref_b64 = (payload or {}).get("ref_b64", "")
-    return sm.gen_scene_image(sid, idx, ref_b64=ref_b64)
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or str(request.base_url)
+    return sm.gen_scene_image(
+        sid,
+        idx,
+        ref_b64=ref_b64,
+        public_base_url=public_base_url,
+    )
 
 
 @router.get("/characters/{sid}")
@@ -98,14 +110,25 @@ def scenes(sid: str) -> Dict[str, Any]:
 
 
 @router.post("/scene/video/{sid}/{idx}")
-def scene_video(sid: str, idx: int, payload: Optional[Dict[str, Any]] = Body(None)) -> Dict[str, Any]:
+def scene_video(
+    request: Request,
+    sid: str,
+    idx: int,
+    payload: Optional[Dict[str, Any]] = Body(None),
+) -> Dict[str, Any]:
     """为单个分镜生成短视频（image_url 可为 data URL 或 https URL）"""
     try:
         session_store.require(sid)
     except KeyError:
         raise HTTPException(404, "session not found")
     image_url = (payload or {}).get("image_url", "")
-    return sm.gen_scene_video(sid, idx, image_url)
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip() or str(request.base_url)
+    return sm.gen_scene_video(
+        sid,
+        idx,
+        image_url,
+        public_base_url=public_base_url,
+    )
 
 
 @router.post("/final-cut/{sid}")

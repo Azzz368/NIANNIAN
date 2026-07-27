@@ -1567,7 +1567,11 @@ def generate_video_tokenstar_i2v(
     public_image = _resolve_video_frame_image(image_url, log_v)
     if not public_image or not public_image.startswith("https://"):
         return {
-            "error": "首帧图片无法转换为 TokenStar 可下载的公开 HTTPS 地址",
+            "error": (
+                "首帧图片无法转换为 TokenStar 可下载的公开 HTTPS 地址。"
+                "生产环境请设置 PUBLIC_BASE_URL 为当前服务公网域名；"
+                "本地 localhost 测试请配置 HTTPS 隧道地址。"
+            ),
             "source": "tokenstar",
         }
 
