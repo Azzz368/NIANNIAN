@@ -23,6 +23,20 @@ services:
         value: whisper-1
       - key: AI302_VISION_MODEL
         value: gemini-2.5-flash
+      # ─── TokenStar（分镜首帧图 + Kling 图生视频）───
+      - key: TOKENSTAR_API_KEY
+        sync: false
+      - key: TOKENSTAR_BASE_URL
+        value: https://api.tokenstar.world
+      - key: TOKENSTAR_IMAGE_MODEL
+        value: gpt-image-2
+      - key: TOKENSTAR_IMAGE_SOURCE_SIZE
+        value: 2048x1152
+      - key: TOKENSTAR_KLING_MODEL
+        value: kling-v3
+      # 默认启用 Kling 音频生成。
+      - key: TOKENSTAR_KLING_SOUND
+        value: "on"
       # ─── DashScope 通义千问（联网搜索功能专用）───
       # 在 Render 控制台填入你的阿里云 DashScope API Key（以 sk- 开头）
       # 国内用户不填 DASHSCOPE_REGION；海外用户填 intl

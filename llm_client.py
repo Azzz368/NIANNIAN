@@ -28,8 +28,11 @@ import requests as _requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# 始终加载项目根目录的 .env（无论从哪个子目录启动 uvicorn）
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+# 始终加载项目根目录配置（无论从哪个子目录启动 uvicorn）。
+# .env.local 用于本机密钥并覆盖 .env；生产环境仍可直接注入进程环境变量。
+_ENV_ROOT = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(dotenv_path=os.path.join(_ENV_ROOT, ".env"))
+load_dotenv(dotenv_path=os.path.join(_ENV_ROOT, ".env.local"), override=True)
 
 # ── 302.ai 网关 ───────────────────────────────────────────────────────────────
 _302_BASE_URL = "https://api.302.ai/v1"
@@ -1450,6 +1453,89 @@ def generate_video_kling(
             "source": "kling", "error": f"等待超时（{max_wait}s），可手动查询 task_id={task_id}"}
 
 
+def _tokenstar_url(path: str) -> str:
+    """Build a TokenStar URL while accepting either gateway root or ``.../v1`` config."""
+    base = TOKENSTAR_BASE_URL.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    return f"{base}/{path.lstrip('/')}"
+
+
+def _tokenstar_response_failed(http_status: int, payload: Any) -> bool:
+    """TokenStar success responses vary slightly between gateway modules."""
+    if http_status >= 400 or not isinstance(payload, dict):
+        return True
+    if payload.get("error"):
+        return True
+    code = payload.get("code")
+    return code not in (None, 0, "0", 200, "200", "ok", "OK", "success", "SUCCESS")
+
+
+def _tokenstar_error_detail(payload: Any, http_status: int = 0, request_id: str = "") -> str:
+    """Return actionable TokenStar error details without exposing request credentials."""
+    if not isinstance(payload, dict):
+        return f"HTTP {http_status}" if http_status else "响应格式异常"
+
+    error = payload.get("error")
+    code = ""
+    param = ""
+    message = ""
+    if isinstance(error, dict):
+        code = str(error.get("code") or "")
+        param = str(error.get("param") or "")
+        message = str(error.get("message") or "")
+    elif error:
+        message = str(error)
+
+    code = code or str(payload.get("code") or "")
+    param = param or str(payload.get("param") or "")
+    message = message or str(payload.get("message") or payload.get("detail") or "")
+    request_id = request_id or str(
+        payload.get("requestId") or payload.get("request_id") or payload.get("trace_id") or ""
+    )
+
+    parts = []
+    if http_status:
+        parts.append(f"HTTP {http_status}")
+    if code and code not in ("0", "200"):
+        parts.append(f"code={code}")
+    if param:
+        parts.append(f"param={param}")
+    if message:
+        parts.append(message)
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    return "；".join(parts) or "TokenStar 返回未知错误"
+
+
+def _tokenstar_request_id(response: Any) -> str:
+    headers = getattr(response, "headers", {}) or {}
+    return str(
+        headers.get("requestId")
+        or headers.get("x-request-id")
+        or headers.get("x-requestid")
+        or ""
+    )
+
+
+def _tokenstar_video_result_url(task_data: Any) -> str:
+    if not isinstance(task_data, dict):
+        return ""
+    result = task_data.get("task_result") or task_data.get("result") or {}
+    if isinstance(result, dict):
+        videos = result.get("videos") or result.get("video_list") or []
+        if isinstance(videos, list):
+            for video in videos:
+                if isinstance(video, dict):
+                    url = video.get("url") or video.get("video_url")
+                    if isinstance(url, str) and url.startswith("http"):
+                        return url
+        url = result.get("url") or result.get("video_url")
+        if isinstance(url, str) and url.startswith("http"):
+            return url
+    return _find_video_url_in(task_data) or ""
+
+
 def generate_video_tokenstar_i2v(
     prompt: str,
     image_url: Optional[str] = None,
@@ -1458,7 +1544,7 @@ def generate_video_tokenstar_i2v(
     duration: int = 5,
     mode: str = "std",
     aspect_ratio: str = "16:9",
-    sound: str = "on",
+    sound: Optional[str] = None,
     resolution: str = "1080p",
     poll: bool = True,
     max_wait: int = 600,
@@ -1494,13 +1580,29 @@ def generate_video_tokenstar_i2v(
     if resolution != "1080p":
         log_v.info("[tokenstar_i2v] image2video 当前请求不传 resolution，已忽略")
 
+    sound_value = (
+        sound if sound is not None else os.getenv("TOKENSTAR_KLING_SOUND", "on")
+    ).strip().lower()
+    if sound_value not in ("on", "off"):
+        return {
+            "error": "TOKENSTAR_KLING_SOUND 只能是 on 或 off",
+            "source": "tokenstar",
+        }
+
+    model_name = os.getenv("TOKENSTAR_KLING_MODEL", "kling-v3").strip() or "kling-v3"
+    if model_name not in ("kling-v2-6", "kling-v3"):
+        return {
+            "error": f"TokenStar 图生视频不支持模型 {model_name}，请使用 kling-v2-6 或 kling-v3",
+            "source": "tokenstar",
+        }
+
     body: Dict[str, Any] = {
-        "model_name": os.getenv("TOKENSTAR_KLING_MODEL", "kling-v3"),
+        "model_name": model_name,
         "image": public_image,
         "prompt": prompt,
         "duration": str(duration),
         "mode": mode,
-        "sound": sound,
+        "sound": sound_value,
     }
     if element_list:
         body["element_list"] = element_list
@@ -1509,51 +1611,75 @@ def generate_video_tokenstar_i2v(
         "Authorization": f"Bearer {TOKENSTAR_API_KEY}",
         "Content-Type": "application/json",
     }
-    submit_url = f"{TOKENSTAR_BASE_URL}/v1/videos/image2video"
+    submit_url = _tokenstar_url("/v1/videos/image2video")
     try:
         response = _requests.post(submit_url, headers=headers, json=body, timeout=60)
-        response_data = response.json()
-    except Exception as exc:
+    except _requests.RequestException as exc:
         return {"error": f"TokenStar 图生视频请求异常：{exc}", "source": "tokenstar"}
+    try:
+        response_data = response.json()
+    except (ValueError, TypeError):
+        return {
+            "error": (
+                f"TokenStar 图生视频提交返回非 JSON：HTTP {response.status_code} "
+                f"{getattr(response, 'text', '')[:300]}"
+            ),
+            "source": "tokenstar",
+        }
 
-    if response.status_code >= 400 or response_data.get("code", 0) not in (0, None):
-        error = response_data.get("error", {}) if isinstance(response_data, dict) else {}
-        message = error.get("message") or response_data.get("message") or str(response_data)
-        return {"error": f"TokenStar 图生视频提交失败：{message}", "source": "tokenstar"}
+    if _tokenstar_response_failed(response.status_code, response_data):
+        detail = _tokenstar_error_detail(
+            response_data, response.status_code, _tokenstar_request_id(response)
+        )
+        return {"error": f"TokenStar 图生视频提交失败：{detail}", "source": "tokenstar"}
 
-    task_data = response_data.get("data", {})
+    task_data = response_data.get("data", {}) if isinstance(response_data, dict) else {}
     task_id = task_data.get("task_id") or task_data.get("id")
     if not task_id:
         return {"error": f"TokenStar 未返回 task_id：{response_data}", "source": "tokenstar"}
     if not poll:
         return {"task_id": task_id, "status": "submitted", "source": "tokenstar"}
 
-    poll_url = f"{TOKENSTAR_BASE_URL}/v1/videos/image2video/{task_id}"
-    elapsed, interval = 0, 10
+    poll_url = _tokenstar_url(f"/v1/videos/image2video/{task_id}")
+    elapsed, interval = 0, 15
     while elapsed < max_wait:
         time.sleep(interval)
         elapsed += interval
         try:
             poll_response = _requests.get(poll_url, headers=headers, timeout=20)
             poll_data = poll_response.json()
-        except Exception:
+        except (_requests.RequestException, ValueError, TypeError):
             continue
 
-        if poll_response.status_code >= 400 or poll_data.get("code", 0) not in (0, None):
-            error = poll_data.get("error", {}) if isinstance(poll_data, dict) else {}
-            message = error.get("message") or poll_data.get("message") or str(poll_data)
-            return {"error": f"TokenStar 图生视频查询失败：{message}", "task_id": task_id, "source": "tokenstar"}
+        if _tokenstar_response_failed(poll_response.status_code, poll_data):
+            # 查询是幂等操作。限流和暂时性上游错误继续轮询，避免把仍在执行的
+            # 昂贵视频任务误报为失败。
+            if poll_response.status_code == 429 or poll_response.status_code >= 500:
+                continue
+            detail = _tokenstar_error_detail(
+                poll_data, poll_response.status_code, _tokenstar_request_id(poll_response)
+            )
+            return {
+                "error": f"TokenStar 图生视频查询失败：{detail}",
+                "task_id": task_id,
+                "source": "tokenstar",
+            }
 
-        task_data = poll_data.get("data", {})
-        status = str(task_data.get("task_status") or task_data.get("status") or "").lower()
+        task_data = poll_data.get("data", {}) if isinstance(poll_data, dict) else {}
+        status = str(
+            task_data.get("task_status") or task_data.get("status") or ""
+        ).strip().lower()
         if status in ("succeed", "succeeded", "success", "done"):
-            videos = task_data.get("task_result", {}).get("videos", [])
-            video_url = videos[0].get("url", "") if videos and isinstance(videos[0], dict) else ""
+            video_url = _tokenstar_video_result_url(task_data)
             if video_url:
                 return {"url": video_url, "task_id": task_id, "source": "tokenstar"}
             return {"error": "TokenStar 任务成功但未返回视频 URL", "task_id": task_id, "source": "tokenstar"}
         if status in ("failed", "failure", "fail"):
-            reason = task_data.get("task_status_msg") or task_data.get("message") or "未知原因"
+            reason = (
+                task_data.get("task_status_msg")
+                or task_data.get("message")
+                or _tokenstar_error_detail(task_data)
+            )
             return {"error": f"TokenStar 视频任务失败：{reason}", "task_id": task_id, "source": "tokenstar"}
 
     return {
