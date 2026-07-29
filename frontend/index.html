@@ -384,6 +384,11 @@
         <div class="pcard-title">念念日记 · 留住此刻</div>
         <div class="pcard-body">上传今日的照片，写下想对 Ta 说的话与生活片段，让思念被温柔地记录下来。</div>
       </div>
+      <div class="premium-card pcard-link pcard-avatar" data-href="avatar.html" style="cursor:pointer" title="点击进入：可灵官方数字人测试">
+        <div class="pcard-icon">数</div>
+        <div class="pcard-title">数字人 · 生成测试</div>
+        <div class="pcard-body">上传人物参考图与音频，调用可灵官方数字人接口生成可说话的测试视频。</div>
+      </div>
     </div>
 
 
@@ -762,7 +767,7 @@
 
 <script>
 
-// 念/影/存/传/记 卡片点击导航
+// 念/影/存/传/记/数 卡片点击导航
 
 document.querySelectorAll('.pcard-link').forEach(function(el) {
 
@@ -799,6 +804,9 @@ document.querySelectorAll('.pcard-link').forEach(function(el) {
   transform: scale(0.96);
 
 }
+
+.pcard-avatar { grid-column: 2 / span 2; }
+@media (max-width: 1000px) { .pcard-avatar { grid-column: auto; } }
 
 </style>
 

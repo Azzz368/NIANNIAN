@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>念念 · 数字人生成测试</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .avatar-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:22px;align-items:start;}
+  .avatar-file{border:1px dashed var(--border-h);border-radius:12px;background:var(--surf2);padding:14px;display:block;cursor:pointer;transition:.2s;}
+  .avatar-file:hover{border-color:var(--gold);background:var(--gold-dim);}
+  .avatar-file input{display:none;}
+  .avatar-file-title{font-size:.9rem;color:var(--ink);font-weight:600;}
+  .avatar-file-hint{font-size:.75rem;color:var(--muted-l);line-height:1.6;margin-top:4px;}
+  .avatar-picked{margin-top:8px;font-size:.78rem;color:var(--green);min-height:1.2em;}
+  .avatar-preview{width:100%;max-height:300px;object-fit:contain;background:#16130f;border-radius:12px;display:none;}
+  .avatar-preview.show{display:block;}
+  .avatar-status{border-radius:12px;padding:14px 16px;background:var(--surf2);border:1px solid var(--border);font-size:.86rem;line-height:1.7;color:var(--ink-m);}
+  .avatar-status.error{border-color:rgba(190,76,66,.35);background:rgba(190,76,66,.06);color:var(--red);}
+  .avatar-status.ok{border-color:rgba(90,154,114,.35);background:rgba(90,154,114,.07);color:var(--green);}
+  .avatar-meta{margin-top:10px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.76rem;color:var(--muted-l);word-break:break-all;}
+  .avatar-video{margin-top:14px;width:100%;max-height:520px;border-radius:12px;background:#111;display:none;}
+  .avatar-video.show{display:block;}
+  .avatar-note{font-size:.78rem;color:var(--muted-l);line-height:1.7;margin:0;}
+  @media(max-width:820px){.avatar-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="topbar-orb">数</div>
+      <div>
+        <div class="topbar-name">数字人生成测试</div>
+        <div class="topbar-sub">Kling Official Avatar API</div>
+      </div>
+    </div>
+    <a class="btn btn-ghost" href="index.html">返回主页</a>
+  </div>
+
+  <div class="card" style="margin-bottom:20px;">
+    <div class="section-label">官方可灵数字人 · 图片驱动口型</div>
+    <p class="avatar-note">上传一张人物参考图和一段音频。服务端会以原始 Base64 调用可灵官方 <code>/v1/videos/avatar/image2video</code>，密钥仅保存在服务端环境变量中。</p>
+    <div id="configHint" class="avatar-status" style="margin-top:12px;">正在检查服务配置…</div>
+  </div>
+
+  <div class="avatar-grid">
+    <section class="card">
+      <div class="section-label">创建数字人任务</div>
+      <label class="avatar-file">
+        <div class="avatar-file-title">1 · 人物参考图</div>
+        <div class="avatar-file-hint">JPG / JPEG / PNG，不超过 10MB；宽高均至少 300px，比例介于 1:2.5 至 2.5:1。</div>
+        <input id="avatarImage" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png">
+      </label>
+      <div id="imagePicked" class="avatar-picked"></div>
+
+      <label class="avatar-file" style="margin-top:14px;">
+        <div class="avatar-file-title">2 · 驱动音频</div>
+        <div class="avatar-file-hint">MP3 / WAV / M4A / AAC，不超过 5MB；官方要求音频时长在 2–300 秒。</div>
+        <input id="avatarAudio" type="file" accept="audio/mpeg,audio/wav,audio/x-m4a,audio/aac,.mp3,.wav,.m4a,.aac">
+      </label>
+      <div id="audioPicked" class="avatar-picked"></div>
+
+      <div class="field" style="margin-top:16px;">
+        <label for="avatarPrompt">动作 / 表情 / 运镜提示词（选填）</label>
+        <textarea id="avatarPrompt" rows="5" maxlength="2500" placeholder="例：自然面向镜头讲话，表情温和，轻微点头和手势，镜头稳定，背景保持不变。"></textarea>
+      </div>
+      <div class="form-grid" style="margin-top:10px;">
+        <div class="field">
+          <label for="avatarMode">生成模式</label>
+          <select id="avatarMode"><option value="std">std · 标准</option><option value="pro">pro · 高品质</option></select>
+        </div>
+        <div class="field" style="justify-content:end;">
+          <label style="margin-top:25px;display:flex;align-items:center;gap:8px;cursor:pointer;"><input id="avatarWatermark" type="checkbox"> 同时生成水印版本</label>
+        </div>
+      </div>
+      <p class="avatar-note" style="margin-top:14px;">请仅上传已获授权的人像与声音素材。可灵生成结果通常会在官方侧保留有限时间，请及时下载。</p>
+      <button id="btnCreateAvatar" class="btn btn-primary btn-block" style="margin-top:16px;" type="button">创建数字人视频</button>
+    </section>
+
+    <aside class="card">
+      <div class="section-label">任务与预览</div>
+      <img id="imagePreview" class="avatar-preview" alt="人物参考图预览">
+      <div id="avatarStatus" class="avatar-status">请选择图片与音频后创建任务。</div>
+      <div id="avatarTaskMeta" class="avatar-meta"></div>
+      <video id="avatarVideo" class="avatar-video" controls playsinline></video>
+      <div id="avatarDownload" style="margin-top:10px;"></div>
+    </aside>
+  </div>
+</div>
+<script src="js/api.js"></script>
+<script src="js/avatar.js"></script>
+</body>
+</html>

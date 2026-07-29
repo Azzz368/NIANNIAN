@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary, memory
+from routers import assets, avatar, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary, memory
 from core import oss_sync, storage as _storage  # noqa: F401
 
 app = FastAPI(
@@ -32,7 +32,13 @@ def _nian_bootstrap():
     data_dir = _s.DATA_DIR
     print(f"[storage] DATA_DIR = {data_dir}")
     print(f"[storage] NIAN_DATA_DIR env = {os.environ.get('NIAN_DATA_DIR', '(unset)')}")
-    print(f"[storage] DATA_DIR exists = {data_dir.exists()}, is mount = {data_dir.is_mount() if hasattr(data_dir, 'is_mount') else 'n/a'}")
+    try:
+        # pathlib.Path.is_mount() exists on Windows but raises NotImplementedError.
+        # The value is diagnostic only and must never block application startup.
+        is_mount = data_dir.is_mount()
+    except NotImplementedError:
+        is_mount = False
+    print(f"[storage] DATA_DIR exists = {data_dir.exists()}, is mount = {is_mount}")
 
     # 1) OSS 镜像拉回（最强保险）
     try:
@@ -64,8 +70,9 @@ def _nian_bootstrap():
             except Exception:
                 prev = 0
             if prev > 0 and len(users) == 0:
-                print(f"⚠️⚠️⚠️ [DATA LOSS DETECTED] 上次启动有 {prev} 个用户，本次为 0！")
-                print(f"⚠️ 请立刻检查 Render Disk 挂载状态和 OSS 配置")
+                # Keep startup logs ASCII-safe for Windows consoles using GBK.
+                print(f"[DATA LOSS DETECTED] 上次启动有 {prev} 个用户，本次为 0！")
+                print("[DATA LOSS DETECTED] 请立刻检查 Render Disk 挂载状态和 OSS 配置")
                 # 写一个看得到的报警文件
                 (data_dir / "DATA_LOSS_WARNING.txt").write_text(
                     f"启动时检测到数据丢失！上次={prev} 当前=0\nDATA_DIR={data_dir}\nNIAN_DATA_DIR={os.environ.get('NIAN_DATA_DIR','')}",
@@ -135,6 +142,7 @@ app.include_router(admin.router,    prefix="/api")
 app.include_router(biography.router, prefix="/api")
 app.include_router(diary.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
+app.include_router(avatar.router, prefix="/api")
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"
@@ -166,6 +174,10 @@ if _FRONTEND.exists():
     @app.get("/studio")
     def page_studio():
         return RedirectResponse(url="/static/studio.html", status_code=307)
+
+    @app.get("/avatar")
+    def page_avatar():
+        return RedirectResponse(url="/static/avatar.html", status_code=307)
 
     @app.get("/login")
     def page_login():

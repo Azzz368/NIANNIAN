@@ -57,12 +57,14 @@ services:
       # 不设置自定义路径，让 build 和 runtime 都使用默认路径 /opt/render/.cache/ms-playwright
       # - key: PLAYWRIGHT_BROWSERS_PATH
       #   value: /opt/render/project/src/.playwright-browsers
-      # ─── 可灵官方视频生成 API（新版，Bearer API Key）───
-      # 在 Render 控制台填入从可灵官方控制台生成的 API Key；留空则自动 fallback 到 302.ai
+      # ─── 可灵官方视频生成 / 数字人 API（Bearer API Key）───
+      # 在 Render 控制台填入从可灵官方控制台生成的 API Key；数字人测试页必须配置。
       - key: KLING_API_KEY
         sync: false
       - key: KLING_MODEL_NAME
         value: kling-3.0-turbo
+      - key: KLING_AVATAR_BASE_URL
+        value: https://api-beijing.klingai.com
       # ─── 阿里云 OSS 持久化（推荐：彻底解决 Render 重启丢数据）───
       # 详见 OSS_SETUP.md。设为 1 启用；不填则继续用本地 Disk
       - key: OSS_ENABLE

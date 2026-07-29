@@ -50,10 +50,16 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 ROOT_DIR = BACKEND_DIR.parent
 
-# 优先使用环境变量 NIAN_DATA_DIR（Render Disk 挂载点 /var/data）
-# 本地开发不设该变量时自动回退到项目根 data/
+# 优先使用环境变量 NIAN_DATA_DIR（Render Disk 挂载点 /var/data）。
+# 在 Windows 本地开发时，若误沿用了 Render 的 Linux 挂载点，Path("/var/data")
+# 会变成不可写的 ``\\var\\data``，因此安全回退到项目根 data/。
 _env_data_dir = os.environ.get("NIAN_DATA_DIR", "").strip()
-DATA_DIR = Path(_env_data_dir) if _env_data_dir else ROOT_DIR / "data"
+_is_render_linux_path = _env_data_dir.replace("\\", "/").rstrip("/") == "/var/data"
+if os.name == "nt" and _is_render_linux_path:
+    print("[storage] Windows 本地开发忽略 NIAN_DATA_DIR=/var/data，使用项目 data/ 目录")
+    DATA_DIR = ROOT_DIR / "data"
+else:
+    DATA_DIR = Path(_env_data_dir) if _env_data_dir else ROOT_DIR / "data"
 
 USERS_INDEX = DATA_DIR / "users.json"
 
