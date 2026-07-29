@@ -1,7 +1,7 @@
 // frontend/js/avatar.js — 可灵官方数字人测试页
 (function () {
   const { apiGet, apiPost, esc } = window.NN;
-  const state = { image: '', audio: '', taskId: '', timer: null, terminal: false };
+  const state = { image: '', audio: '', taskId: '', timer: null, terminal: false, sheetImage: '' };
   const $ = id => document.getElementById(id);
 
   function setStatus(message, kind) {
@@ -29,6 +29,36 @@
       reader.onerror = () => reject(new Error('文件读取失败'));
       reader.readAsDataURL(file);
     });
+  }
+
+  function setSheetStatus(message, kind) {
+    const el = $('sheetStatus');
+    el.textContent = message;
+    el.className = `avatar-status${kind ? ` ${kind}` : ''}`;
+  }
+
+  async function generateCharacterSheet() {
+    if (!state.sheetImage) {
+      setSheetStatus('请先选择人物参考图。', 'error');
+      return;
+    }
+    const button = $('btnGenerateSheet');
+    button.disabled = true;
+    $('sheetPreview').classList.remove('show');
+    $('sheetDownload').innerHTML = '';
+    setSheetStatus('正在通过 TokenStar Gemini 3 Pro 生成真人三视图与表情九宫格，请稍候…');
+    try {
+      const result = await apiPost('/avatar/character-sheet', { image: state.sheetImage });
+      if (!result.image_data_url) throw new Error('未返回图片结果');
+      $('sheetPreview').src = result.image_data_url;
+      $('sheetPreview').classList.add('show');
+      $('sheetDownload').innerHTML = `<a class="btn btn-primary" href="${esc(result.image_data_url)}" download="character-sheet.png">下载角色设定图</a>`;
+      setSheetStatus(`已生成（${result.model || 'Gemini 3 Pro'}）。`, 'ok');
+    } catch (error) {
+      setSheetStatus(`生成失败：${error.message || error}`, 'error');
+    } finally {
+      button.disabled = false;
+    }
   }
 
   function setVideo(url, watermarkUrl) {
@@ -145,7 +175,22 @@
     }
   });
 
+  $('sheetImage').addEventListener('change', async event => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    try {
+      state.sheetImage = await rawBase64(file, 10 * 1024 * 1024);
+      $('sheetPicked').textContent = `已选择：${file.name}`;
+      setSheetStatus('参考图已就绪，可开始生成。');
+    } catch (error) {
+      state.sheetImage = '';
+      $('sheetPicked').textContent = error.message || String(error);
+      setSheetStatus(error.message || String(error), 'error');
+    }
+  });
+
   $('btnCreateAvatar').addEventListener('click', createTask);
+  $('btnGenerateSheet').addEventListener('click', generateCharacterSheet);
   window.addEventListener('beforeunload', stopPolling);
   checkConfig();
 })();

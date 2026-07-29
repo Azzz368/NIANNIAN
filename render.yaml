@@ -30,6 +30,9 @@ services:
         value: https://api.tokenstar.world
       - key: TOKENSTAR_IMAGE_MODEL
         value: gpt-image-2
+      # “数”模块：真人三视图 + 表情九宫格（Gemini 3 Pro 图像模型）
+      - key: TOKENSTAR_CHARACTER_SHEET_MODEL
+        value: gemini-3-pro-image-preview
       - key: TOKENSTAR_IMAGE_SOURCE_SIZE
         value: 2048x1152
       - key: TOKENSTAR_KLING_MODEL
