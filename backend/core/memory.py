@@ -21,6 +21,7 @@ except Exception:
     OpenAI = None  # type: ignore
 
 from . import storage
+from .dashscope_config import compatible_base_url
 
 
 MEMORY_KEYWORDS = (
@@ -44,7 +45,7 @@ def _client():
         return None
     return OpenAI(
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=compatible_base_url(),
     )
 
 

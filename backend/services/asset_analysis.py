@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 
 from openai import OpenAI
 
+from core.dashscope_config import compatible_base_url
 from . import asset_vision
 from .material_context import VIDEO_USES
 
@@ -24,7 +25,7 @@ MAX_TEXT_CHARS = 20000
 def _client() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("DASHSCOPE_API_KEY", ""),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=compatible_base_url(),
     )
 
 

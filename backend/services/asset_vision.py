@@ -15,6 +15,8 @@ from typing import Any, Dict, Iterable, List
 from openai import OpenAI
 from PIL import Image, ImageOps
 
+from core.dashscope_config import compatible_base_url
+
 
 VISION_MODEL = os.getenv("NIAN_ASSET_VISION_MODEL", "qwen-vl-plus")
 RERANK_MODEL = os.getenv("NIAN_ASSET_RERANK_MODEL", "qwen-plus")
@@ -29,7 +31,7 @@ def configured() -> bool:
 def _client() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("DASHSCOPE_API_KEY", ""),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=compatible_base_url(),
     )
 
 

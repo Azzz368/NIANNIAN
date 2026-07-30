@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from core import security, storage
 from core import memory as memory_mod
+from core.dashscope_config import compatible_base_url
 from services import asset_vision, material_context
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -51,7 +52,7 @@ SYSTEM_PROMPT = """你是「念念」，一个温柔、细腻、有同理心的�
 def get_client() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=compatible_base_url(),
     )
 
 
@@ -561,7 +562,7 @@ async def agent_asr(audio: UploadFile = File(...)):
     api_key = os.getenv("DASHSCOPE_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=500, detail="DASHSCOPE_API_KEY 未配置")
-    client = OpenAI(api_key=api_key, base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+    client = OpenAI(api_key=api_key, base_url=compatible_base_url())
     audio_bytes = await audio.read()
     filename = audio.filename or "audio.webm"
     try:

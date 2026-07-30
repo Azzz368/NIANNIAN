@@ -8,6 +8,8 @@ outputs/
 Thumbs.db
 302ai-skill/
 node_modules/
+/.venv/
+/.pytest_cache/
 
 # Backend runtime
 backend/*.log
@@ -16,9 +18,7 @@ backend/outputs/final_cuts/*
 !backend/outputs/uploads/.gitkeep
 !backend/outputs/final_cuts/.gitkeep
 
-# 念念数据 - 仅同步 owner 数据；其它用户数据本地保留，不上传
-/data/users/*
-!/data/users/owner/
-/data/users.json
-/data/memory/
-/data/_backups/*.zip
+# 念念运行数据包含人物档案、对话、原始素材和备份。
+# 仅保存在本机或服务器持久化磁盘，禁止提交到 Git。
+/data/**
+!/data/.gitkeep

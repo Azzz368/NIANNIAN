@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, B
 from fastapi.responses import FileResponse
 from openai import OpenAI
 from core import security, storage
+from core.dashscope_config import compatible_base_url
 from services import asset_analysis, asset_vision, material_context
 
 router = APIRouter(prefix="/memorials", tags=["uploads"])
@@ -13,7 +14,7 @@ router = APIRouter(prefix="/memorials", tags=["uploads"])
 def _get_llm() -> OpenAI:
     return OpenAI(
         api_key=os.getenv("DASHSCOPE_API_KEY", ""),
-        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        base_url=compatible_base_url(),
     )
 
 
