@@ -44,6 +44,13 @@ services:
         sync: false
       - key: DASHSCOPE_REGION
         value: ""            # 留空=国内端点；填 intl=海外端点
+      # 素材库图片理解与语义检索（与 DASHSCOPE_API_KEY 共用）
+      - key: NIAN_ASSET_VISION_MODEL
+        value: qwen-vl-plus
+      - key: NIAN_ASSET_RERANK_MODEL
+        value: qwen-plus
+      - key: NIAN_ASSET_TEXT_MODEL
+        value: qwen-plus
       - key: PYTHON_VERSION
         value: "3.11"
       # ─── Stage 1 用户系统 ───

@@ -107,7 +107,15 @@ def _persist_realtime_turns(user_id: str, memorial_id: str, turns: list):
             elif t.get("role") == "assistant":
                 last_ai = t.get("content", "")
         if last_user and last_ai:
-            _persist_and_extract(user_id, memorial_id, last_user, last_ai)
+            # The full realtime turn list was already appended above. Only run
+            # dossier/memory extraction here, otherwise the final turn is stored twice.
+            _persist_and_extract(
+                user_id,
+                memorial_id,
+                last_user,
+                last_ai,
+                append_turns=False,
+            )
         # 关键词 / 每 4 轮触发长期记忆刷新
         if last_user:
             try:

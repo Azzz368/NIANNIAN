@@ -226,6 +226,14 @@ function getActiveMemorialId() {
   return window.NianAuth && NianAuth.isAuthed() ? NianAuth.getActiveMemorialId() : '';
 }
 
+function attachLibraryIdentity() {
+  if (!window.NianAuth || !NianAuth.isAuthed()) return;
+  const user = NianAuth.getUser() || {};
+  const memorialId = NianAuth.getActiveMemorialId() || '';
+  if (user.user_id) state.form.user_id = user.user_id;
+  if (memorialId) state.form.memorial_id = memorialId;
+}
+
 async function persistReferencePhoto(asset, memorialId = '') {
   state.form = {
     ...state.form,
@@ -288,6 +296,7 @@ async function handleUpload(files) {
 // ───── 启动时：尝试从已有 session 恢复 ─────
 async function bootstrap() {
   renderSteps();
+  attachLibraryIdentity();
   const sid = getSessionId();
   if (sid) {
     try {
@@ -299,6 +308,7 @@ async function bootstrap() {
   }
   const memorialId = getActiveMemorialId();
   if (memorialId) state.form.memorial_id = memorialId;
+  attachLibraryIdentity();
   // 从资料库预填：若有 active memorial，将 dossier 数据填入空字段
   await prefillFromLibrary();
 }

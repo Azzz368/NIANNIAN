@@ -12,7 +12,7 @@
 
   <meta name="viewport" content="width=device-width,initial-scale=1">
 
-  <link rel="stylesheet" href="css/library.css">
+  <link rel="stylesheet" href="css/library.css?v=20260730-upload-state-fix7">
 
 </head>
 
@@ -25,6 +25,14 @@
     <a href="/static/index.html" class="lib-back">← 回到念念</a>
 
     <h1>我的资料库</h1>
+
+    <div class="lib-person-switch">
+      <label for="libPersonSelect">当前人物资料库</label>
+      <select id="libPersonSelect" aria-label="选择当前人物资料库">
+        <option value="">正在加载人物...</option>
+      </select>
+      <span id="libSwitchStatus" aria-live="polite"></span>
+    </div>
 
     <div class="lib-user" id="libUser"></div>
 
@@ -67,6 +75,7 @@
           <div>
 
             <h2 id="dName">—</h2>
+            <div class="archive-target" id="archiveTarget">当前所有新增内容将归档到此人物</div>
 
             <div class="meta-line">
 
@@ -252,6 +261,11 @@
             <button class="btn-mini" id="btnAssetMode">选择删除</button>
           </div>
 
+          <div class="asset-action-guide">
+            <span><strong>AI 分析</strong>：重新识别素材中的人物、时间、事件、场景和视频用途，不改动用户原始描述。</span>
+            <span><strong>问念念</strong>：带着这一项素材进入 Agent，可针对它继续提问或整理故事。</span>
+          </div>
+
           <!-- 各类型文件 input -->
           <input type="file" id="libFileAudio"    accept="audio/*"       hidden>
           <input type="file" id="libFileImage"    accept="image/*"       hidden>
@@ -374,10 +388,15 @@
   <div class="modal" id="libUploadModal">
     <div class="modal-card lib-upload-modal-card">
       <h3 id="libUploadTitle">上传素材</h3>
+      <div class="lib-upload-target" id="libUploadTarget"></div>
       <div class="lib-upload-preview" id="libUploadPreview"></div>
       <div class="field">
         <label>描述 <span style="color:#8a7654;font-weight:400">（这是什么，什么时候的，有什么故事）</span></label>
         <textarea id="libUploadDesc" placeholder="例如：这是爸爸 2008 年在老家院子里拍的，他最喜欢这件灰呢大衣..." style="min-height:80px;width:100%;border:1px solid rgba(196,150,74,.25);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:.9rem;background:#fdfaf4;outline:none;resize:vertical;"></textarea>
+        <div id="libUploadVoiceRow" style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <button class="btn-mini" id="libUploadVoice" type="button">按住说话</button>
+          <span id="libUploadVoiceStatus" style="font-size:.78rem;color:#8a7654">与聊天麦克风使用相同识别方式</span>
+        </div>
       </div>
       <div class="field" id="libTextDescField" style="display:none">
         <label>文字内容</label>
@@ -397,7 +416,7 @@
 
   <script src="/static/js/auth.js"></script>
 
-  <script src="/static/js/library.js"></script>
+  <script src="/static/js/library.js?v=20260730-upload-state-fix7"></script>
 
 </body>
 

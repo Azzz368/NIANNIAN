@@ -11,6 +11,8 @@
   var state = {
     mode: 'text',
     history: [],
+    selectedAssetIds: [],
+    personEpoch: 0,
     isThinking: false,
     // 文字模式 录音
     isRecording: false,
@@ -92,24 +94,36 @@
   }
 
   // ─── 文字模式：SSE（不朗读）─────────────────────────────────────
-  async function sendMessage(text){
+  async function sendMessage(text, options){
     if (!text || !text.trim() || state.isThinking) return;
+    options = options || {};
     state.isThinking = true; setInputLock(true);
-    appendBubble('user', text);
+    appendBubble('user', options.displayText || text);
     state.history.push({ role:'user', content: text });
 
+    var requestEpoch = state.personEpoch;
     var thinkEl = showThinkBubble();
     var fullText = ''; var aiEl = null;
+    var scopeChanged = false;
 
     try {
       var headers = {'Content-Type':'application/json'};
       var tok = window.NianAuth && window.NianAuth.getToken();
       if (tok) headers['Authorization'] = 'Bearer ' + tok;
       var mid = window.NianAuth && window.NianAuth.getActiveMemorialId();
+      var requestAssetIds = (options.assetIds || state.selectedAssetIds).slice(0, 2);
+      // Asset selection is a one-turn reference. Keeping it forever caused
+      // later inventory questions to be narrowed to the last one or two images.
+      state.selectedAssetIds = [];
       var resp = await fetch('/api/agent/chat', {
         method:'POST',
         headers: headers,
-        body: JSON.stringify({ message: text, history: state.history.slice(-30), memorial_id: mid || null })
+        body: JSON.stringify({
+          message: text,
+          history: state.history.slice(-30),
+          memorial_id: mid || null,
+          asset_ids: requestAssetIds
+        })
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var reader = resp.body.getReader();
@@ -118,6 +132,14 @@
       while (true) {
         var rr = await reader.read();
         if (rr.done) break;
+        if (
+          requestEpoch !== state.personEpoch ||
+          (mid || null) !== ((window.NianAuth && window.NianAuth.getActiveMemorialId()) || null)
+        ) {
+          scopeChanged = true;
+          try { await reader.cancel(); } catch(e) {}
+          break;
+        }
         buf += decoder.decode(rr.value, { stream: true });
         var lines = buf.split('\n');
         buf = lines.pop() || '';
@@ -136,6 +158,8 @@
               var _imAi = document.getElementById('immersiveAiText');
               if (_imAi) _imAi.textContent = fullText;
               scrollBottom();
+            } else if (evt.type === 'assets') {
+              setStatus('已检索到相关素材，正在核对图片…');
             } else if (evt.type === 'error') {
               thinkEl.remove(); appendBubble('ai', '抱歉，念念暂时无法回应。');
             }
@@ -146,7 +170,7 @@
       thinkEl.remove(); appendBubble('ai', '网络连接不稳定，请稍候再试。');
     }
 
-    if (fullText) state.history.push({ role:'assistant', content: fullText });
+    if (!scopeChanged && fullText) state.history.push({ role:'assistant', content: fullText });
     state.isThinking = false; setInputLock(false); scrollBottom();
   }
 
@@ -642,11 +666,16 @@
       var bar = $('activeMemBar'); if (bar) bar.style.display = 'flex';
       var sel = $('memSelect'); if (!sel) return;
       sel.innerHTML = '';
+      // Do not create a default archive when the list is temporarily empty.
+      // It can silently switch the user from an existing archive to an empty one.
       if (memorials.length === 0) {
-        // 自动创建一个默认对象
-        var m = await createMemorial('Ta');
-        if (m) { memorials = [m]; }
+        sel.innerHTML = '<option value="">请先新建纪念对象</option>';
+        sel.disabled = true;
+        window.NianAuth.setActiveMemorialId('');
+        refreshPanelPersons();
+        return;
       }
+      sel.disabled = false;
       for (var i=0; i<memorials.length; i++) {
         var m = memorials[i];
         var opt = document.createElement('option');
@@ -661,8 +690,11 @@
       }
       sel.value = cur;
       sel.addEventListener('change', function(){
+        if (state.mode === 'live') switchMode('text');
+        state.personEpoch += 1;
         window.NianAuth.setActiveMemorialId(sel.value);
         state.history = []; // 切换对象 → 清空上下文
+        state.selectedAssetIds = [];
         $('agentMessages').innerHTML = '';
         showToast('已切换到 ' + sel.options[sel.selectedIndex].text, 1800);
         triggerGreet();
@@ -686,27 +718,159 @@
 
   // ─── 文件上传 ───────────────────────────────────────────────────
   var pendingFile = null;
+  var uploadVoiceRecorder = null;
+  var uploadVoiceStream = null;
+  var uploadVoiceChunks = [];
+  var uploadVoiceRecognition = null;
+  var uploadVoiceBase = '';
+  var uploadVoiceFinal = '';
+
+  function isImageUpload(file) {
+    return !!file && (
+      /^image\//.test(file.type || '') ||
+      /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(file.name || '')
+    );
+  }
+
+  function setUploadVoiceStatus(text, recording) {
+    var label = $('uploadVoiceStatus');
+    var button = $('uploadVoiceBtn');
+    if (label) label.textContent = text;
+    if (button) {
+      button.textContent = recording ? '结束录音' : '语音输入';
+      button.style.background = recording ? '#8b2f2f' : '#fffaf0';
+      button.style.color = recording ? '#fff' : '#76551f';
+    }
+  }
+
+  function stopUploadVoiceRecording() {
+    if (uploadVoiceRecognition) {
+      try { uploadVoiceRecognition.stop(); } catch(e) {}
+      uploadVoiceRecognition = null;
+    }
+    if (uploadVoiceRecorder && uploadVoiceRecorder.state !== 'inactive') {
+      try { uploadVoiceRecorder.stop(); } catch(e) {}
+    }
+  }
+
+  async function toggleUploadVoiceRecording() {
+    if (uploadVoiceRecorder && uploadVoiceRecorder.state === 'recording') {
+      stopUploadVoiceRecording();
+      return;
+    }
+    if (!isImageUpload(pendingFile)) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      setUploadVoiceStatus('当前浏览器不支持录音，请手动输入', false);
+      return;
+    }
+    try {
+      uploadVoiceStream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    } catch(e) {
+      setUploadVoiceStatus('无法使用麦克风，请检查浏览器权限后重试', false);
+      return;
+    }
+
+    var textarea = $('uploadDesc');
+    uploadVoiceBase = textarea ? textarea.value.trim() : '';
+    uploadVoiceFinal = '';
+    uploadVoiceChunks = [];
+    var types = ['audio/webm;codecs=opus','audio/webm','audio/ogg'];
+    var mimeType = types.find(function(t){ return MediaRecorder.isTypeSupported(t); }) || '';
+    uploadVoiceRecorder = new MediaRecorder(uploadVoiceStream, mimeType ? {mimeType:mimeType} : {});
+    uploadVoiceRecorder.ondataavailable = function(e) {
+      if (e.data && e.data.size) uploadVoiceChunks.push(e.data);
+    };
+    uploadVoiceRecorder.onstop = async function() {
+      if (uploadVoiceStream) uploadVoiceStream.getTracks().forEach(function(track){ track.stop(); });
+      setUploadVoiceStatus('正在识别，请稍候…', false);
+      var localText = uploadVoiceFinal.trim();
+      var ext = mimeType.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+      try {
+        var form = new FormData();
+        form.append('audio', new Blob(uploadVoiceChunks, {type:mimeType || 'audio/webm'}), 'photo-description.' + ext);
+        var response = await fetch('/api/agent/asr', {method:'POST', body:form});
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        var data = await response.json();
+        var recognized = (data.text || '').trim() || localText;
+        if (!recognized) throw new Error('没有识别到文字');
+        if (textarea) {
+          textarea.value = (uploadVoiceBase ? uploadVoiceBase + '\n' : '') + recognized;
+          textarea.focus();
+        }
+        setUploadVoiceStatus('已转成文字，请编辑确认后再上传', false);
+      } catch(e) {
+        if (localText && textarea) {
+          textarea.value = (uploadVoiceBase ? uploadVoiceBase + '\n' : '') + localText;
+          setUploadVoiceStatus('服务端识别失败，已保留本地识别文字，请检查后上传', false);
+        } else {
+          setUploadVoiceStatus('识别失败，请重试或手动输入', false);
+        }
+      } finally {
+        uploadVoiceRecorder = null;
+        uploadVoiceStream = null;
+        uploadVoiceChunks = [];
+      }
+    };
+    uploadVoiceRecorder.start();
+
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      try {
+        uploadVoiceRecognition = new SR();
+        uploadVoiceRecognition.lang = 'zh-CN';
+        uploadVoiceRecognition.continuous = true;
+        uploadVoiceRecognition.interimResults = true;
+        uploadVoiceRecognition.onresult = function(event) {
+          var interim = '';
+          for (var i=event.resultIndex; i<event.results.length; i++) {
+            var text = event.results[i][0].transcript || '';
+            if (event.results[i].isFinal) uploadVoiceFinal += text;
+            else interim += text;
+          }
+          if (textarea) {
+            var preview = uploadVoiceFinal + interim;
+            textarea.value = (uploadVoiceBase ? uploadVoiceBase + '\n' : '') + preview;
+          }
+        };
+        uploadVoiceRecognition.onerror = function(){};
+        uploadVoiceRecognition.start();
+      } catch(e) {
+        uploadVoiceRecognition = null;
+      }
+    }
+    setUploadVoiceStatus('正在录音，再点一次结束', true);
+  }
+
   function openUploadModal(file){
     pendingFile = file;
     var prev = $('uploadPreview');
     var icon = '[文件]';
-    if (/^image\//.test(file.type)) icon = '[图片]';
+    if (isImageUpload(file)) icon = '[图片]';
     else if (/^audio\//.test(file.type)) icon = '[音频]';
     else if (/^video\//.test(file.type)) icon = '[视频]';
     var size = (file.size/1024).toFixed(1) + ' KB';
     if (file.size > 1024*1024) size = (file.size/1024/1024).toFixed(1) + ' MB';
     prev.innerHTML = '<span class="ic">' + icon + '</span><div><div style="font-weight:600">' + escHtml(file.name) + '</div><div style="color:#8a7654;font-size:.78rem">' + size + '</div></div>';
     $('uploadDesc').value = '';
+    var voiceRow = $('uploadVoiceRow');
+    if (voiceRow) voiceRow.style.display = isImageUpload(file) ? 'flex' : 'none';
+    setUploadVoiceStatus('与聊天麦克风相同：浏览器预览，结束后精准识别', false);
     $('uploadModal').classList.add('show');
     setTimeout(function(){ $('uploadDesc').focus(); }, 100);
   }
   function closeUploadModal(){
+    stopUploadVoiceRecording();
     $('uploadModal').classList.remove('show');
     pendingFile = null;
     var fi = $('agentFileInput'); if (fi) fi.value = '';
   }
   async function confirmUpload(){
     if (!pendingFile) return;
+    if (uploadVoiceRecorder && uploadVoiceRecorder.state === 'recording') {
+      stopUploadVoiceRecording();
+      setUploadVoiceStatus('请等待语音转成文字，确认内容后再上传', false);
+      return;
+    }
     if (!window.NianAuth || !window.NianAuth.isAuthed()) {
       alert('请先登录后再上传文件'); closeUploadModal(); return;
     }
@@ -723,10 +887,24 @@
       var d = await r.json();
       var asset = d.asset || {};
       var tags = (asset.tags || []).slice(0,4).join('、');
-      appendBubble('user', '我上传了：' + pendingFile.name + (desc ? '\n' + desc : ''));
-      appendBubble('ai', '我把这份资料收下了。' + (tags ? '我读到了：' + tags + '。' : '') + ' 这些内容已经存进 Ta 的资料库里了，我们继续聊。');
+      var fileName = pendingFile.name;
       showToast('已加入资料库 · 自动打标签' + (tags ? '：' + tags : ''), 3200);
       closeUploadModal();
+      // The previous path only stored the image and returned canned text.
+      // Ask through /agent/chat with the persisted asset so the VL model sees it.
+      if (asset.kind === 'image' && asset.asset_id) {
+        state.selectedAssetIds = [asset.asset_id];
+        setStatus('正在识别刚上传的图片…');
+        var prompt = '请描述我刚刚上传的这张图片内容。只说你能从图片中确认的内容。';
+        if (desc) prompt += ' 用户补充说明：' + desc;
+        await sendMessage(prompt, {
+          assetIds: [asset.asset_id],
+          displayText: '我上传了图片：' + fileName + (desc ? '\n' + desc : '')
+        });
+      } else {
+        appendBubble('user', '我上传了：' + fileName + (desc ? '\n' + desc : ''));
+        appendBubble('ai', '我把这份资料收下了。' + (tags ? '我读到了：' + tags + '。' : '') + ' 这些内容已经存进资料库里了，我们继续聊。');
+      }
     } catch(e){
       console.error(e);
       alert('上传失败：' + e.message);
@@ -754,8 +932,11 @@
       opt.value = m.memorial_id; opt.textContent = m.name;
       sel.appendChild(opt);
       sel.value = m.memorial_id;
+      if (state.mode === 'live') switchMode('text');
       window.NianAuth.setActiveMemorialId(m.memorial_id);
+      state.personEpoch += 1;
       state.history = [];
+      state.selectedAssetIds = [];
       $('agentMessages').innerHTML = '';
       closeNewMemModal();
       showToast('已建立「' + m.name + '」的档案，开始聊吧', 2400);
@@ -782,6 +963,18 @@
     var inp = $('agentInput');
     if (!inp) return;
 
+    try {
+      var query = new URLSearchParams(window.location.search);
+      var midFromLink = query.get('memorial_id');
+      var assetFromLink = query.get('asset_id');
+      if (midFromLink && window.NianAuth && window.NianAuth.setActiveMemorialId) {
+        window.NianAuth.setActiveMemorialId(midFromLink);
+      }
+      if (assetFromLink) {
+        state.selectedAssetIds = [assetFromLink];
+        setStatus('已选中一张素材，提问时会优先识别它');
+      }
+    } catch(e) {}
     renderTopnav();
     loadMemorials();
 
@@ -890,6 +1083,8 @@
     var uc = $('uploadCancel'), uok = $('uploadConfirm');
     if (uc)  uc.addEventListener('click', closeUploadModal);
     if (uok) uok.addEventListener('click', confirmUpload);
+    var uploadVoiceBtn = $('uploadVoiceBtn');
+    if (uploadVoiceBtn) uploadVoiceBtn.addEventListener('click', toggleUploadVoiceRecording);
 
     // 新建对象
     var nmBtn = $('newMemBtn');
@@ -910,7 +1105,13 @@
     if (!state.hasGreeted) {
       state.hasGreeted = true;
       setTimeout(function(){
-        if (state.mode === 'text') sendMessage('你好，今天有什么想聊的吗？');
+        if (state.mode === 'text') {
+          if (state.selectedAssetIds.length) {
+            sendMessage('请帮我整理这项素材：说明其中明确的人物、时间、事件、场景，以及它适合用在视频的什么位置。');
+          } else {
+            sendMessage('你好，今天有什么想聊的吗？');
+          }
+        }
       }, 800);
     }
 
@@ -1041,10 +1242,13 @@
     if (spSel) {
       spSel.addEventListener('change', function() {
         var mid = spSel.value;
+        if (state.mode === 'live') switchMode('text');
+        state.personEpoch += 1;
         if (window.NianAuth && window.NianAuth.setActiveMemorialId) window.NianAuth.setActiveMemorialId(mid);
         var mainSel = document.getElementById('memSelect');
         if (mainSel) mainSel.value = mid;
         state.history = [];
+        state.selectedAssetIds = [];
         var msgs = document.getElementById('agentMessages'); if (msgs) msgs.innerHTML = '';
         showToast('\u5df2\u5207\u6362\u5230 ' + (spSel.options[spSel.selectedIndex] ? spSel.options[spSel.selectedIndex].text : ''), 1800);
         triggerGreet();
@@ -1144,10 +1348,14 @@
     if (spSel) {
       spSel.addEventListener('change', function() {
         var mid = spSel.value;
+        if (state.mode === 'live') switchMode('text');
+        state.personEpoch += 1;
         if (window.NianAuth && window.NianAuth.setActiveMemorialId) window.NianAuth.setActiveMemorialId(mid);
         var mainSel = document.getElementById('memSelect');
         if (mainSel) mainSel.value = mid;
         var msgs = document.getElementById('agentMessages'); if (msgs) msgs.innerHTML = '';
+        state.history = [];
+        state.selectedAssetIds = [];
       });
     }
 

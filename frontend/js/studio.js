@@ -201,6 +201,15 @@ function renderScenes() {
     const time = sc.time || sc.duration || '';
     const desc = sc.description || sc.scene_desc || sc.prompt_global || sc.visual || '';
     const narr = sc.narration   || sc.voiceover  || sc.subtitle      || '';
+    const sourceAssets = Array.isArray(sc.source_assets) ? sc.source_assets : [];
+    const hasRealImage = sourceAssets.some(asset => asset && asset.kind === 'image');
+    const sourceHtml = sourceAssets.length
+      ? `<div class="scene-narr" style="margin-top:8px;">
+           真实素材：${sourceAssets.map(asset =>
+             `<span title="${esc(asset.user_description || asset.ai_summary || '')}">${esc(asset.filename || asset.asset_id)}</span>`
+           ).join('、')}
+         </div>`
+      : `<div class="scene-narr" style="margin-top:8px;color:var(--muted-l);">本镜暂无匹配的真实画面，将使用 AI 补充</div>`;
     const imgStatus = sc._img_status || 'idle';
     const vidStatus = sc._vid_status || 'idle';
 
@@ -218,7 +227,7 @@ function renderScenes() {
     const imgHtml = sc._img_url
       ? `<div class="media-slot has-media">
            <img class="zoomable" data-idx="${i}" src="${esc(sc._img_url)}" alt="scene image">
-           <div class="media-cap">点击图片放大查看</div>
+           <div class="media-cap">${sc._image_reused ? '真实素材 · ' : ''}点击图片放大查看</div>
          </div>`
       : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
 
@@ -239,9 +248,10 @@ function renderScenes() {
         </div>
         ${desc ? `<div class="scene-desc">${esc(desc)}</div>` : ''}
         ${narr ? `<div class="scene-narr">${esc(narr)}</div>` : ''}
+        ${sourceHtml}
         <div class="scene-media">${imgHtml}${vidHtml}</div>
         <div class="scene-actions">
-          <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新生成图片' : '生成图片'}</button>
+          <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新准备画面' : (hasRealImage ? '使用真实素材' : '生成 AI 图片')}</button>
           <button class="btn" data-act="vid" data-idx="${i}" ${vidStatus === 'run' || !sc._img_url ? 'disabled' : ''}>${sc._vid_url ? '重新生成视频' : '生成视频'}</button>
         </div>
       </div>
@@ -330,6 +340,9 @@ async function genSceneImage(idx) {
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
+    sc._image_reused = !!res.reused;
+    sc._image_source_asset_id = res.source_asset_id || '';
+    if (res.reused) toast('已使用真实素材：' + (res.source_asset_id || ''));
   } catch (e) {
     sc._img_status = 'err';
     toast('图片生成失败：' + e.message);
