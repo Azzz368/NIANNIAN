@@ -16,7 +16,7 @@
 
 <link rel="stylesheet" href="css/index-hero.css?v=20260615">
 
-<link rel="stylesheet" href="css/immersive.css?v=2026061011">
+<link rel="stylesheet" href="css/immersive.css?v=20260803-director-script1">
 
 <style>
 
@@ -273,6 +273,13 @@
         </svg>
       </button>
 
+      <button class="edit-plan-mode-btn" id="editPlanModeBtn" type="button" title="进入导演脚本编辑模式" aria-label="导演脚本编辑模式">
+        <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 3h12l4 4v14H4z"/><path d="M16 3v5h5"/><path d="M8 12h8M8 16h6"/>
+        </svg>
+        <span>方案</span>
+      </button>
+
       <div class="immersive-text-input-wrapper">
 
         <input type="text" id="immersiveTextInput" class="immersive-text-input" placeholder="输入你想说的话..." autocomplete="off" />
@@ -432,6 +439,11 @@
 
     <textarea id="uploadDesc" placeholder="例如：这是爸爸 2008 年在老家院子里拍的，他最喜欢这件灰呢大衣..."></textarea>
 
+    <div id="uploadVoiceRow" style="display:flex;align-items:center;gap:10px;margin-top:10px">
+      <button id="uploadVoiceBtn" type="button" style="border:1px solid rgba(174,130,59,.35);border-radius:999px;background:#fffaf0;color:#76551f;padding:8px 14px;cursor:pointer">按住说话</button>
+      <span id="uploadVoiceStatus" style="font-size:.78rem;color:#8a7654">与聊天麦克风使用相同识别方式</span>
+    </div>
+
     <div class="acts">
 
       <button id="uploadCancel" type="button">取消</button>
@@ -484,7 +496,7 @@
 
 <script src="js/api.js"></script>
 
-<script src="js/agent.js?v=2026061011"></script>
+<script src="js/agent.js?v=20260803-director-script1"></script>
 
 
 
@@ -807,6 +819,47 @@ document.querySelectorAll('.pcard-link').forEach(function(el) {
 
 
 <!-- Session Panel -->
+<div id="editPlanPanel" class="edit-plan-panel" aria-hidden="true">
+  <div class="edit-plan-card">
+    <div class="edit-plan-header">
+      <div>
+        <div class="edit-plan-eyebrow">Agent · 导演脚本编辑模式</div>
+        <h2>生成可编辑导演脚本</h2>
+      </div>
+      <button id="editPlanClose" class="edit-plan-close" type="button" aria-label="关闭方案面板">&#215;</button>
+    </div>
+
+    <div class="edit-plan-readiness">
+      <div class="edit-plan-score-row">
+        <span id="editPlanScoreText">正在检查导演脚本所需资料…</span>
+        <strong id="editPlanScore">0%</strong>
+      </div>
+      <div class="edit-plan-progress"><span id="editPlanProgress"></span></div>
+      <div id="editPlanMissing" class="edit-plan-missing"></div>
+    </div>
+
+    <div class="edit-plan-settings">
+      <label>目标时长（秒）<input id="editPlanDuration" type="number" min="10" max="900" placeholder="自动" /></label>
+      <label>画幅
+        <select id="editPlanAspect"><option value="16:9">16:9 横屏</option><option value="9:16">9:16 竖屏</option><option value="1:1">1:1 方形</option></select>
+      </label>
+      <label>风格<input id="editPlanStyle" type="text" value="温暖、克制、纪实" maxlength="100" /></label>
+    </div>
+
+    <div id="editPlanEmpty" class="edit-plan-empty">进入后，念念会一次追问一个缺失信息。资料达到条件后，导演 Agent 会读取当前人物的全部资料与素材，自主输出文字脚本；不会调用视频模型。</div>
+    <textarea id="editPlanJson" class="edit-plan-json" spellcheck="false" aria-label="导演剪辑脚本"></textarea>
+    <div id="editPlanMessage" class="edit-plan-message"></div>
+
+    <div class="edit-plan-actions">
+      <button id="editPlanExit" type="button">退出导演模式</button>
+      <button id="editPlanRefresh" type="button">重新检查</button>
+      <button id="editPlanGenerate" class="primary" type="button" disabled>生成导演脚本</button>
+      <button id="editPlanSave" type="button" disabled>保存修改</button>
+      <button id="editPlanDownload" type="button" disabled>下载脚本</button>
+    </div>
+  </div>
+</div>
+
 <div id="sessionPanel" class="session-panel" style="position:fixed;top:0;right:0;width:360px;max-width:92vw;height:100vh;background:rgba(253,248,240,0.97);z-index:9999;transform:translateX(100%);transition:transform 0.32s cubic-bezier(0.4,0,0.2,1);display:flex;flex-direction:column;overflow:hidden;box-shadow:-8px 0 40px rgba(0,0,0,0.12);border-left:1px solid rgba(196,150,74,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">
   <div class="session-panel-header">
     <span class="session-panel-title">会话中心</span>

@@ -16,6 +16,18 @@
 
 无（入口步骤）。
 
+工程输入中如包含 `memorial_context`，必须同时阅读其中的：
+
+- `form_data`
+- `session_chat_history`
+- `agent_conversation_history`
+- `dossier`
+- `assets`
+
+不得只根据表单生成结果。用户对素材的 `user_description` 和原始
+`transcript` 属于第一手资料，优先于 `ai_summary`；AI 摘要只能补充，
+不能覆盖或改写用户原话。所有被采用的素材必须保留真实 `asset_id`。
+
 ## 人类闸门 G1
 
 输出 JSON 与采访摘要须经家属**确认或修订**后，方可进入 **MV02**。

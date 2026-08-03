@@ -32,7 +32,13 @@ def _nian_bootstrap():
     data_dir = _s.DATA_DIR
     print(f"[storage] DATA_DIR = {data_dir}")
     print(f"[storage] NIAN_DATA_DIR env = {os.environ.get('NIAN_DATA_DIR', '(unset)')}")
-    print(f"[storage] DATA_DIR exists = {data_dir.exists()}, is mount = {data_dir.is_mount() if hasattr(data_dir, 'is_mount') else 'n/a'}")
+    try:
+        # pathlib exposes is_mount on Windows, but its implementation raises
+        # NotImplementedError there. This is diagnostics only, never startup logic.
+        is_mount = data_dir.is_mount()
+    except NotImplementedError:
+        is_mount = False
+    print(f"[storage] DATA_DIR exists = {data_dir.exists()}, is mount = {is_mount}")
 
     # 1) OSS 镜像拉回（最强保险）
     try:

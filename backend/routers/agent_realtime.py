@@ -16,10 +16,9 @@ except Exception:
 
 from core import security, storage
 from core import memory as memory_mod
+from core.dashscope_config import realtime_ws_url
 
 router = APIRouter(prefix="/agent", tags=["agent-realtime"])
-
-UPSTREAM_URL = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime"
 
 BASE_INSTRUCTIONS = (
     "你是『念念』，一个温柔、细腻、有同理心的追思影像创作助手。"
@@ -107,7 +106,15 @@ def _persist_realtime_turns(user_id: str, memorial_id: str, turns: list):
             elif t.get("role") == "assistant":
                 last_ai = t.get("content", "")
         if last_user and last_ai:
-            _persist_and_extract(user_id, memorial_id, last_user, last_ai)
+            # The full realtime turn list was already appended above. Only run
+            # dossier/memory extraction here, otherwise the final turn is stored twice.
+            _persist_and_extract(
+                user_id,
+                memorial_id,
+                last_user,
+                last_ai,
+                append_turns=False,
+            )
         # 关键词 / 每 4 轮触发长期记忆刷新
         if last_user:
             try:
@@ -166,7 +173,7 @@ async def realtime_proxy(client_ws: WebSocket):
 
     try:
         async with ws_connect(
-            UPSTREAM_URL,
+            realtime_ws_url(),
             additional_headers=headers,
             max_size=8 * 1024 * 1024,
             ping_interval=20,

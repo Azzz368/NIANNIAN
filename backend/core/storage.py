@@ -53,6 +53,11 @@ ROOT_DIR = BACKEND_DIR.parent
 # 优先使用环境变量 NIAN_DATA_DIR（Render Disk 挂载点 /var/data）
 # 本地开发不设该变量时自动回退到项目根 data/
 _env_data_dir = os.environ.get("NIAN_DATA_DIR", "").strip()
+# Render uses /var/data for its Linux persistent disk. A copied local .env must
+# not turn that into an unintended Windows-rooted path during development.
+if os.name == "nt" and _env_data_dir.replace("\\", "/").startswith("/var/"):
+    print(f"[storage] Windows ignores NIAN_DATA_DIR={_env_data_dir}; using project data directory")
+    _env_data_dir = ""
 DATA_DIR = Path(_env_data_dir) if _env_data_dir else ROOT_DIR / "data"
 
 USERS_INDEX = DATA_DIR / "users.json"

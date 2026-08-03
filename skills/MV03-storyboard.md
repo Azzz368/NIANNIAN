@@ -35,6 +35,11 @@
 3. 每镜写 `mj_prompt`：人物外观可先用 MV01 肖像描述；**MV04 会把人物/场景/道具锁定为圣经**，MV05 画面生成必须以 MV04 锁定版本为准，因此 MV03 中出现的新场景/新道具应尽量显式写出，便于 MV04 收敛去重。  
 4. `mj_prompt` 句末不手写死画幅参数；顶层 `aspect_ratio` 表达成片比例意图，具体如何传给出图服务由工程处理。  
 5. 优先引用 `user_asset`；否则标记 AI 生成。  
+6. 每镜必须输出 `source_asset_ids` 数组。真实素材足以支撑画面时，
+   `asset_type` 必须为 `user_asset`，`asset_ref` 必须是素材库中的真实
+   `asset_id`；只有没有相关真实素材时才允许使用 `ai_generated_video`。
+7. 用户描述 `user_description` 的事实优先级高于视觉模型的 `ai_summary`，
+   不得把 AI 推断当作用户确认事实。
 6. 负面提示词统一置于 `negative_prompt`（可全局一份）。
 
 ## 画面提示词（叙事模板的一部分）

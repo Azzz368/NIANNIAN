@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import gate_manager, session_store  # noqa: F401  触发 backend.services.__init__ 注入 sys.path
+from . import gate_manager, material_context, session_store  # noqa: F401  触发 backend.services.__init__ 注入 sys.path
 
 # ── 从项目根模块导入业务函数（共享同一份代码）─────────────────────────────
 from llm_client import (  # type: ignore
@@ -181,10 +181,16 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
         skill_path = SKILLS_DIR / MV_FILES[mv_id]
         system_prompt = load_skill(str(skill_path))
 
-        # payload：form_data + 已有 mv 输出
+        # 所有 MV 步骤共享同一个人物上下文。它把资料库、Agent 对话、
+        # 当前访谈和结构化素材清单真正接入视频生成链路。
+        memorial_ctx = material_context.build_memorial_context(s)
         payload: Dict[str, Any] = {
             "form_data": s["form_data"],
             "mv_outputs": s["mv_outputs"],
+            "chat_history": memorial_ctx.get("session_chat_history", []),
+            "agent_conversation_history": memorial_ctx.get("agent_conversation_history", []),
+            "assets": memorial_ctx.get("assets", []),
+            "memorial_context": memorial_ctx,
         }
         result = call_skill(mv_id, system_prompt, payload)
         elapsed = round(_t.time() - t0, 2)
@@ -208,6 +214,12 @@ def run_pipeline_step(sid: str, mv_id: str) -> Dict[str, Any]:
             sb = result.get("storyboard")
             if isinstance(sb, list) and len(sb) > TESTING_MAX_SCENES:
                 result["storyboard"] = sb[:TESTING_MAX_SCENES]
+
+        if mv_id == "MV04" and isinstance(result, dict):
+            result = material_context.attach_assets_to_storyboard(
+                result,
+                memorial_ctx,
+            )
 
         s["mv_outputs"][mv_id] = result
         gate_manager.approve(gate, mv_id)
@@ -844,6 +856,56 @@ def gen_scene_image(
     if scene_idx < 0 or scene_idx >= len(scenes):
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
+
+    # 真实素材优先。分镜已经在 MV04 后处理时绑定 source_asset_ids；
+    # 若首个匹配项是图片，直接复用原图并生成稳定的公网缓存，不调用生图模型。
+    form = s.get("form_data", {}) or {}
+    user_id = form.get("user_id", "")
+    memorial_id = form.get("memorial_id", "")
+    source_ids = scene.get("source_asset_ids") or []
+    if user_id and memorial_id and source_ids:
+        try:
+            import base64 as _base64
+
+            stored_assets = core_storage.list_assets(user_id, memorial_id)
+            by_id = {
+                asset.get("asset_id"): asset
+                for asset in stored_assets
+                if asset.get("kind") == "image"
+            }
+            source_asset = next(
+                (by_id.get(asset_id) for asset_id in source_ids if by_id.get(asset_id)),
+                None,
+            )
+            if source_asset:
+                source_path = (
+                    core_storage.memorial_dir(user_id, memorial_id)
+                    / "assets"
+                    / source_asset.get("stored_name", "")
+                )
+                source_bytes = source_path.read_bytes()
+                source_b64 = _base64.b64encode(source_bytes).decode("ascii")
+                source_mime = source_asset.get("mime") or "image/jpeg"
+                data_url = f"data:{source_mime};base64,{source_b64}"
+                public_url = _public_scene_frame_url(
+                    sid,
+                    scene_idx,
+                    source_b64,
+                    public_base_url=public_base_url,
+                )
+                scene["_image_data_url"] = data_url
+                scene["_image_source_asset_id"] = source_asset.get("asset_id")
+                scene["_image_reused"] = True
+                if public_url:
+                    scene["_image_public_url"] = public_url
+                return {
+                    "url": data_url,
+                    "public_url": public_url,
+                    "source_asset_id": source_asset.get("asset_id"),
+                    "reused": True,
+                }
+        except Exception as exc:
+            print(f"[scene-image] reuse real asset failed, falling back to generation: {exc}")
 
     # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
     try:

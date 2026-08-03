@@ -8,13 +8,87 @@
 
 
 
-  var state = { memorials: [], currentId: null, dossier: null, meta: null, assets: [] };
+  var state = {
+    memorials: [],
+    currentId: null,
+    dossier: null,
+    meta: null,
+    assets: [],
+    conversations: [],
+    loadSeq: 0,
+  };
 
   var assetState = { selectMode: false, selected: new Set() };
 
 
 
   function $(id) { return document.getElementById(id); }
+
+  function setSwitchStatus(text, isError) {
+    var status = $('libSwitchStatus');
+    if (!status) return;
+    status.textContent = text || '';
+    status.style.color = isError ? '#b54a3f' : '#8a7654';
+  }
+
+  function showLibraryMessage(message, isError) {
+    $('detailBody').style.display = 'none';
+    $('emptyHint').style.display = 'block';
+    $('emptyHint').textContent = message;
+    $('emptyHint').style.color = isError ? '#b54a3f' : '#8a7654';
+  }
+
+  function resetPersonScopedState(mid) {
+    state.meta = null;
+    state.dossier = null;
+    state.assets = [];
+    state.conversations = [];
+    assetState.selectMode = false;
+    assetState.selected.clear();
+
+    // An open upload description belongs to the person for whom it was opened.
+    // Close it on switch so it can never be submitted into another archive.
+    stopLibVoice();
+    if ($('libUploadModal')) $('libUploadModal').classList.remove('show');
+    libUploadPending = { file: null, kind: null, memorialId: null };
+
+    if ($('convList')) $('convList').innerHTML = '';
+    if ($('assetsGrouped')) $('assetsGrouped').innerHTML = '';
+    if ($('memoriesList')) $('memoriesList').innerHTML = '';
+    if (typeof bioState !== 'undefined') {
+      bioState.sid = null;
+      bioState.polling = false;
+      bioState.finalContent = null;
+    }
+
+    var selected = state.memorials.find(function(m){ return m.memorial_id === mid; });
+    showLibraryMessage(
+      selected ? '正在加载「' + (selected.name || '未命名') + '」的独立资料库…' : '正在加载资料库…',
+      false
+    );
+  }
+
+  function renderPersonSelector() {
+    var select = $('libPersonSelect');
+    if (!select) return;
+    select.innerHTML = '';
+    if (!state.memorials.length) {
+      var emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = '暂无人物，请先新建';
+      select.appendChild(emptyOption);
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    state.memorials.forEach(function(m) {
+      var option = document.createElement('option');
+      option.value = m.memorial_id;
+      option.textContent = (m.name || '未命名') + (m.relation ? ' · ' + m.relation : '');
+      select.appendChild(option);
+    });
+    select.value = state.currentId || '';
+  }
 
 
 
@@ -32,27 +106,52 @@
 
   })();
 
+  var personSelect = $('libPersonSelect');
+  if (personSelect) {
+    personSelect.addEventListener('change', function() {
+      var mid = personSelect.value;
+      if (mid && mid !== state.currentId) selectMemorial(mid);
+    });
+  }
+
 
 
   // ── 列表 ──
 
   async function loadMemorials() {
+    try {
+      setSwitchStatus('加载中');
+      var r = await NianAuth.fetch('/api/memorials');
+      if (!r.ok) throw new Error('人物列表请求失败（HTTP ' + r.status + '）');
+      var d = await r.json();
+      state.memorials = Array.isArray(d.memorials) ? d.memorials : [];
 
-    var r = await NianAuth.fetch('/api/memorials');
+      // URL ?mid= 优先，其次当前选择，再次 localStorage，最后第一个。
+      var urlMid = (location.search.match(/[?&]mid=([^&]+)/) || [])[1];
+      if (urlMid) urlMid = decodeURIComponent(urlMid);
+      var requestedId = urlMid || state.currentId || NianAuth.getActiveMemorialId();
+      var activeId = state.memorials.some(function(m){ return m.memorial_id === requestedId; })
+        ? requestedId
+        : (state.memorials[0] && state.memorials[0].memorial_id);
 
-    var d = await r.json();
+      renderList();
+      renderPersonSelector();
 
-    state.memorials = d.memorials || [];
-
-    renderList();
-
-    // URL ?mid= 优先，其次 localStorage，再次第一个
-    var urlMid = (location.search.match(/[?&]mid=([^&]+)/) || [])[1];
-    if (urlMid) urlMid = decodeURIComponent(urlMid);
-    var activeId = urlMid || NianAuth.getActiveMemorialId() || (state.memorials[0] && state.memorials[0].memorial_id);
-
-    if (activeId) selectMemorial(activeId);
-
+      if (activeId) {
+        await selectMemorial(activeId);
+      } else {
+        state.currentId = null;
+        NianAuth.setActiveMemorialId('');
+        renderList();
+        renderPersonSelector();
+        setSwitchStatus('');
+        showLibraryMessage('还没有人物资料库。请点击「+ 新建」后开始填充资料。', false);
+      }
+    } catch (e) {
+      console.error('[library] failed to load memorials', e);
+      setSwitchStatus('加载失败', true);
+      showLibraryMessage('资料库加载失败：' + (e.message || '请刷新后重试。'), true);
+    }
   }
 
 
@@ -75,29 +174,49 @@
 
     });
 
+    renderPersonSelector();
+
   }
 
 
 
   async function selectMemorial(mid) {
-
+    if (!state.memorials.some(function(m){ return m.memorial_id === mid; })) return;
+    var requestSeq = ++state.loadSeq;
     state.currentId = mid;
-
     NianAuth.setActiveMemorialId(mid);
+    resetPersonScopedState(mid);
+    setSwitchStatus('切换中');
 
     // 立即更新声音工坊入口链接，避免用户在 fetch 完成前点击时 mid 丢失
     var vsEntry = $('voiceStudioEntry');
     if (vsEntry) vsEntry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(mid);
 
     renderList();
+    renderPersonSelector();
 
-    var r = await NianAuth.fetch('/api/memorials/' + mid);
+    try {
+      var r = await NianAuth.fetch('/api/memorials/' + encodeURIComponent(mid));
+      if (!r.ok) throw new Error('人物资料请求失败（HTTP ' + r.status + '）');
+      var d = await r.json();
 
-    var d = await r.json();
+      // Ignore a slower response from the previously selected person.
+      if (requestSeq !== state.loadSeq || mid !== state.currentId) return;
+      if (!d.meta) throw new Error('人物资料返回为空');
 
-    state.meta = d.meta; state.dossier = d.dossier || {}; state.assets = d.assets || [];
+      state.meta = d.meta;
+      state.dossier = d.dossier || {};
+      state.assets = Array.isArray(d.assets) ? d.assets : [];
 
-    renderDetail();
+      renderDetail();
+      setSwitchStatus('已切换');
+      loadConversations(mid, requestSeq);
+    } catch (e) {
+      if (requestSeq !== state.loadSeq || mid !== state.currentId) return;
+      console.error('[library] failed to load memorial', mid, e);
+      setSwitchStatus('加载失败', true);
+      showLibraryMessage('该人物资料库加载失败：' + (e.message || '请重试。'), true);
+    }
 
   }
 
@@ -110,6 +229,10 @@
     $('detailBody').style.display = 'block';
 
     $('dName').textContent = state.meta.name || '未命名';
+    var archiveTarget = $('archiveTarget');
+    if (archiveTarget) {
+      archiveTarget.textContent = '当前新增素材、对话与记忆均归档到「' + (state.meta.name || '未命名') + '」';
+    }
     // 声音工坊入口携带当前 mid，跳转后不需要重新选择
     var vsEntry = $('voiceStudioEntry');
     if (vsEntry && state.currentId) vsEntry.href = '/static/voice_studio.html?mid=' + encodeURIComponent(state.currentId);
@@ -134,8 +257,6 @@
     renderMemories();
 
     renderAssets();
-
-    loadConversations();
 
     $('quotesArea').value = (state.dossier.quotes || []).join('\n');
 
@@ -339,8 +460,10 @@
   }
 
   function buildAssetCard(a) {
+    var cardMemorialId = state.currentId;
+    var isImage = (a.kind === 'image' && a.url);
     var card = document.createElement('div');
-    card.className = 'asset-card';
+    card.className = 'asset-card ' + (isImage ? 'asset-card-image' : 'asset-card-file');
     card.dataset.aid = a.asset_id;
 
     var icon = iconForKind(a.kind);
@@ -348,7 +471,15 @@
       return '<span class="asset-card-tag">' + escapeHtml(t) + '</span>';
     }).join('');
 
-    var isImage = (a.kind === 'image' && a.url);
+    var analysisLabel = a.analysis_status === 'queued' ? '分析中…' :
+      a.analysis_status === 'failed' ? '重试分析' :
+      a.analysis_status === 'succeeded' ? '重新分析' : 'AI 分析';
+    var machineSummary = a.ai_summary || a.visual_summary || '';
+    var structuredMeta = [
+      a.time_period ? '时间：' + a.time_period : '',
+      a.event ? '事件：' + a.event : '',
+      a.scene ? '场景：' + a.scene : '',
+    ].filter(Boolean).join(' · ');
     var imgUrl = '';
     if (isImage) {
       var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
@@ -362,33 +493,47 @@
       ? '<a class="asset-thumb-block" href="' + imgUrl + '" target="_blank" title="点击查看原图"><img class="asset-img-thumb" src="' + imgUrl + '" alt="' + escapeAttr(a.filename || '') + '"></a>'
       : '';
 
-    card.innerHTML =
-      thumbBlockHtml +
-      '<div class="asset-card-top">' +
-        checkHtml +
-        (!isImage ? '<div class="asset-card-icon">' + icon + '</div>' : '') +
-        '<div class="asset-card-body">' +
-          '<div class="asset-card-name">' + escapeHtml(a.filename || a.asset_id) + '</div>' +
-          '<div class="asset-card-desc">' + escapeHtml(a.description || a.summary || '（未填描述）') + '</div>' +
-          (tagsHtml ? '<div class="asset-card-tags">' + tagsHtml + '</div>' : '') +
-        '</div>' +
-        '<div class="asset-card-actions">' +
-          '<button class="asset-btn-edit" data-aid="' + a.asset_id + '">编辑</button>' +
-          '<button class="asset-btn-del"  data-aid="' + a.asset_id + '">✕</button>' +
-        '</div>' +
-      '</div>' +
+    var bodyHtml =
+      '<div class="asset-card-body">' +
+        '<div class="asset-card-name">' + escapeHtml(a.filename || a.asset_id) + '</div>' +
+        '<div class="asset-card-desc"><span class="asset-field-label">用户描述</span><span class="asset-field-value">' + escapeHtml(a.user_description || a.description || '（未填写）') + '</span></div>' +
+        (machineSummary ? '<div class="asset-card-desc asset-card-ai"><span class="asset-field-label">AI 摘要</span><span class="asset-field-value">' + escapeHtml(machineSummary) + '</span></div>' : '') +
+        (structuredMeta ? '<div class="asset-card-desc asset-card-meta">' + escapeHtml(structuredMeta) + '</div>' : '') +
+        (tagsHtml ? '<div class="asset-card-tags">' + tagsHtml + '</div>' : '') +
+      '</div>';
+    var actionsHtml =
+      '<div class="asset-card-actions">' +
+        '<button class="asset-action-btn asset-btn-analyze" title="重新识别人物、时间、事件、场景和视频用途；不会覆盖用户描述" data-aid="' + a.asset_id + '">' + analysisLabel + '</button>' +
+        '<button class="asset-action-btn asset-btn-ask" title="带着这项素材进入 Agent，针对它继续提问" data-aid="' + a.asset_id + '">问念念</button>' +
+        '<button class="asset-action-btn asset-btn-edit" title="修改用户描述和标签" data-aid="' + a.asset_id + '">编辑</button>' +
+        '<button class="asset-action-btn asset-btn-del" title="删除这项素材" aria-label="删除素材" data-aid="' + a.asset_id + '">删除</button>' +
+      '</div>';
+    var editHtml =
       '<div class="asset-edit-area" id="edit_' + a.asset_id + '">' +
         '<input type="text" class="ae-desc" placeholder="描述" value="' + escapeAttr(a.description || '') + '">' +
         '<input type="text" class="ae-tags" placeholder="标签（逗号分隔）" value="' + escapeAttr((a.tags||[]).join(', ')) + '">' +
         '<button class="asset-edit-save" data-aid="' + a.asset_id + '">保存</button>' +
       '</div>';
 
+    // Image cards intentionally do not use asset-card-top. That wrapper is a
+    // horizontal flex row for compact file entries and can squeeze long image
+    // descriptions down to their min-content width.
+    card.innerHTML = isImage
+      ? thumbBlockHtml + checkHtml + bodyHtml + actionsHtml + editHtml
+      : '<div class="asset-card-top">' +
+          checkHtml +
+          '<div class="asset-card-icon">' + icon + '</div>' +
+          bodyHtml +
+          actionsHtml +
+        '</div>' +
+        editHtml;
+
     // 选择模式逻辑
     if (assetState.selectMode) {
       var checkbox = card.querySelector('.asset-checkbox');
       card.style.cursor = 'pointer';
       card.addEventListener('click', function(e) {
-        if (e.target.closest('.asset-btn-edit') || e.target.closest('.asset-btn-del') || e.target.closest('.asset-edit-area')) return;
+        if (e.target.closest('.asset-btn-edit') || e.target.closest('.asset-btn-del') || e.target.closest('.asset-btn-analyze') || e.target.closest('.asset-btn-ask') || e.target.closest('.asset-edit-area')) return;
         if (e.target !== checkbox) {
           checkbox.checked = !checkbox.checked;
         }
@@ -404,11 +549,33 @@
       area.classList.toggle('open');
     });
 
+    var analyzeButton = card.querySelector('.asset-btn-analyze');
+    if (analyzeButton) analyzeButton.addEventListener('click', async function() {
+      analyzeButton.disabled = true;
+      try {
+        var response = await NianAuth.fetch('/api/memorials/' + encodeURIComponent(cardMemorialId) + '/assets/' + encodeURIComponent(a.asset_id) + '/analyze', { method: 'POST' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        if (cardMemorialId !== state.currentId) return;
+        a.analysis_status = 'queued';
+        libToast('已加入素材分析队列，稍后刷新可查看结构化信息');
+      } catch(e) {
+        libToast('素材分析提交失败：' + e.message);
+      } finally {
+        analyzeButton.disabled = false;
+      }
+    });
+
+    var askButton = card.querySelector('.asset-btn-ask');
+    if (askButton) askButton.addEventListener('click', function() {
+      window.location.href = '/static/index.html?memorial_id=' + encodeURIComponent(cardMemorialId) + '&asset_id=' + encodeURIComponent(a.asset_id);
+    });
+
     // 删除按钮
     card.querySelector('.asset-btn-del').addEventListener('click', async function() {
       if (!confirm('删除这个素材？')) return;
-      await NianAuth.fetch('/api/memorials/' + state.currentId + '/assets/' + encodeURIComponent(a.asset_id), { method: 'DELETE' });
-      await selectMemorial(state.currentId);
+      await NianAuth.fetch('/api/memorials/' + encodeURIComponent(cardMemorialId) + '/assets/' + encodeURIComponent(a.asset_id), { method: 'DELETE' });
+      if (cardMemorialId !== state.currentId) return;
+      await selectMemorial(cardMemorialId);
       libToast('已删除');
     });
 
@@ -417,11 +584,12 @@
       var desc = card.querySelector('.ae-desc').value.trim();
       var tags = card.querySelector('.ae-tags').value.split(/[,，]/).map(function(s){return s.trim();}).filter(Boolean);
       try {
-        await NianAuth.fetch('/api/memorials/' + state.currentId + '/assets/' + encodeURIComponent(a.asset_id), {
+        await NianAuth.fetch('/api/memorials/' + encodeURIComponent(cardMemorialId) + '/assets/' + encodeURIComponent(a.asset_id), {
           method: 'PATCH',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ description: desc, tags: tags }),
         });
+        if (cardMemorialId !== state.currentId) return;
         a.description = desc; a.tags = tags;
         renderAssets();
         libToast('已保存');
@@ -455,17 +623,19 @@
 
   async function deleteSelectedAssets() {
     if (!state.currentId) return;
+    var targetMid = state.currentId;
     var ids = Array.from(assetState.selected);
     if (!ids.length) return;
     if (!confirm('确认删除选中的素材？此操作不可恢复。')) return;
 
     for (var i = 0; i < ids.length; i++) {
       var aid = ids[i];
-      await NianAuth.fetch('/api/memorials/' + state.currentId + '/assets/' + encodeURIComponent(aid), { method: 'DELETE' });
+      await NianAuth.fetch('/api/memorials/' + encodeURIComponent(targetMid) + '/assets/' + encodeURIComponent(aid), { method: 'DELETE' });
     }
+    if (targetMid !== state.currentId) return;
     assetState.selected.clear();
     assetState.selectMode = false;
-    await selectMemorial(state.currentId);
+    await selectMemorial(targetMid);
   }
 
   $('btnAssetMode').addEventListener('click', function () {
@@ -492,7 +662,125 @@
   }
 
   // ── 素材上传 ──
-  var libUploadPending = { file: null, kind: null };
+  var libUploadPending = { file: null, kind: null, memorialId: null };
+  var libUploadInFlight = false;
+  var LIB_UPLOAD_IDLE_LABEL = '上传并归档';
+  var libVoiceRecorder = null;
+  var libVoiceStream = null;
+  var libVoiceChunks = [];
+  var libVoiceBase = '';
+  var libVoiceRecognition = null;
+  var libVoiceFinal = '';
+
+  function setLibVoiceStatus(text, recording) {
+    var label = $('libUploadVoiceStatus');
+    var button = $('libUploadVoice');
+    if (label) label.textContent = text;
+    if (button) button.textContent = recording ? '结束录音' : '语音输入';
+  }
+
+  function setLibUploadBusy(busy) {
+    var button = $('libUploadConfirm');
+    libUploadInFlight = Boolean(busy);
+    if (!button) return;
+    button.disabled = libUploadInFlight;
+    button.textContent = libUploadInFlight ? '上传中...' : LIB_UPLOAD_IDLE_LABEL;
+    button.setAttribute && button.setAttribute('aria-busy', libUploadInFlight ? 'true' : 'false');
+  }
+
+  function stopLibVoice() {
+    if (libVoiceRecognition) {
+      try { libVoiceRecognition.stop(); } catch(e) {}
+      libVoiceRecognition = null;
+    }
+    if (libVoiceRecorder && libVoiceRecorder.state !== 'inactive') {
+      try { libVoiceRecorder.stop(); } catch(e) {}
+    }
+  }
+
+  async function toggleLibVoice() {
+    if (libVoiceRecorder && libVoiceRecorder.state === 'recording') {
+      stopLibVoice();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      setLibVoiceStatus('当前浏览器不支持录音，请手动输入', false);
+      return;
+    }
+    try {
+      libVoiceStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    } catch(e) {
+      setLibVoiceStatus('无法使用麦克风，请检查权限后重试', false);
+      return;
+    }
+    var textarea = $('libUploadDesc');
+    libVoiceBase = textarea.value.trim();
+    libVoiceFinal = '';
+    libVoiceChunks = [];
+    var types = ['audio/webm;codecs=opus','audio/webm','audio/ogg'];
+    var mimeType = types.find(function(type){ return MediaRecorder.isTypeSupported(type); }) || '';
+    libVoiceRecorder = new MediaRecorder(libVoiceStream, mimeType ? {mimeType:mimeType} : {});
+    libVoiceRecorder.ondataavailable = function(event) {
+      if (event.data && event.data.size) libVoiceChunks.push(event.data);
+    };
+    libVoiceRecorder.onstop = async function() {
+      if (libVoiceStream) libVoiceStream.getTracks().forEach(function(track){ track.stop(); });
+      setLibVoiceStatus('正在识别，请稍候…', false);
+      var localText = libVoiceFinal.trim();
+      try {
+        var form = new FormData();
+        var ext = mimeType.indexOf('ogg') >= 0 ? 'ogg' : 'webm';
+        form.append('audio', new Blob(libVoiceChunks, {type:mimeType || 'audio/webm'}), 'photo-description.' + ext);
+        var response = await fetch('/api/agent/asr', {method:'POST', body:form});
+        var data = await response.json().catch(function(){ return {}; });
+        var recognized = (data.text || '').trim() || localText;
+        if (!response.ok || !recognized) throw new Error(data.detail || '没有识别到文字');
+        textarea.value = (libVoiceBase ? libVoiceBase + '\n' : '') + recognized;
+        textarea.focus();
+        setLibVoiceStatus('已转成文字，请编辑确认后上传', false);
+      } catch(e) {
+        if (localText) {
+          textarea.value = (libVoiceBase ? libVoiceBase + '\n' : '') + localText;
+          textarea.focus();
+          setLibVoiceStatus('服务端识别失败，已保留浏览器识别文字', false);
+        } else {
+          setLibVoiceStatus('识别失败，请重试或手动输入', false);
+        }
+      } finally {
+        libVoiceRecorder = null;
+        libVoiceStream = null;
+        libVoiceChunks = [];
+      }
+    };
+    libVoiceRecorder.start();
+
+    // 与 Agent 普通麦克风一致：浏览器先实时预览，服务端 ASR 停止后校正。
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      try {
+        libVoiceRecognition = new SR();
+        libVoiceRecognition.lang = 'zh-CN';
+        libVoiceRecognition.continuous = true;
+        libVoiceRecognition.interimResults = true;
+        libVoiceRecognition.onresult = function(event) {
+          var interim = '';
+          for (var i = event.resultIndex; i < event.results.length; i++) {
+            var text = event.results[i][0].transcript || '';
+            if (event.results[i].isFinal) libVoiceFinal += text;
+            else interim += text;
+          }
+          textarea.value = (libVoiceBase ? libVoiceBase + '\n' : '') + libVoiceFinal + interim;
+        };
+        libVoiceRecognition.onerror = function(event) {
+          console.warn('[library voice preview]', event.error);
+        };
+        libVoiceRecognition.start();
+      } catch(e) {
+        libVoiceRecognition = null;
+      }
+    }
+    setLibVoiceStatus('正在录音，再点一次结束', true);
+  }
 
   (function setupLibUpload() {
     var wrapBtn  = $('btnLibUpload');
@@ -549,20 +837,40 @@
 
     // 弹窗取消
     var cancelBtn = $('libUploadCancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', function(){ $('libUploadModal').classList.remove('show'); });
+    if (cancelBtn) cancelBtn.addEventListener('click', function(){
+      stopLibVoice();
+      $('libUploadModal').classList.remove('show');
+      if (!libUploadInFlight) setLibUploadBusy(false);
+    });
 
     // 弹窗确认上传
     var confirmBtn = $('libUploadConfirm');
     if (confirmBtn) confirmBtn.addEventListener('click', doLibUpload);
+    var voiceBtn = $('libUploadVoice');
+    if (voiceBtn) voiceBtn.addEventListener('click', toggleLibVoice);
   })();
 
   function openLibUploadModal(kind, file) {
+    if (!state.currentId || !state.meta) {
+      libToast('请先选择并等待人物资料库加载完成');
+      return;
+    }
+    if (libUploadInFlight) {
+      libToast('上一项素材仍在上传，请稍候');
+      return;
+    }
+    setLibUploadBusy(false);
+    libUploadPending.memorialId = state.currentId;
     var titleMap = {
       audio: '上传语音 / 音频', image: '上传图片 / 照片', video: '上传视频',
       document_json: '上传聊天记录 (JSON)', document_pdf: '上传文件 (PDF/文档)',
       text: '添加纯文字描述',
     };
     $('libUploadTitle').textContent = titleMap[kind] || '上传素材';
+    var uploadTarget = $('libUploadTarget');
+    if (uploadTarget) {
+      uploadTarget.textContent = '本次素材将归档到「' + (state.meta.name || '未命名') + '」';
+    }
     var prev = $('libUploadPreview');
     if (file) {
       var icon = iconForKind(kind.split('_')[0]);
@@ -573,6 +881,9 @@
       prev.style.display = 'none';
     }
     $('libUploadDesc').value = '';
+    var voiceRow = $('libUploadVoiceRow');
+    if (voiceRow) voiceRow.style.display = kind === 'image' ? 'flex' : 'none';
+    setLibVoiceStatus('与聊天麦克风相同：浏览器预览，结束后精准识别', false);
     var textField = $('libTextDescField');
     if (kind === 'text') { textField.style.display = 'block'; $('libTextContent').value = ''; }
     else { textField.style.display = 'none'; }
@@ -581,79 +892,60 @@
   }
 
   async function doLibUpload() {
-    if (!state.currentId) { alert('请先选择纪念对象'); return; }
+    if (libUploadInFlight) return;
+    var targetMid = libUploadPending.memorialId;
+    if (!targetMid || targetMid !== state.currentId || !state.meta) {
+      alert('人物资料库已经切换。为避免归档到错误人物，请重新选择素材上传。');
+      $('libUploadModal').classList.remove('show');
+      return;
+    }
+    if (libVoiceRecorder && libVoiceRecorder.state === 'recording') {
+      stopLibVoice();
+      setLibVoiceStatus('请等待语音转成文字，确认内容后再上传', false);
+      return;
+    }
     var kind = libUploadPending.kind;
     var file = libUploadPending.file;
     var desc = $('libUploadDesc').value.trim();
-    var btn  = $('libUploadConfirm');
-    btn.disabled = true; btn.textContent = '上传中...';
+    var uploadedAsset = null;
+    setLibUploadBusy(true);
 
     try {
       if (kind === 'text') {
         // 纯文字 → 构造 Blob 上传
         var content = $('libTextContent').value.trim();
-        if (!content && !desc) { alert('请填写文字内容或描述'); btn.disabled=false; btn.textContent='上传并归档'; return; }
+        if (!content && !desc) { alert('请填写文字内容或描述'); return; }
         file = new File([content || desc], 'note_' + Date.now() + '.txt', { type: 'text/plain' });
       }
-      if (!file) { alert('请选择文件'); btn.disabled=false; btn.textContent='上传并归档'; return; }
+      if (!file) { alert('请选择文件'); return; }
       var form = new FormData();
       form.append('file', file);
       form.append('description', desc);
-      var r = await NianAuth.fetch('/api/memorials/' + state.currentId + '/upload', { method:'POST', body: form });
+      var r = await NianAuth.fetch('/api/memorials/' + encodeURIComponent(targetMid) + '/upload', { method:'POST', body: form });
       if (!r.ok) { var ed = await r.json().catch(function(){return{};}); throw new Error(ed.detail || 'HTTP '+r.status); }
       var d = await r.json();
+      uploadedAsset = d.asset || null;
       var tags = (d.asset && d.asset.tags || []).slice(0,4).join('、');
       $('libUploadModal').classList.remove('show');
       libToast('✓ 已归档' + (tags ? '，自动打标签：' + tags : ''), 3000);
-      await selectMemorial(state.currentId);
+      libUploadPending = { file: null, kind: null, memorialId: null };
     } catch(e) {
       libToast('上传失败：' + e.message);
     } finally {
-      btn.disabled = false; btn.textContent = '上传并归档';
+      // Always release the button as soon as the upload request itself ends.
+      // Do not tie the next upload to a full memorial reload.
+      setLibUploadBusy(false);
+    }
+
+    if (uploadedAsset && targetMid === state.currentId) {
+      var existingIndex = state.assets.findIndex(function(asset) {
+        return asset.asset_id === uploadedAsset.asset_id;
+      });
+      if (existingIndex >= 0) state.assets[existingIndex] = uploadedAsset;
+      else state.assets.unshift(uploadedAsset);
+      renderAssets();
     }
   }
-
-  // ── 对话 ──
-
-  async function loadConversations() {
-
-    try {
-
-      var r = await NianAuth.fetch('/api/memorials/' + state.currentId + '/conversations?limit=300');
-
-      var d = await r.json();
-
-      var box = $('convList');
-
-      if (!d.conversations || !d.conversations.length) {
-
-        box.innerHTML = '<div style="color:#8a7654;text-align:center;padding:30px">还没有对话记录。</div>';
-
-        return;
-
-      }
-
-      box.innerHTML = d.conversations.map(function (c) {
-
-        var role = c.role === 'user' ? '我' : '念念';
-
-        return '<div class="conv-row ' + (c.role === 'user' ? 'user' : '') + '">' +
-
-          '<div class="role">' + role + '</div>' +
-
-          '<div><div class="content">' + escapeHtml(c.content || '') + '</div>' +
-
-          '<div class="ts">' + (c.ts || '') + '</div></div>' +
-
-          '</div>';
-
-      }).join('');
-
-    } catch (e) { console.warn(e); }
-
-  }
-
-
 
   // ── 生成传记 ──
 
@@ -1143,42 +1435,33 @@
 
   // ── 对话 ──
 
-  async function loadConversations() {
-
+  async function loadConversations(mid, requestSeq) {
     try {
-
-      var r = await NianAuth.fetch('/api/memorials/' + state.currentId + '/conversations?limit=300');
-
+      var r = await NianAuth.fetch(
+        '/api/memorials/' + encodeURIComponent(mid) + '/conversations?limit=300'
+      );
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       var d = await r.json();
-
+      if (requestSeq !== state.loadSeq || mid !== state.currentId) return;
+      state.conversations = Array.isArray(d.conversations) ? d.conversations : [];
       var box = $('convList');
-
-      if (!d.conversations || !d.conversations.length) {
-
+      if (!state.conversations.length) {
         box.innerHTML = '<div style="color:#8a7654;text-align:center;padding:30px">还没有对话记录。</div>';
-
         return;
-
       }
-
-      box.innerHTML = d.conversations.map(function (c) {
-
+      box.innerHTML = state.conversations.map(function (c) {
         var role = c.role === 'user' ? '我' : '念念';
-
         return '<div class="conv-row ' + (c.role === 'user' ? 'user' : '') + '">' +
-
           '<div class="role">' + role + '</div>' +
-
           '<div><div class="content">' + escapeHtml(c.content || '') + '</div>' +
-
           '<div class="ts">' + (c.ts || '') + '</div></div>' +
-
           '</div>';
-
       }).join('');
-
-    } catch (e) { console.warn(e); }
-
+    } catch (e) {
+      if (requestSeq !== state.loadSeq || mid !== state.currentId) return;
+      console.warn('[library] conversations failed', e);
+      $('convList').innerHTML = '<div style="color:#b54a3f;text-align:center;padding:30px">对话记录加载失败，请稍后重试。</div>';
+    }
   }
 
 
@@ -1206,21 +1489,26 @@
   // ── 保存 ──
 
   $('btnSave').addEventListener('click', async function () {
-
+    if (!state.currentId || !state.dossier) return;
+    var targetMid = state.currentId;
+    var requestSeq = state.loadSeq;
     readInputsToDossier();
+    var dossierPayload = JSON.parse(JSON.stringify(state.dossier));
 
     try {
 
-      var r = await NianAuth.fetch('/api/memorials/' + state.currentId + '/dossier', {
+      var r = await NianAuth.fetch('/api/memorials/' + encodeURIComponent(targetMid) + '/dossier', {
 
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
 
-        body: JSON.stringify({ dossier: state.dossier })
+        body: JSON.stringify({ dossier: dossierPayload })
 
       });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
 
       var d = await r.json();
 
+      if (targetMid !== state.currentId || requestSeq !== state.loadSeq) return;
       state.dossier = d.dossier;
 
       // 同步 product_intent 到 meta
@@ -1229,7 +1517,7 @@
 
       if (pi !== undefined) {
 
-        await NianAuth.fetch('/api/memorials/' + state.currentId, {
+        await NianAuth.fetch('/api/memorials/' + encodeURIComponent(targetMid), {
 
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
 
@@ -1256,9 +1544,11 @@
   $('btnDelete').addEventListener('click', async function () {
 
     if (!confirm('确认删除该纪念对象？所有对话、资料、文件将一并删除。')) return;
+    var targetMid = state.currentId;
 
-    await NianAuth.fetch('/api/memorials/' + state.currentId, { method: 'DELETE' });
+    await NianAuth.fetch('/api/memorials/' + encodeURIComponent(targetMid), { method: 'DELETE' });
 
+    if (targetMid !== state.currentId) return;
     state.currentId = null;
 
     NianAuth.setActiveMemorialId('');
@@ -1299,9 +1589,9 @@
 
     $('newName').value = ''; $('newRelation').value = ''; $('newNote').value = '';
 
+    NianAuth.setActiveMemorialId(d.memorial.memorial_id);
+    state.currentId = d.memorial.memorial_id;
     await loadMemorials();
-
-    selectMemorial(d.memorial.memorial_id);
 
   });
 
