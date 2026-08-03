@@ -77,7 +77,8 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
     result = sm.deep_search(req.query.strip(), req.extra)
     # deep_search 现在直接返回结构化字段，无需二次提取
     fields = {k: result[k] for k in ("name","birth_date","death_date","occupation",
-              "locations","personality_keywords","quotes","objects","core_memories")
+              "locations","personality_keywords","quotes","objects","core_memories",
+              "family_memory_text")
               if k in result}
 
     archived_path: Optional[str] = None
@@ -161,7 +162,7 @@ def deep_search(req: DeepSearchReq) -> Dict[str, Any]:
                             "title": mem.get("title", "AI 搜索记忆"),
                             "content": mem["content"],
                             "source_turn_ids": [],
-                            "tags": ["deep_search", "auto"],
+                            "tags": ["deep_search", "public_biography", "auto"],
                         }
                         existing_m.insert(0, entry)
 

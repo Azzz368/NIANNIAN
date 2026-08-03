@@ -93,10 +93,21 @@ def get_biography_assets(s: dict) -> List[dict]:
     assets: List[dict] = []
     seen: set[str] = set()
     form = s.get("form_data", {}) or {}
+    # 新版传记页面会显式传入资料库勾选的照片；空列表代表本次不使用图片。
+    # 字段缺省时保持旧流程兼容：仍自动带入所有已有素材。
+    has_selection = "selected_asset_ids" in form
+    selected_ids = {
+        str(asset_id) for asset_id in (form.get("selected_asset_ids") or [])
+        if asset_id
+    }
+
+    def include(asset: dict) -> bool:
+        asset_id = str(asset.get("asset_id") or asset.get("saved_as") or asset.get("filename") or "")
+        return not has_selection or asset_id in selected_ids
 
     for asset in s.get("assets", []) or []:
         norm = normalize_bio_asset(asset)
-        if norm["url"] and norm["asset_id"] not in seen:
+        if include(asset) and norm["url"] and norm["asset_id"] not in seen:
             assets.append(norm)
             seen.add(norm["asset_id"])
 
@@ -107,7 +118,7 @@ def get_biography_assets(s: dict) -> List[dict]:
             stored_assets = core_storage.list_assets(user_id, memorial_id)
             for asset in stored_assets:
                 norm = normalize_bio_asset(asset)
-                if norm["url"] and norm["asset_id"] not in seen:
+                if include(asset) and norm["url"] and norm["asset_id"] not in seen:
                     assets.append(norm)
                     seen.add(norm["asset_id"])
         except Exception:
@@ -319,6 +330,10 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     返回结构：{"organized": "...", "name": "...", "quotes": [...], "core_memories": [...], ...}
     """
     import os as _os
+    try:
+        research_system = load_skill(str(SKILLS_DIR / "BIO00-public-figure-research.md"))
+    except Exception:
+        research_system = _DEEP_SEARCH_SYSTEM
     user_msg = f"请帮我搜索并整理关于以下人物的生平资料：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
@@ -346,7 +361,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     resp = _ds.chat.completions.create(
                         model=ds_model,
                         messages=[
-                            {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                            {"role": "system", "content": research_system},
                             {"role": "user",   "content": user_msg},
                         ],
                         extra_body={"enable_search": True},
@@ -369,7 +384,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
             resp = PRIMARY_CLIENT.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                    {"role": "system", "content": research_system},
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.4,
@@ -382,9 +397,9 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
             continue
 
     # ── 3) 降级：302.ai 知识库 ──
-    kb_system = _DEEP_SEARCH_SYSTEM.replace(
-        "具备联网实时搜索能力。",
-        "请根据已有知识尽量全面作答；若信息存在时效性，请在 organized 字段里注明（信息可能有更新）。",
+    kb_system = research_system + (
+        "\n\n当前无法联网。请只依据已有知识作答，并在 organized 和 family_memory_text 中"
+        "明确提示信息可能有更新，不能声称已经检索或核验来源。"
     )
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:

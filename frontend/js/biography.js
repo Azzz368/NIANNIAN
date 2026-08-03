@@ -13,7 +13,9 @@
         bioState: { sid: null, finalContent: null, polling: false, paused: false, canceled: false, completed: false, debugMode: false, stepSummary: '', lastBubbleStep: '' },
         memorials: [],
         form: {},
-        uploadQueue: []
+        uploadQueue: [],
+        libraryImages: [],
+        selectedAssetIds: []
     };
 
     const FIELD_IDS = ['deceased_name', 'birth_date', 'death_date', 'occupation'];
@@ -96,17 +98,20 @@
         });
     }
     function clearAllStateAndStorage() {
+        const activeMemorialId = NianAuth.getActiveMemorialId() || state.currentMemId;
         // 1. 重置 state 对象
         state.step = 1;
-        state.currentMemId = null;
+        // 新建传记不应丢失资料库中已指定的角色。
+        state.currentMemId = activeMemorialId || null;
         state.bioState = {
             sid: null, finalContent: null, polling: false, paused: false, 
             canceled: false, completed: false, debugMode: false, 
             stepSummary: '', lastBubbleStep: '', editorOpen: false, editorContent: null
         };
-        state.memorials = [];
         state.form = {};
         state.uploadQueue = [];
+        state.libraryImages = [];
+        state.selectedAssetIds = [];
 
         // 2. 清除所有 localStorage 中与此功能相关的条目
         const keysToRemove = [];
@@ -361,6 +366,126 @@
         }
     }
 
+    function isImageAsset(asset) {
+        return asset?.kind === 'image' || /^image\//i.test(asset?.mime || '') || /\.(jpe?g|png|webp|gif)$/i.test(asset?.filename || '');
+    }
+
+    function assetDisplayUrl(asset) {
+        const token = window.localStorage.getItem('nian_token') || '';
+        const url = asset?.url || '';
+        return token && url ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) : url;
+    }
+
+    function dossierStory(detail) {
+        const dossier = detail?.dossier || {};
+        const subject = dossier.subject || {};
+        const parts = [];
+        const intro = [subject.name, subject.birth ? `生于${subject.birth}` : '', subject.passing ? `卒于${subject.passing}` : '', subject.occupation || ''].filter(Boolean).join('，');
+        if (intro) parts.push(intro + '。');
+        const traits = dossier.personality || {};
+        const keywords = [...(traits.keywords || []), ...(traits.habits || [])].filter(Boolean);
+        if (keywords.length) parts.push(`性格与生活印记：${keywords.join('、')}。`);
+        (dossier.memories || []).slice(0, 8).forEach(memory => {
+            if (memory?.content) parts.push(memory.title ? `${memory.title}：${memory.content}` : memory.content);
+        });
+        (dossier.quotes || []).slice(0, 3).forEach(quote => { if (quote) parts.push(`“${quote}”`); });
+        return parts.join('\n\n');
+    }
+
+    function renderLibraryPhotos() {
+        const grid = $('libraryPhotoGrid');
+        const status = $('libraryPhotoStatus');
+        const hint = $('selectedPhotoHint');
+        if (!grid || !status || !hint) return;
+        hint.textContent = `已选 ${state.selectedAssetIds.length} 张`;
+        if (!state.currentMemId) {
+            status.textContent = '请先在资料库选择一位角色。';
+            grid.innerHTML = '<div class="library-photo-empty">尚未选择资料库角色</div>';
+            return;
+        }
+        status.textContent = state.libraryImages.length ? `已加载 ${state.libraryImages.length} 张图片，勾选后才会用于本次传记。` : '当前角色的资料库还没有图片。';
+        if (!state.libraryImages.length) {
+            grid.innerHTML = '<div class="library-photo-empty">暂无可选图片。可在下方补充上传，或前往资料库添加素材。</div>';
+            return;
+        }
+        grid.innerHTML = state.libraryImages.map(asset => {
+            const selected = state.selectedAssetIds.includes(asset.asset_id);
+            return `<button class="library-photo-item${selected ? ' selected' : ''}" type="button" data-asset-id="${escapeHtml(asset.asset_id)}" aria-pressed="${selected}">
+                <img src="${escapeHtml(assetDisplayUrl(asset))}" alt="${escapeHtml(asset.filename || '资料库照片')}" loading="lazy">
+                <span class="library-photo-check">${selected ? '✓' : ''}</span>
+                <span class="library-photo-name">${escapeHtml(asset.filename || '未命名照片')}</span>
+            </button>`;
+        }).join('');
+        grid.querySelectorAll('[data-asset-id]').forEach(button => {
+            button.addEventListener('click', () => toggleLibraryPhoto(button.dataset.assetId));
+        });
+    }
+
+    function toggleLibraryPhoto(assetId) {
+        if (!assetId) return;
+        state.selectedAssetIds = state.selectedAssetIds.includes(assetId)
+            ? state.selectedAssetIds.filter(id => id !== assetId)
+            : [...state.selectedAssetIds, assetId];
+        state.form.selected_asset_ids = state.selectedAssetIds;
+        saveFormState();
+        renderLibraryPhotos();
+    }
+
+    async function loadCurrentMemorialContext({ fillStory = true } = {}) {
+        if (!state.currentMemId) { renderLibraryPhotos(); return; }
+        try {
+            const response = await NianAuth.fetch(`/api/memorials/${encodeURIComponent(state.currentMemId)}`);
+            if (!response.ok) throw new Error('读取资料库失败');
+            const detail = await response.json();
+            state.libraryImages = (detail.assets || []).filter(isImageAsset);
+            const validIds = new Set(state.libraryImages.map(asset => asset.asset_id));
+            const savedIds = Array.isArray(state.form.selected_asset_ids) ? state.form.selected_asset_ids : [];
+            state.selectedAssetIds = savedIds.filter(id => validIds.has(id));
+            if (fillStory && !$('f_family_memory_text')?.value.trim()) {
+                const story = dossierStory(detail);
+                if (story) {
+                    $('f_family_memory_text').value = story;
+                    state.form.family_memory_text = story;
+                }
+            }
+            renderLibraryPhotos();
+        } catch (error) {
+            console.warn('load current memorial context failed', error);
+            const status = $('libraryPhotoStatus');
+            if (status) status.textContent = '资料库素材读取失败，请稍后重试。';
+        }
+    }
+
+    async function researchPublicBiography() {
+        const name = $('f_deceased_name')?.value.trim();
+        if (!name) { alert('请先填写人物姓名'); return; }
+        if (!state.currentMemId) await ensureCurrentMemorial(readStep1Form());
+        if (!state.currentMemId) { alert('无法关联当前资料库角色'); return; }
+        const btn = $('btnResearchPublicBio');
+        const original = btn?.textContent || '';
+        if (btn) { btn.disabled = true; btn.textContent = '正在联网整理...'; }
+        try {
+            const response = await NianAuth.fetch('/api/intake/deep-search', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: name, memorial_id: state.currentMemId, user_id: NianAuth.getUser()?.user_id || '' })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || '联网搜索失败');
+            const story = result.fields?.family_memory_text || result.organized || '';
+            if (story) {
+                $('f_family_memory_text').value = story;
+                state.form.family_memory_text = story;
+                saveFormState();
+            }
+            await loadCurrentMemorialContext({ fillStory: false });
+            alert(result.fallback ? '已按可用知识整理，请核对内容后使用。' : '已联网补全公开生平，请核对内容后使用。');
+        } catch (error) {
+            alert('公开生平补全失败：' + error.message);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = original; }
+        }
+    }
+
     function populateMemSelect() {
         const sel = $('memSelect');
         if (!sel) return;
@@ -409,6 +534,7 @@
         const exportMenu = $('exportMenu');
         const btnExportPDF = $('btnExportPDF');
         const btnExportDOCX = $('btnExportDOCX');
+        const btnResearchPublicBio = $('btnResearchPublicBio');
 
         const hideExportMenu = () => exportMenu?.classList.add('hidden');
 
@@ -429,6 +555,7 @@
         document.addEventListener('click', hideExportMenu);
 
         if (btnFillTest) btnFillTest.addEventListener('click', fillTestData);
+        if (btnResearchPublicBio) btnResearchPublicBio.addEventListener('click', researchPublicBiography);
         if (btnLoadDebug) btnLoadDebug.addEventListener('click', loadDebugMode);
         if (btnToStep2) btnToStep2.addEventListener('click', gotoStep2);
         if (btnToStep3) btnToStep3.addEventListener('click', gotoStep3);
@@ -696,6 +823,7 @@
         state.form = { ...state.form, ...step1 };
         saveFormState();
         await ensureCurrentMemorial(step1);
+        await loadCurrentMemorialContext();
         showStep(2);
     }
 
@@ -806,7 +934,8 @@
                     relation: mem.relation || mem.subject?.relation || '',
                     family_memory_text: state.form.family_memory_text || '',
                     last_wishes: state.form.last_wishes || '',
-                    photos: []
+                    photos: [],
+                    selected_asset_ids: state.selectedAssetIds
                 }
             };
 
@@ -1393,6 +1522,7 @@
                 state.form = { ...state.form, ...restoredForm };
             }
             applyDeepSearchFillIfPresent();
+            state.selectedAssetIds = Array.isArray(state.form.selected_asset_ids) ? state.form.selected_asset_ids : [];
             
             const restoredStep = restoreCurrentStep();
             
@@ -1420,6 +1550,7 @@
                 showStep(1, { silent: true });
             }
         }
+        await loadCurrentMemorialContext();
     };
 
     async function prepareUpload(files) {
@@ -1482,6 +1613,14 @@
                 if (!r.ok) {
                     const text = await r.text();
                     throw new Error(text || '上传失败');
+                }
+                const uploaded = await r.json();
+                if (uploaded.asset && isImageAsset(uploaded.asset)) {
+                    state.libraryImages.push(uploaded.asset);
+                    state.selectedAssetIds = [...new Set([...state.selectedAssetIds, uploaded.asset.asset_id])];
+                    state.form.selected_asset_ids = state.selectedAssetIds;
+                    saveFormState();
+                    renderLibraryPhotos();
                 }
                 if (file.type.startsWith('image/')) {
                     const url = URL.createObjectURL(file);
