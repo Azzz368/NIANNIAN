@@ -1,7 +1,7 @@
 # backend/routers/agent.py — 念念智能体 · 文本流式 + ASR + 资料库智能提取
 import os, json, io, base64 as _b64
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from starlette.background import BackgroundTask, BackgroundTasks
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
@@ -10,7 +10,7 @@ from openai import OpenAI
 from core import security, storage
 from core import memory as memory_mod
 from core.dashscope_config import compatible_base_url
-from services import asset_vision, material_context
+from services import asset_vision, material_context, director_script
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -66,6 +66,18 @@ class AgentChatRequest(BaseModel):
     history: List[AgentMessage] = []
     asset_ids: List[str] = []
     memorial_id: Optional[str] = None     # 关联的纪念对象（已登录时由前端传入）
+    workflow_mode: str = "chat"          # chat / director_script；默认模式完全保持原行为
+
+
+class DirectorScriptCreateRequest(BaseModel):
+    memorial_id: str
+    target_duration_sec: Optional[int] = None
+    aspect_ratio: str = "16:9"
+    style: str = "温暖、克制、纪实"
+
+
+class DirectorScriptUpdateRequest(BaseModel):
+    script: str
 
 
 # ─── 后台任务：把对话写入资料库 + LLM 提取 dossier 补丁 ──────────
@@ -272,6 +284,8 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
     """流式 SSE 端点：纯文字流。若登录 + 传入 memorial_id，则后台写入对话并提取资料库。"""
     client = get_client()
 
+    edit_mode = req.workflow_mode in ("edit_plan", "director_script")
+    readiness_snapshot: Optional[Dict[str, Any]] = None
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     # 注入当前 dossier 概要，让 agent 知道已收集到什么
     if user and req.memorial_id:
@@ -292,6 +306,17 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
                 ctx_lines.append(f"用户当前产品倾向：{pi.get('primary')}")
             if ctx_lines:
                 messages.append({"role": "system", "content": "【资料库摘要】\n" + "\n".join(ctx_lines)})
+            if edit_mode:
+                readiness_snapshot = director_script.evaluate_readiness(
+                    user["user_id"], req.memorial_id
+                )
+                messages.append({"role": "system", "content": (
+                    "【导演脚本编辑模式】用户主动进入了独立的导演脚本资料整理流程。"
+                    "只收集制作导演脚本所缺的信息，不改变普通聊天流程。"
+                    "一次只问一个最重要的问题，不得编造人物、事件或素材。"
+                    "如果资料已经足够，请告诉用户可以点击“生成导演脚本”，不要在聊天正文里提前输出整份脚本。\n"
+                    + json.dumps(readiness_snapshot, ensure_ascii=False)
+                )})
         except Exception:
             pass
 
@@ -385,6 +410,18 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
 
     full_reply = {"text": ""}   # 闭包共享
 
+    def finalize_edit_turn():
+        """编辑模式在 [DONE] 前完成归档，以便前端拿到最新完整度。"""
+        if not (
+            edit_mode and user and req.memorial_id
+            and storage.get_memorial(user["user_id"], req.memorial_id)
+        ):
+            return None
+        _persist_and_extract(
+            user["user_id"], req.memorial_id, req.message, full_reply["text"]
+        )
+        return director_script.evaluate_readiness(user["user_id"], req.memorial_id)
+
     def generate():
         if direct_catalog_reply:
             full_reply["text"] = direct_catalog_reply
@@ -404,6 +441,22 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
                 ensure_ascii=False,
             )
             yield f"data: {payload}\n\n"
+            if edit_mode:
+                yield 'data: {"type":"processing","message":"正在归档并检查资料完整度"}\n\n'
+                try:
+                    current_readiness = finalize_edit_turn()
+                    if current_readiness:
+                        payload = json.dumps(
+                            {"type": "plan_readiness", **current_readiness},
+                            ensure_ascii=False,
+                        )
+                        yield f"data: {payload}\n\n"
+                except Exception as exc:
+                    payload = json.dumps(
+                        {"type": "error", "message": f"资料完整度检查失败：{exc}"},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {payload}\n\n"
             yield "data: [DONE]\n\n"
             return
         try:
@@ -430,11 +483,30 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
         except Exception as e:
             payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
             yield f"data: {payload}\n\n"
+        if edit_mode:
+            yield 'data: {"type":"processing","message":"正在归档并检查资料完整度"}\n\n'
+            try:
+                current_readiness = finalize_edit_turn()
+                if current_readiness:
+                    payload = json.dumps(
+                        {"type": "plan_readiness", **current_readiness},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {payload}\n\n"
+            except Exception as exc:
+                payload = json.dumps(
+                    {"type": "error", "message": f"资料完整度检查失败：{exc}"},
+                    ensure_ascii=False,
+                )
+                yield f"data: {payload}\n\n"
         yield "data: [DONE]\n\n"
 
     # 后台任务：在 SSE 关闭后异步提取
     bg = None
-    if user and req.memorial_id and storage.get_memorial(user["user_id"], req.memorial_id):
+    if (
+        not edit_mode and user and req.memorial_id
+        and storage.get_memorial(user["user_id"], req.memorial_id)
+    ):
         background_jobs = BackgroundTasks()
 
         def _after():
@@ -455,6 +527,103 @@ async def agent_chat(req: AgentChatRequest, user = Depends(security.get_current_
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         background=bg,
+    )
+
+
+def _require_memorial(user_id: str, memorial_id: str) -> Dict[str, Any]:
+    memorial = storage.get_memorial(user_id, memorial_id)
+    if not memorial:
+        raise HTTPException(404, "未找到当前人物资料库")
+    return memorial
+
+
+@router.get("/director-script/readiness")
+def director_script_readiness(
+    memorial_id: str,
+    user=Depends(security.get_current_user),
+):
+    _require_memorial(user["user_id"], memorial_id)
+    try:
+        return director_script.evaluate_readiness(user["user_id"], memorial_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@router.post("/director-script")
+def create_director_script(
+    req: DirectorScriptCreateRequest,
+    user=Depends(security.get_current_user),
+):
+    _require_memorial(user["user_id"], req.memorial_id)
+    try:
+        generated = director_script.generate_director_script(
+            user["user_id"],
+            req.memorial_id,
+            target_duration_sec=req.target_duration_sec,
+            aspect_ratio=req.aspect_ratio,
+            style=req.style,
+        )
+        saved = director_script.save_director_script(
+            user["user_id"],
+            req.memorial_id,
+            generated["project_id"],
+            generated["script"],
+        )
+        return {
+            "project_id": generated["project_id"],
+            "script": saved,
+        }
+    except director_script.DirectorScriptError as exc:
+        readiness = director_script.evaluate_readiness(user["user_id"], req.memorial_id)
+        raise HTTPException(409, {"message": str(exc), "readiness": readiness})
+    except Exception as exc:
+        raise HTTPException(502, f"导演 Agent 生成失败：{exc}")
+
+
+@router.get("/director-script/{memorial_id}/latest")
+def latest_director_script(
+    memorial_id: str,
+    user=Depends(security.get_current_user),
+):
+    _require_memorial(user["user_id"], memorial_id)
+    result = director_script.get_latest_director_script(user["user_id"], memorial_id)
+    return result or {"project_id": "", "script": ""}
+
+
+@router.put("/director-script/{memorial_id}/{project_id}")
+def update_director_script(
+    memorial_id: str,
+    project_id: str,
+    req: DirectorScriptUpdateRequest,
+    user=Depends(security.get_current_user),
+):
+    _require_memorial(user["user_id"], memorial_id)
+    try:
+        saved = director_script.save_director_script(
+            user["user_id"], memorial_id, project_id, req.script
+        )
+        return {"project_id": project_id, "script": saved}
+    except director_script.DirectorScriptError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.get("/director-script/{memorial_id}/{project_id}/download")
+def download_director_script(
+    memorial_id: str,
+    project_id: str,
+    user=Depends(security.get_current_user),
+):
+    _require_memorial(user["user_id"], memorial_id)
+    try:
+        path = director_script.director_script_path(user["user_id"], memorial_id, project_id)
+    except director_script.DirectorScriptError as exc:
+        raise HTTPException(422, str(exc))
+    if not path.exists():
+        raise HTTPException(404, "未找到导演脚本")
+    return FileResponse(
+        path=str(path),
+        media_type="text/markdown; charset=utf-8",
+        filename=f"{project_id}_director_script.md",
     )
 
 

@@ -244,6 +244,176 @@ html, body {
   border-color: rgba(196, 150, 74, 0.7);
 }
 
+/* ── Agent 剪辑方案编辑模式 ── */
+.edit-plan-mode-btn {
+  min-width: 58px;
+  height: 52px;
+  padding: 0 10px;
+  border-radius: 26px;
+  border: 1px solid rgba(196, 150, 74, 0.42);
+  background: rgba(255, 255, 255, 0.35);
+  color: #80683f;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.65rem;
+  backdrop-filter: blur(5px);
+  transition: 0.2s ease;
+  pointer-events: auto;
+}
+.edit-plan-mode-btn:hover,
+.edit-plan-mode-btn.active {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(172,126,53,.92), rgba(219,177,97,.92));
+  box-shadow: 0 6px 18px rgba(125, 88, 32, .2);
+}
+
+.edit-plan-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: rgba(43, 34, 22, .34);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+.edit-plan-panel.open { display: flex; }
+.edit-plan-card {
+  width: min(780px, 96vw);
+  max-height: min(820px, 92vh);
+  overflow-y: auto;
+  padding: 24px;
+  box-sizing: border-box;
+  border-radius: 20px;
+  background: rgba(255, 252, 246, .98);
+  border: 1px solid rgba(196, 150, 74, .28);
+  box-shadow: 0 24px 70px rgba(45, 33, 18, .22);
+}
+.edit-plan-header,
+.edit-plan-score-row,
+.edit-plan-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.edit-plan-header h2 {
+  margin: 3px 0 0;
+  color: #342819;
+  font-family: "Songti SC", serif;
+  font-size: 1.35rem;
+}
+.edit-plan-eyebrow {
+  color: #b2823a;
+  font-size: .7rem;
+  letter-spacing: .1em;
+}
+.edit-plan-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  color: #7b6749;
+  background: rgba(174, 130, 59, .1);
+  font-size: 1.35rem;
+  cursor: pointer;
+}
+.edit-plan-readiness {
+  margin: 20px 0 14px;
+  padding: 15px 16px;
+  border-radius: 12px;
+  background: rgba(196, 150, 74, .08);
+}
+.edit-plan-score-row { color: #675438; font-size: .86rem; }
+.edit-plan-score-row strong { color: #a67226; font-size: 1rem; }
+.edit-plan-progress {
+  height: 7px;
+  margin: 10px 0 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: rgba(115, 87, 45, .12);
+}
+.edit-plan-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #b47d2c, #e2bd75);
+  transition: width .3s ease;
+}
+.edit-plan-missing { color: #806d51; font-size: .78rem; line-height: 1.55; }
+.edit-plan-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.edit-plan-settings label {
+  color: #8a7654;
+  font-size: .72rem;
+}
+.edit-plan-settings input,
+.edit-plan-settings select {
+  width: 100%;
+  height: 38px;
+  margin-top: 5px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border: 1px solid rgba(196, 150, 74, .25);
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  color: #3a2f22;
+  font-family: inherit;
+}
+.edit-plan-empty {
+  padding: 18px;
+  border: 1px dashed rgba(196, 150, 74, .35);
+  border-radius: 10px;
+  color: #756246;
+  font-size: .84rem;
+  line-height: 1.7;
+  text-align: center;
+}
+.edit-plan-json {
+  display: none;
+  width: 100%;
+  min-height: 340px;
+  padding: 14px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid rgba(196, 150, 74, .3);
+  border-radius: 10px;
+  outline: none;
+  background: #fffdf8;
+  color: #403323;
+  font: 15px/1.85 "Songti SC", "Noto Serif SC", serif;
+  white-space: pre-wrap;
+  letter-spacing: .01em;
+}
+.edit-plan-json.show { display: block; }
+.edit-plan-message { min-height: 20px; padding-top: 8px; color: #806d51; font-size: .78rem; }
+.edit-plan-message.error { color: #a33a2f; }
+.edit-plan-actions { justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.edit-plan-actions button {
+  padding: 9px 14px;
+  border: 1px solid rgba(196, 150, 74, .32);
+  border-radius: 8px;
+  background: #fff;
+  color: #765b32;
+  font-family: inherit;
+  cursor: pointer;
+}
+.edit-plan-actions button.primary { border: 0; color: #fff; background: linear-gradient(135deg, #b17c30, #dfb96e); }
+.edit-plan-actions button:disabled { opacity: .45; cursor: not-allowed; }
+
 /* ── 主界面聊天框右侧上传图片按钮（透明 + 号） ── */
 .immersive-upload-btn {
   width: 52px;
@@ -642,6 +812,27 @@ html, body {
     width: 42px;
     height: 42px;
   }
+
+  .edit-plan-mode-btn {
+    flex: 0 0 auto;
+    min-width: 46px;
+    width: 46px;
+    height: 42px;
+    padding: 0 5px;
+    border-radius: 21px;
+    font-size: .58rem;
+  }
+
+  .edit-plan-panel { padding: 0; align-items: stretch; }
+  .edit-plan-card {
+    width: 100vw;
+    max-height: 100vh;
+    min-height: 100vh;
+    border-radius: 0;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .edit-plan-settings { grid-template-columns: 1fr; }
+  .edit-plan-json { min-height: 42vh; }
 
   /* ── 上传图片按钮 ── */
   .immersive-upload-btn {
