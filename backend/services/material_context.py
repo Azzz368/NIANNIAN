@@ -263,6 +263,18 @@ def build_memorial_context(session: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(asset, dict)
         ]
 
+    # 当建档页显式勾选资料库照片时，分镜只使用这些图片；音频、视频和文本素材仍保留。
+    # 未提供字段的旧会话保持完整素材库行为。
+    if "selected_asset_ids" in form_data:
+        selected_ids = {
+            str(asset_id) for asset_id in (form_data.get("selected_asset_ids") or [])
+            if asset_id
+        }
+        catalog = [
+            asset for asset in catalog
+            if asset.get("kind") != "image" or asset.get("asset_id") in selected_ids
+        ]
+
     session_chat = [
         {
             "role": _text(turn.get("role"), 24),
