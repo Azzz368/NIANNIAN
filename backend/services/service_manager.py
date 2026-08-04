@@ -872,55 +872,41 @@ def gen_scene_image(
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
 
-    # 真实素材优先。分镜已经在 MV04 后处理时绑定 source_asset_ids；
-    # 若首个匹配项是图片，直接复用原图并生成稳定的公网缓存，不调用生图模型。
+    # 真实素材只作为图生图的参考底图，不再直接把原始照片当成分镜画面使用。
+    # 前端每个分镜都可以独立挑选参考图（ref_b64）；若用户未选择，则在分镜绑定的
+    # source_asset_ids 中取第一张图片作为默认参考，仍然会调用生图模型重新生成画面。
     form = s.get("form_data", {}) or {}
     user_id = form.get("user_id", "")
     memorial_id = form.get("memorial_id", "")
-    source_ids = scene.get("source_asset_ids") or []
-    if user_id and memorial_id and source_ids:
-        try:
-            import base64 as _base64
+    source_asset_id = ""
+    reference_b64 = ref_b64 or ""
 
-            stored_assets = core_storage.list_assets(user_id, memorial_id)
-            by_id = {
-                asset.get("asset_id"): asset
-                for asset in stored_assets
-                if asset.get("kind") == "image"
-            }
-            source_asset = next(
-                (by_id.get(asset_id) for asset_id in source_ids if by_id.get(asset_id)),
-                None,
-            )
-            if source_asset:
-                source_path = (
-                    core_storage.memorial_dir(user_id, memorial_id)
-                    / "assets"
-                    / source_asset.get("stored_name", "")
-                )
-                source_bytes = source_path.read_bytes()
-                source_b64 = _base64.b64encode(source_bytes).decode("ascii")
-                source_mime = source_asset.get("mime") or "image/jpeg"
-                data_url = f"data:{source_mime};base64,{source_b64}"
-                public_url = _public_scene_frame_url(
-                    sid,
-                    scene_idx,
-                    source_b64,
-                    public_base_url=public_base_url,
-                )
-                scene["_image_data_url"] = data_url
-                scene["_image_source_asset_id"] = source_asset.get("asset_id")
-                scene["_image_reused"] = True
-                if public_url:
-                    scene["_image_public_url"] = public_url
-                return {
-                    "url": data_url,
-                    "public_url": public_url,
-                    "source_asset_id": source_asset.get("asset_id"),
-                    "reused": True,
+    if not reference_b64:
+        source_ids = scene.get("source_asset_ids") or []
+        if user_id and memorial_id and source_ids:
+            try:
+                import base64 as _base64
+
+                stored_assets = core_storage.list_assets(user_id, memorial_id)
+                by_id = {
+                    asset.get("asset_id"): asset
+                    for asset in stored_assets
+                    if asset.get("kind") == "image"
                 }
-        except Exception as exc:
-            print(f"[scene-image] reuse real asset failed, falling back to generation: {exc}")
+                source_asset = next(
+                    (by_id.get(asset_id) for asset_id in source_ids if by_id.get(asset_id)),
+                    None,
+                )
+                if source_asset:
+                    source_path = (
+                        core_storage.memorial_dir(user_id, memorial_id)
+                        / "assets"
+                        / source_asset.get("stored_name", "")
+                    )
+                    reference_b64 = _base64.b64encode(source_path.read_bytes()).decode("ascii")
+                    source_asset_id = source_asset.get("asset_id") or ""
+            except Exception as exc:
+                print(f"[scene-image] load real asset as reference failed: {exc}")
 
     # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
     try:
@@ -932,7 +918,7 @@ def gen_scene_image(
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_tokenstar(image_prompt, reference_b64=ref_b64 or None)
+    b64, err = generate_image_tokenstar(image_prompt, reference_b64=reference_b64 or None)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
@@ -946,9 +932,16 @@ def gen_scene_image(
     # 缓存到 scene
     scene["_image_data_url"] = data_url
     scene["_image_prompt"]   = image_prompt
+    scene["_image_source_asset_id"] = source_asset_id
+    scene["_image_reused"] = False
     if public_url:
         scene["_image_public_url"] = public_url
-    return {"url": data_url, "public_url": public_url}
+    return {
+        "url": data_url,
+        "public_url": public_url,
+        "source_asset_id": source_asset_id,
+        "reused": False,
+    }
 
 
 def gen_scene_video(
