@@ -191,6 +191,17 @@ def save_director_script(
     path = _project_path(user_id, memorial_id, project_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value + "\n", encoding="utf-8")
+    # A compiled video project is tied to the exact approved script.  Editing
+    # the Markdown never deletes generated clips, but it invalidates approval
+    # and final-render eligibility until the new version is confirmed.
+    try:
+        from services import video_project
+
+        video_project.invalidate_after_script_edit(
+            user_id, memorial_id, project_id, value
+        )
+    except Exception as exc:
+        print("[director-script] video project invalidation failed:", exc)
     latest = path.parent.parent / "latest_director_script.md"
     latest.write_text(value + "\n", encoding="utf-8")
     latest_meta = path.parent.parent / "latest_director_script.meta.json"

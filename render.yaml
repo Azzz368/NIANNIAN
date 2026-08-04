@@ -23,7 +23,7 @@ services:
         value: whisper-1
       - key: AI302_VISION_MODEL
         value: gemini-2.5-flash
-      # ─── TokenStar（分镜首帧图 + Kling 图生视频）───
+      # ─── TokenStar（分镜首帧图 + Seedance 素材图生视频）───
       - key: TOKENSTAR_API_KEY
         sync: false
       - key: TOKENSTAR_BASE_URL
@@ -32,6 +32,19 @@ services:
         value: gpt-image-2
       - key: TOKENSTAR_IMAGE_SOURCE_SIZE
         value: 2048x1152
+      - key: TOKENSTAR_SEEDANCE_MODEL
+        value: seedance-2.0-asset-fast
+      - key: TOKENSTAR_SEEDANCE_ASSET_MODEL
+        value: volc-asset
+      - key: TOKENSTAR_ASSET_POLL_INTERVAL_MS
+        value: "1500"
+      - key: TOKENSTAR_ASSET_MAX_POLL_ATTEMPTS
+        value: "20"
+      - key: TOKENSTAR_ASSET_VIDEO_CREATE_RETRY_MS
+        value: "5000"
+      - key: TOKENSTAR_ASSET_VIDEO_CREATE_MAX_ATTEMPTS
+        value: "8"
+      # 旧制作台流程兼容配置。
       - key: TOKENSTAR_KLING_MODEL
         value: kling-v3
       # 默认启用 Kling 音频生成。
@@ -50,6 +63,9 @@ services:
       - key: NIAN_ASSET_RERANK_MODEL
         value: qwen-plus
       - key: NIAN_ASSET_TEXT_MODEL
+        value: qwen-plus
+      # 导演脚本确认后，将文字脚本编译为逐镜头任务与图片动态化 Prompt
+      - key: VIDEO_PROJECT_PLANNER_MODEL
         value: qwen-plus
       - key: PYTHON_VERSION
         value: "3.11"
@@ -84,9 +100,18 @@ services:
         sync: false
       - key: OSS_PREFIX
         value: nian/
-      # ─── 声音克隆及 TokenStar 首帧：外部服务需要公网 URL 拉取文件 ───
+      # ─── 声音克隆及 TokenStar Seedance 首帧：外部服务需要公网 URL 拉取文件 ───
       # 填你的 Render 公网域名，例如 https://niannian-memorial.onrender.com
       - key: PUBLIC_BASE_URL
+        sync: false
+      # ─── 推荐：Bunny 临时 CDN 首帧，避免 TokenStar Data URI/multipart 500 ───
+      - key: BUNNY_STORAGE_ZONE
+        sync: false
+      - key: BUNNY_ACCESS_KEY
+        sync: false
+      - key: BUNNY_STORAGE_REGION
+        value: sg
+      - key: BUNNY_PULL_ZONE_URL
         sync: false
     healthCheckPath: /api/health
     # ─── 持久化磁盘（重要）───

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>念念 · 影像编排台</title>
+  <link rel="stylesheet" href="css/video_project.css?v=20260803-video-project1" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="back" href="/static/index.html">← 返回念念</a>
+    <div>
+      <div class="eyebrow">NIANNIAN VIDEO WORKSPACE</div>
+      <h1>影像编排台</h1>
+    </div>
+    <div id="projectIdentity" class="identity">读取项目中…</div>
+  </header>
+
+  <main>
+    <section class="stage-card">
+      <div class="stage-copy">
+        <span id="projectStatus" class="status-pill">准备中</span>
+        <h2>从真实素材到一段完整影像</h2>
+        <p id="projectMessage">正在核对导演脚本、人物资料和素材归属。</p>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-label"><span>镜头确认进度</span><strong id="progressText">0 / 0</strong></div>
+        <div class="progress"><span id="progressBar"></span></div>
+      </div>
+    </section>
+
+    <section id="warningPanel" class="warning-panel" hidden></section>
+    <section id="loadingPanel" class="loading-panel">执行导演正在拆分脚本并生成逐镜头 Prompt…</section>
+    <section id="clipList" class="clip-list" aria-live="polite"></section>
+
+    <section class="render-dock">
+      <div>
+        <div class="render-title">最终合成</div>
+        <p id="renderHint">确认全部镜头后，可以按导演脚本顺序合成。</p>
+      </div>
+      <div class="render-actions">
+        <button id="retryCompile" class="secondary" type="button" hidden>重新解析脚本</button>
+        <button id="renderButton" class="primary" type="button" disabled>一键合成</button>
+      </div>
+    </section>
+
+    <section id="finalPanel" class="final-panel" hidden>
+      <div class="final-heading">
+        <div><span class="eyebrow">FINAL CUT</span><h2>最终成片</h2></div>
+        <button id="downloadLog" class="secondary" type="button">下载执行记录</button>
+      </div>
+      <video id="finalVideo" controls playsinline></video>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="js/auth.js?v=20260803-video-project1"></script>
+  <script src="js/video_project.js?v=20260803-video-project1"></script>
+</body>
+</html>

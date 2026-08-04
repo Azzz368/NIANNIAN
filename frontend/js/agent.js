@@ -146,6 +146,7 @@
     if ($('editPlanEmpty')) $('editPlanEmpty').style.display = 'block';
     if ($('editPlanSave')) $('editPlanSave').disabled = true;
     if ($('editPlanDownload')) $('editPlanDownload').disabled = true;
+    if ($('editPlanProduce')) $('editPlanProduce').disabled = true;
     planMessage('');
   }
 
@@ -230,6 +231,7 @@
     if ($('editPlanEmpty')) $('editPlanEmpty').style.display = 'none';
     if ($('editPlanSave')) $('editPlanSave').disabled = false;
     if ($('editPlanDownload')) $('editPlanDownload').disabled = false;
+    if ($('editPlanProduce')) $('editPlanProduce').disabled = false;
   }
 
   async function generateEditPlan() {
@@ -308,6 +310,40 @@
       planMessage('导演脚本文件已下载。');
     } catch(e) {
       planMessage(e.message || String(e), true);
+    }
+  }
+
+  async function enterVideoProduction() {
+    var mid = window.NianAuth && window.NianAuth.getActiveMemorialId();
+    var editor = $('editPlanJson');
+    var projectId = state.editPlan && state.editPlan.project_id;
+    if (!mid || !projectId || !editor || !editor.value.trim()) {
+      planMessage('请先生成并保存导演脚本', true);
+      return;
+    }
+    if (!confirm('确认以当前导演脚本进入视频制作？后续若修改脚本，已解析镜头会自动失效。')) return;
+    var button = $('editPlanProduce');
+    button.disabled = true;
+    button.textContent = '正在确认…';
+    try {
+      var saveResponse = await window.NianAuth.fetch(
+        '/api/agent/director-script/' + encodeURIComponent(mid) + '/' + encodeURIComponent(projectId),
+        {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({script:editor.value.trim()})}
+      );
+      var saveData = await saveResponse.json();
+      if (!saveResponse.ok) throw new Error(apiErrorMessage(saveData, '导演脚本保存失败'));
+      showEditPlan(saveData.project_id, saveData.script);
+      var approveResponse = await window.NianAuth.fetch(
+        '/api/video-projects/' + encodeURIComponent(mid) + '/' + encodeURIComponent(projectId) + '/approve-script',
+        {method:'POST'}
+      );
+      var approveData = await approveResponse.json();
+      if (!approveResponse.ok) throw new Error(apiErrorMessage(approveData, '导演脚本确认失败'));
+      location.href = '/static/video_project.html?memorial_id=' + encodeURIComponent(mid) + '&project_id=' + encodeURIComponent(projectId);
+    } catch(e) {
+      planMessage(e.message || String(e), true);
+      button.disabled = false;
+      button.textContent = '确认脚本并制作视频';
     }
   }
 
@@ -1361,6 +1397,7 @@
     if ($('editPlanGenerate')) $('editPlanGenerate').addEventListener('click', generateEditPlan);
     if ($('editPlanSave')) $('editPlanSave').addEventListener('click', saveEditedPlan);
     if ($('editPlanDownload')) $('editPlanDownload').addEventListener('click', downloadEditPlan);
+    if ($('editPlanProduce')) $('editPlanProduce').addEventListener('click', enterVideoProduction);
     if ($('editPlanPanel')) $('editPlanPanel').addEventListener('click', function(e){
       if (e.target === $('editPlanPanel')) closePlanPanel();
     });

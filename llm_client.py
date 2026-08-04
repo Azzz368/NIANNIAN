@@ -4,7 +4,7 @@
   文本结构化分析（家属访谈 / MV01-06）: claude-sonnet-4-6  →（失败自动回退）→ gpt-5.4
   图像内容理解（describe_image）       : gemini-2.0-pro-image-preview
   图像生成（generate_image_302）        : gemini-2.0-pro-image-preview
-    视频生成（generate_video_kling）      : TokenStar Kling 图生视频（首帧模式）
+    视频生成（导演制作台）                  : TokenStar Seedance 素材图生视频
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
   AI302_API_KEY          = sk-xxxxxxxxxxxx       ← 必填，图文/视频 302.ai 备用均使用
@@ -14,15 +14,18 @@
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
   AI302_AUDIO_MODEL      = whisper-1
     TOKENSTAR_API_KEY      = TokenStar API 密钥（影视制作台图片与视频共用）
+    TOKENSTAR_SEEDANCE_MODEL = seedance-2.0-asset-fast（可选）
     TOKENSTAR_KLING_MODEL  = kling-v3（可选）
   LOCAL_LLM_BASE_URL     =  （本地备用，可留空）
   LOCAL_LLM_MODEL        =
 """
 import base64
+import hashlib
 import json
 import os
+import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests as _requests
 from dotenv import load_dotenv
@@ -63,6 +66,12 @@ AUDIO_MODEL         = os.getenv("AI302_AUDIO_MODEL",        "whisper-1")
 TOKENSTAR_BASE_URL     = os.getenv("TOKENSTAR_BASE_URL", "https://api.tokenstar.world").rstrip("/")
 TOKENSTAR_API_KEY      = os.getenv("TOKENSTAR_API_KEY", "")
 TOKENSTAR_IMAGE_MODEL  = os.getenv("TOKENSTAR_IMAGE_MODEL", "gpt-image-2")
+TOKENSTAR_SEEDANCE_MODEL = os.getenv(
+    "TOKENSTAR_SEEDANCE_MODEL", "seedance-2.0-asset-fast"
+).strip()
+TOKENSTAR_SEEDANCE_ASSET_MODEL = os.getenv(
+    "TOKENSTAR_SEEDANCE_ASSET_MODEL", "volc-asset"
+).strip()
 # 影视制作台优先直接请求原生 16:9 画布；后处理仍会校验输出比例，
 # 以兼容网关回退为其他尺寸的情况。
 TOKENSTAR_IMAGE_SOURCE_SIZE = os.getenv("TOKENSTAR_IMAGE_SOURCE_SIZE", "2048x1152")
@@ -1534,6 +1543,520 @@ def _tokenstar_video_result_url(task_data: Any) -> str:
         if isinstance(url, str) and url.startswith("http"):
             return url
     return _find_video_url_in(task_data) or ""
+
+
+def _tokenstar_seedance_model(value: str = "") -> str:
+    """Normalize the short UI name to TokenStar's documented model ID."""
+    model = (value or TOKENSTAR_SEEDANCE_MODEL or "seedance-2.0-asset-fast").strip()
+    aliases = {
+        "seedance-asset": "seedance-2.0-asset",
+        "seedance-asset-fast": "seedance-2.0-asset-fast",
+    }
+    model = aliases.get(model, model)
+    if model not in ("seedance-2.0-asset", "seedance-2.0-asset-fast"):
+        raise ValueError(
+            f"TokenStar 素材视频模型不支持 {model}，"
+            "请使用 seedance-2.0-asset 或 seedance-2.0-asset-fast"
+        )
+    return model
+
+
+def _tokenstar_result_id(payload: Any, *keys: str) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    candidates = [payload]
+    for field in ("Result", "result", "data", "Response"):
+        value = payload.get(field)
+        if isinstance(value, dict):
+            candidates.append(value)
+    for value in candidates:
+        for key in keys:
+            found = value.get(key)
+            if found:
+                return str(found)
+    return ""
+
+
+def _tokenstar_seedance_task_data(payload: Any) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    value = payload.get("data")
+    return value if isinstance(value, dict) else payload
+
+
+def _tokenstar_nested_records(value: Any) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def visit(item: Any) -> None:
+        if not isinstance(item, (dict, list)) or id(item) in seen:
+            return
+        seen.add(id(item))
+        if isinstance(item, list):
+            for child in item:
+                visit(child)
+            return
+        records.append(item)
+        for child in item.values():
+            visit(child)
+
+    visit(value)
+    return records
+
+
+def _tokenstar_record_text(record: Dict[str, Any], *names: str) -> str:
+    wanted = {name.replace("_", "").replace("-", "").lower() for name in names}
+    for key, value in record.items():
+        normalized = key.replace("_", "").replace("-", "").lower()
+        if normalized in wanted and isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _tokenstar_find_asset(payload: Any, asset_id: str, name: str) -> Dict[str, Any]:
+    fallback: Dict[str, Any] = {}
+    for record in _tokenstar_nested_records(payload):
+        candidate_id = _tokenstar_record_text(record, "AssetId", "asset_id", "Id", "id")
+        candidate_name = _tokenstar_record_text(record, "Name", "name")
+        if candidate_id == asset_id:
+            return record
+        if candidate_name == name and not fallback:
+            fallback = record
+    return fallback
+
+
+def generate_video_tokenstar_seedance_asset(
+    prompt: str,
+    image_bytes: bytes,
+    *,
+    filename: str = "source.jpg",
+    mime_type: str = "image/jpeg",
+    image_url: str = "",
+    duration: int = 5,
+    ratio: str = "16:9",
+    generate_audio: bool = False,
+    model: str = "",
+    group_name: str = "nian-video-project",
+    group_id: str = "",
+    asset_id: str = "",
+    poll: bool = True,
+    max_wait: int = 600,
+    progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Generate a Seedance video from an image through ``asset://``.
+
+    TokenStar's public HTTPS ingestion is the preferred path because it is the
+    only CreateAsset mode confirmed working against the live gateway.  Local
+    bytes retain the documented Data URI and multipart fallbacks for accounts
+    where those provider-side paths are available.
+    """
+    if not TOKENSTAR_API_KEY:
+        return {
+            "error": "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar Seedance 图生视频",
+            "source": "tokenstar",
+        }
+    if not image_bytes:
+        return {"error": "图生视频必须提供有效的图片文件", "source": "tokenstar"}
+    if len(image_bytes) > 30 * 1024 * 1024:
+        return {"error": "TokenStar 素材图片不能超过 30MB", "source": "tokenstar"}
+    if duration not in (5, 8):
+        return {"error": "Seedance 素材视频时长只支持 5 或 8 秒", "source": "tokenstar"}
+    if ratio not in ("16:9", "9:16", "1:1"):
+        return {"error": "Seedance 画幅只支持 16:9、9:16 或 1:1", "source": "tokenstar"}
+    try:
+        model_name = _tokenstar_seedance_model(model)
+    except ValueError as exc:
+        return {"error": str(exc), "source": "tokenstar"}
+
+    headers = {
+        "Authorization": f"Bearer {TOKENSTAR_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    auth_headers = {
+        "Authorization": f"Bearer {TOKENSTAR_API_KEY}",
+        "Accept": "application/json",
+    }
+
+    def emit(patch: Dict[str, Any]) -> None:
+        if progress:
+            progress(dict(patch))
+
+    asset_route_model = TOKENSTAR_SEEDANCE_ASSET_MODEL or "volc-asset"
+    if not group_id:
+        body = {
+            "model": asset_route_model,
+            "Name": (group_name or "nian-video-project")[:80],
+            "Description": "NianNian memorial video project assets",
+            "GroupType": "AIGC",
+        }
+        try:
+            response = _requests.post(
+                _tokenstar_url("/volc/asset/CreateAssetGroup"),
+                headers=headers,
+                json=body,
+                timeout=60,
+            )
+            payload = response.json()
+        except (_requests.RequestException, ValueError, TypeError) as exc:
+            return {"error": f"TokenStar 素材组创建异常：{exc}", "source": "tokenstar"}
+        if _tokenstar_response_failed(response.status_code, payload):
+            return {
+                "error": "TokenStar 素材组创建失败：" + _tokenstar_error_detail(
+                    payload, response.status_code, _tokenstar_request_id(response)
+                ),
+                "source": "tokenstar",
+            }
+        group_id = _tokenstar_result_id(payload, "GroupId", "Id", "id")
+        if not group_id:
+            return {"error": f"TokenStar 未返回 GroupId：{payload}", "source": "tokenstar"}
+        emit({"asset_group_id": group_id, "model": model_name, "provider_status": "uploading"})
+
+    if not asset_id:
+        actual_mime = (mime_type or "").lower().split(";", 1)[0].strip()
+        if image_bytes.startswith(b"\xff\xd8\xff"):
+            actual_mime, extension = "image/jpeg", "jpg"
+        elif image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            actual_mime, extension = "image/png", "png"
+        elif image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+            actual_mime, extension = "image/webp", "webp"
+        else:
+            return {
+                "error": "TokenStar 素材上传仅支持有效的 JPEG、PNG 或 WebP 图片",
+                "source": "tokenstar",
+                "asset_group_id": group_id,
+            }
+        source_key = hashlib.sha256(image_bytes).hexdigest()[:16]
+        upload_filename = f"nian-{source_key}.{extension}"
+        upload_name = f"nian-{source_key}"
+        upload_url = _tokenstar_url("/volc/asset/CreateAsset")
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        response = None
+        payload: Any = {}
+        upload_errors: List[str] = []
+
+        public_image_url = (image_url or "").strip()
+        if public_image_url.startswith("https://"):
+            public_body = {
+                "model": asset_route_model,
+                "GroupId": group_id,
+                "MaterialGroupId": group_id,
+                "URL": public_image_url,
+                "Name": upload_name,
+                "AssetType": "Image",
+            }
+            try:
+                response = _requests.post(
+                    upload_url,
+                    headers=headers,
+                    json=public_body,
+                    timeout=120,
+                )
+                payload = response.json()
+            except (_requests.RequestException, ValueError, TypeError) as exc:
+                response = None
+                payload = {}
+                upload_errors.append(f"公网 URL 请求异常：{exc}")
+            if response is not None and _tokenstar_response_failed(response.status_code, payload):
+                upload_errors.append(
+                    "公网 URL 上传失败："
+                    + _tokenstar_error_detail(
+                        payload, response.status_code, _tokenstar_request_id(response)
+                    )
+                )
+
+        data_uri_error = ""
+        if response is None or _tokenstar_response_failed(response.status_code, payload):
+            body = {
+                "model": asset_route_model,
+                "GroupId": group_id,
+                "MaterialGroupId": group_id,
+                "URL": f"data:{actual_mime};base64,{encoded}",
+                "Name": upload_name,
+                "AssetType": "Image",
+            }
+            try:
+                response = _requests.post(
+                    upload_url,
+                    headers=headers,
+                    json=body,
+                    timeout=120,
+                )
+                payload = response.json()
+            except (_requests.RequestException, ValueError, TypeError) as exc:
+                response = None
+                payload = {}
+                data_uri_error = f"Data URI 请求异常：{exc}"
+            if response is not None and _tokenstar_response_failed(response.status_code, payload):
+                data_uri_error = "Data URI 上传失败：" + _tokenstar_error_detail(
+                    payload, response.status_code, _tokenstar_request_id(response)
+                )
+            if data_uri_error:
+                upload_errors.append(data_uri_error)
+
+        # 与 Unlimited_Map 的兼容实现一致：multipart 同时传递网关历史上
+        # 使用过的组 ID 别名、model 与 AssetType，避免素材服务丢失归属。
+        if response is None or _tokenstar_response_failed(response.status_code, payload):
+            form = {
+                "model": asset_route_model,
+                "GroupId": group_id,
+                "group_id": group_id,
+                "MaterialGroupId": group_id,
+                "material_group_id": group_id,
+                "AssetGroupId": group_id,
+                "asset_group_id": group_id,
+                "Name": upload_name,
+                "AssetType": "Image",
+            }
+            try:
+                response = _requests.post(
+                    upload_url,
+                    headers=auth_headers,
+                    files={"file": (upload_filename, image_bytes, actual_mime)},
+                    data=form,
+                    timeout=120,
+                )
+                payload = response.json()
+            except (_requests.RequestException, ValueError, TypeError) as exc:
+                return {
+                    "error": "TokenStar 图片素材上传异常："
+                    + "；".join(upload_errors + [f"multipart 请求异常：{exc}"]),
+                    "source": "tokenstar",
+                    "asset_group_id": group_id,
+                }
+        if _tokenstar_response_failed(response.status_code, payload):
+            upload_errors.append(
+                "multipart 上传失败："
+                + _tokenstar_error_detail(
+                    payload, response.status_code, _tokenstar_request_id(response)
+                )
+            )
+            local_hint = ""
+            if not public_image_url:
+                local_hint = (
+                    "；当前未提供可公网访问的 HTTPS 素材地址。TokenStar 的 Data URI/"
+                    "multipart 素材通道返回服务端错误时，请配置 PUBLIC_BASE_URL 为当前"
+                    "服务的公网 HTTPS 域名后重试，或将以上 request_id 提交 TokenStar 排查"
+                )
+            return {
+                "error": "TokenStar 图片素材上传失败：" + "；".join(upload_errors) + local_hint,
+                "source": "tokenstar",
+                "asset_group_id": group_id,
+            }
+        asset_id = _tokenstar_result_id(payload, "AssetId", "Id", "id")
+        if not asset_id:
+            return {
+                "error": f"TokenStar 未返回素材 Id：{payload}",
+                "source": "tokenstar",
+                "asset_group_id": group_id,
+            }
+        emit({
+            "asset_group_id": group_id,
+            "asset_id": asset_id,
+            "model": model_name,
+            "provider_status": "preparing",
+            "upload_mode": "public_url" if public_image_url else "inline_fallback",
+        })
+
+        # CreateAsset 只表示接收成功；必须像 Unlimited_Map 一样等待
+        # ListAssets 显示素材已可用，才能提交 asset:// 引用的视频任务。
+        attempts = max(1, int(os.getenv("TOKENSTAR_ASSET_MAX_POLL_ATTEMPTS", "20") or 20))
+        interval_ms = max(250, int(os.getenv("TOKENSTAR_ASSET_POLL_INTERVAL_MS", "1500") or 1500))
+        interval = interval_ms / 1000
+        ready_statuses = {"READY", "AVAILABLE", "ACTIVE", "COMPLETED", "SUCCESS", "SUCCEEDED", "DONE"}
+        failed_statuses = {"FAILED", "FAILURE", "ERROR", "CANCELLED", "CANCELED", "REJECTED"}
+        last_status = ""
+        last_payload: Any = {}
+        ready = False
+        for attempt in range(attempts):
+            list_body = {
+                "model": "volc-asset",
+                "Filter": {
+                    "Name": upload_name,
+                    "GroupIds": [group_id],
+                    "GroupType": "AIGC",
+                },
+                "PageNumber": 1,
+                "PageSize": 10,
+            }
+            try:
+                list_response = _requests.post(
+                    _tokenstar_url("/volc/asset/ListAssets"),
+                    headers=headers,
+                    json=list_body,
+                    timeout=30,
+                )
+                last_payload = list_response.json()
+            except (_requests.RequestException, ValueError, TypeError):
+                last_payload = {}
+            else:
+                if not _tokenstar_response_failed(list_response.status_code, last_payload):
+                    listed_asset = _tokenstar_find_asset(last_payload, asset_id, upload_name)
+                    if listed_asset:
+                        last_status = _tokenstar_record_text(
+                            listed_asset, "Status", "status", "State", "state"
+                        ).upper()
+                        if last_status in failed_statuses:
+                            return {
+                                "error": f"TokenStar 图片素材处理失败（status={last_status}）",
+                                "source": "tokenstar",
+                                "asset_group_id": group_id,
+                                "asset_id": asset_id,
+                            }
+                        if last_status in ready_statuses or (not last_status and attempt >= 3):
+                            ready = True
+                            break
+            if attempt < attempts - 1:
+                time.sleep(interval)
+        if not ready:
+            return {
+                "error": (
+                    f"TokenStar 图片素材在 {attempts} 次检查后仍未就绪"
+                    + (f"（last_status={last_status}）" if last_status else "")
+                ),
+                "source": "tokenstar",
+                "asset_group_id": group_id,
+                "asset_id": asset_id,
+            }
+        emit({
+            "asset_group_id": group_id,
+            "asset_id": asset_id,
+            "model": model_name,
+            "provider_status": "ready",
+        })
+
+    body = {
+        "model": model_name,
+        "content": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"asset://{asset_id}"},
+                "role": "reference_image",
+            },
+        ],
+        "generate_audio": bool(generate_audio),
+        "ratio": ratio,
+        "duration": duration,
+        "resolution": "720p",
+    }
+    create_attempts = max(
+        1, int(os.getenv("TOKENSTAR_ASSET_VIDEO_CREATE_MAX_ATTEMPTS", "8") or 8)
+    )
+    create_retry_ms = max(
+        250, int(os.getenv("TOKENSTAR_ASSET_VIDEO_CREATE_RETRY_MS", "5000") or 5000)
+    )
+    payload: Any = {}
+    response = None
+    for attempt in range(create_attempts):
+        try:
+            response = _requests.post(
+                _tokenstar_url("/v1/video/generations"),
+                headers=headers,
+                json=body,
+                timeout=60,
+            )
+            payload = response.json()
+        except (_requests.RequestException, ValueError, TypeError) as exc:
+            return {
+                "error": f"TokenStar Seedance 提交异常：{exc}",
+                "source": "tokenstar",
+                "asset_group_id": group_id,
+                "asset_id": asset_id,
+            }
+        if not _tokenstar_response_failed(response.status_code, payload):
+            break
+        detail = _tokenstar_error_detail(
+            payload, response.status_code, _tokenstar_request_id(response)
+        )
+        material_pending = bool(
+            re.search(
+                r"material[_\s-]*resource[_\s-]*oss[_\s-]*missing|material resource oss object is missing",
+                detail,
+                re.I,
+            )
+        )
+        if response.status_code == 422 and material_pending and attempt < create_attempts - 1:
+            time.sleep(create_retry_ms / 1000)
+            continue
+        return {
+            "error": "TokenStar Seedance 提交失败：" + detail,
+            "source": "tokenstar",
+            "asset_group_id": group_id,
+            "asset_id": asset_id,
+        }
+    task_id = _tokenstar_result_id(payload, "task_id", "id", "TaskId")
+    if not task_id:
+        return {
+            "error": f"TokenStar Seedance 未返回 task_id：{payload}",
+            "source": "tokenstar",
+            "asset_group_id": group_id,
+            "asset_id": asset_id,
+        }
+    common = {
+        "task_id": task_id,
+        "source": "tokenstar",
+        "model": model_name,
+        "asset_group_id": group_id,
+        "asset_id": asset_id,
+    }
+    emit({**common, "provider_status": "generating"})
+    if not poll:
+        return {**common, "status": "submitted"}
+
+    poll_url = _tokenstar_url(f"/v1/video/generations/{task_id}")
+    elapsed, interval = 0, 8
+    while elapsed < max_wait:
+        time.sleep(interval)
+        elapsed += interval
+        try:
+            poll_response = _requests.get(poll_url, headers=headers, timeout=30)
+            poll_payload = poll_response.json()
+        except (_requests.RequestException, ValueError, TypeError):
+            continue
+        if _tokenstar_response_failed(poll_response.status_code, poll_payload):
+            if poll_response.status_code == 429 or poll_response.status_code >= 500:
+                continue
+            return {
+                **common,
+                "error": "TokenStar Seedance 查询失败：" + _tokenstar_error_detail(
+                    poll_payload,
+                    poll_response.status_code,
+                    _tokenstar_request_id(poll_response),
+                ),
+            }
+        task_data = _tokenstar_seedance_task_data(poll_payload)
+        status = str(
+            task_data.get("status")
+            or task_data.get("task_status")
+            or poll_payload.get("status")
+            or ""
+        ).strip().lower()
+        if status in ("succeed", "succeeded", "success", "done", "completed"):
+            result_url = str(
+                task_data.get("result_url")
+                or poll_payload.get("result_url")
+                or _tokenstar_video_result_url(task_data)
+                or ""
+            )
+            if result_url.startswith("http"):
+                emit({**common, "provider_status": "succeeded"})
+                return {**common, "url": result_url, "status": "succeeded"}
+            return {**common, "error": "TokenStar Seedance 任务成功但未返回视频 URL"}
+        if status in ("failed", "failure", "fail", "cancelled", "canceled"):
+            reason = (
+                task_data.get("error")
+                or task_data.get("message")
+                or task_data.get("task_status_msg")
+                or _tokenstar_error_detail(task_data)
+            )
+            return {**common, "error": f"TokenStar Seedance 视频任务失败：{reason}"}
+
+    return {
+        **common,
+        "status": "processing",
+        "error": f"TokenStar Seedance 等待超时（{max_wait}s），可稍后按 task_id 查询",
+    }
 
 
 def generate_video_tokenstar_i2v(

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary, memory
+from routers import assets, chat, dialogue, intake, pipeline, agent, agent_realtime, auth, memorials, uploads, voice, admin, biography, diary, memory, video_projects
 from core import oss_sync, storage as _storage  # noqa: F401
 
 app = FastAPI(
@@ -141,6 +141,7 @@ app.include_router(admin.router,    prefix="/api")
 app.include_router(biography.router, prefix="/api")
 app.include_router(diary.router, prefix="/api")
 app.include_router(memory.router, prefix="/api")
+app.include_router(video_projects.router, prefix="/api")
 
 # 前端静态文件（开发期直接由后端托管，生产可分离至 Nginx/CDN）
 _FRONTEND = _BACKEND.parent / "frontend"
@@ -188,6 +189,10 @@ if _FRONTEND.exists():
     @app.get("/diary")
     def page_diary():
         return RedirectResponse(url="/static/diary.html", status_code=307)
+
+    @app.get("/video-project")
+    def page_video_project():
+        return RedirectResponse(url="/static/video_project.html", status_code=307)
 else:
     @app.get("/")
     def root_no_frontend() -> JSONResponse:
