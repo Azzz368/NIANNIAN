@@ -397,6 +397,9 @@ async function genSceneImage(idx) {
   const sc = state.scenes[idx];
   if (!sc) return;
   sc._img_status = 'run';
+  sc._img_url = '';
+  sc._vid_url = '';
+  sc._vid_status = 'idle';
   renderScenes();
   setPill('MV05', 'active');
   try {
@@ -419,6 +422,24 @@ async function genSceneImage(idx) {
   } finally {
     renderScenes();
     if (state.scenes.length && state.scenes.every(s => s._img_url)) setPill('MV05', 'done');
+  }
+}
+
+async function localizeSceneDisplayCopy() {
+  const hasEnglishOnlyCopy = state.scenes.some(sc => {
+    const text = sc.description || sc.scene_desc || sc.visual || '';
+    return text && !/[\u4e00-\u9fff]/.test(text);
+  });
+  if (!hasEnglishOnlyCopy) return;
+  try {
+    const result = await apiPost(`/pipeline/scenes/${state.sid}/localize`, {});
+    if (Array.isArray(result.scenes) && result.scenes.length) {
+      state.scenes = result.scenes.map(normalizeSceneMedia);
+      initSceneRefDefaults();
+      renderScenes();
+    }
+  } catch (e) {
+    console.warn('[studio] 分镜中文本地化失败:', e);
   }
 }
 
@@ -553,6 +574,8 @@ async function bootstrap() {
       hide('phaseGenScenes');
       show('phaseScenes');
       renderScenes();
+      await localizeSceneDisplayCopy();
+      await localizeSceneDisplayCopy();
     }
   } catch { /* 没生成过则保持初始 UI */ }
 

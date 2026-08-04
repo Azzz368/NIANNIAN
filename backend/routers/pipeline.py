@@ -109,6 +109,16 @@ def scenes(sid: str) -> Dict[str, Any]:
     return {"scenes": sm._get_scenes_from_mv04(mv04), "ready": mv04 is not None}
 
 
+@router.post("/scenes/{sid}/localize")
+def localize_scenes(sid: str) -> Dict[str, Any]:
+    """Convert legacy English scene display copy to Chinese and persist it in-session."""
+    try:
+        session_store.require(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    return {"scenes": sm.localize_scene_texts(sid)}
+
+
 @router.post("/scene/video/{sid}/{idx}")
 def scene_video(
     request: Request,

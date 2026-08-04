@@ -770,6 +770,57 @@ def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _contains_chinese_text(value: Any) -> bool:
+    """Return whether a value contains at least one CJK character."""
+    import re
+
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
+
+
+def localize_scene_texts(sid: str) -> List[Dict[str, Any]]:
+    """Translate legacy English scene display fields to Chinese once and cache them.
+
+    Image/video prompts remain English for model quality. This function only changes
+    user-facing fields such as description and narration in the persisted MV04 result.
+    """
+    session = session_store.require(sid)
+    scenes = _get_scenes_from_mv04(session["mv_outputs"].get("MV04"))
+    candidates: List[Dict[str, Any]] = []
+    candidate_fields: Dict[int, set[str]] = {}
+    for index, scene in enumerate(scenes):
+        fields: Dict[str, str] = {}
+        for key in ("description", "scene_desc", "visual", "narration", "voiceover", "subtitle"):
+            value = scene.get(key)
+            if isinstance(value, str) and value.strip() and not _contains_chinese_text(value):
+                fields[key] = value.strip()
+        if fields:
+            candidates.append({"index": index, "fields": fields})
+            candidate_fields[index] = set(fields)
+    if not candidates:
+        return scenes
+
+    result = call_structured(
+        "你是影视分镜本地化编辑。把输入 JSON 中每个 fields 的英文内容翻译为自然、简洁的简体中文。"
+        "只翻译用户界面展示文案，不要改写事实，不要添加解释。严格返回 JSON："
+        '{"items":[{"index":0,"fields":{"description":"中文"}}]}。',
+        json.dumps({"items": candidates}, ensure_ascii=False),
+    )
+    translated = result.get("items", []) if isinstance(result, dict) else []
+    if not isinstance(translated, list):
+        return scenes
+    for item in translated:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        fields = item.get("fields")
+        if not isinstance(index, int) or index not in candidate_fields or not isinstance(fields, dict):
+            continue
+        for key, value in fields.items():
+            if key in candidate_fields[index] and isinstance(value, str) and value.strip():
+                scenes[index][key] = value.strip()
+    return scenes
+
+
 def get_characters(sid: str) -> Dict[str, Any]:
     """返回角色档案：主角（逝者）+ 配角列表（来自 MV03 character_bible）"""
     s = session_store.require(sid)
@@ -871,6 +922,10 @@ def gen_scene_image(
     if scene_idx < 0 or scene_idx >= len(scenes):
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
+    # 重新生成时清除旧的画面和视频缓存，避免前端仍显示旧图而误以为按钮无效。
+    scene.pop("_image_data_url", None)
+    scene.pop("_image_public_url", None)
+    scene.pop("_video_url", None)
 
     # 真实素材只作为图生图的参考底图，不再直接把原始照片当成分镜画面使用。
     # 前端每个分镜都可以独立挑选参考图（ref_b64）；若用户未选择，则在分镜绑定的
@@ -997,7 +1052,9 @@ def gen_scene_video(
         image_urls=[image_url],
         duration=5,
         poll=True,
-        max_wait=600,
+        # UI 告知用户通常需要 1-3 分钟；超过该窗口明确返回失败状态，避免
+        # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
+        max_wait=180,
     )
     if res.get("error"):
         return {"error": True, "message": res.get("error")}

@@ -52,6 +52,8 @@
 
 输出 JSON 必须包含以下顶层字段：`target_duration_sec`、`aspect_ratio`、`style_profile`、**`character_bible`**、**`scene_library`**、`total_scenes`、`scenes`。
 
+**界面语言要求**：所有面向用户展示的字段必须使用简体中文，包括 `scene_name`、`description`、`voice_script`、`narration`、`shot_type`、`motion` 的可读说明。仅供模型调用的 `mj_prompt`、`negative_prompt`、`visual_descriptor`、`character_dna` 和 `visual_suffix` 可以且应使用英文。不得把英文绘图提示词直接写入 `description`、`scene_desc`、`visual` 或旁白字段。
+
 `character_bible` 是视觉一致性的核心锚点，用于 MV04/MV05 阶段 `build_scene_prompts()` 函数将角色 DNA 注入每一帧的 image_prompt 与 video_prompt，**必须填写**。
 
 `scene_library` 为本片出现的主要场景建立视觉词汇库，每个场景用英文 `visual_descriptor` 精确描述环境光线、陈设、年代感，同样用于 MV05 阶段 Prompt 锚定，**每个 ai_generated 场景须有对应条目**。
