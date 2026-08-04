@@ -23,7 +23,7 @@ from llm_client import (  # type: ignore
     transcribe_audio,
     build_scene_prompts,
     generate_image_tokenstar,
-    generate_video_tokenstar_i2v,
+    generate_video_tokenstar_kling_omni_image,
 )
 from skill_loader import load_skill  # type: ignore
 from core import storage as core_storage  # type: ignore
@@ -990,10 +990,11 @@ def gen_scene_video(
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
-    # 统一调用 TokenStar Kling 图生视频接口，不回退到 302.ai 或旧可灵官方接口。
-    res = generate_video_tokenstar_i2v(
+    # 统一调用 TokenStar Kling v3 Omni「图片参考模式」（旧版 Action API），
+    # 不回退到 302.ai 或旧可灵官方接口。分镜首帧图作为唯一参考图传入。
+    res = generate_video_tokenstar_kling_omni_image(
         prompt=video_prompt,
-        image_url=image_url,
+        image_urls=[image_url],
         duration=5,
         poll=True,
         max_wait=600,

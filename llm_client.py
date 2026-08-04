@@ -14,7 +14,9 @@
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
   AI302_AUDIO_MODEL      = whisper-1
     TOKENSTAR_API_KEY      = TokenStar API 密钥（影视制作台图片与视频共用）
-    TOKENSTAR_KLING_MODEL  = kling-v3（可选）
+    TOKENSTAR_KLING_MODEL  = kling-v3（可选，旧版单图 image2video 接口使用）
+    TOKENSTAR_KLING_OMNI_MODEL     = kling-v3-omni（可选，影视制作台视频生成默认使用）
+    TOKENSTAR_KLING_ELEMENT_TAG_ID = o_105（可选，AIGC 主体一致性标签）
   LOCAL_LLM_BASE_URL     =  （本地备用，可留空）
   LOCAL_LLM_MODEL        =
 """
@@ -66,6 +68,14 @@ TOKENSTAR_IMAGE_MODEL  = os.getenv("TOKENSTAR_IMAGE_MODEL", "gpt-image-2")
 # 影视制作台优先直接请求原生 16:9 画布；后处理仍会校验输出比例，
 # 以兼容网关回退为其他尺寸的情况。
 TOKENSTAR_IMAGE_SOURCE_SIZE = os.getenv("TOKENSTAR_IMAGE_SOURCE_SIZE", "2048x1152")
+
+# ── TokenStar 视频生成（Kling v3 Omni，图片参考模式，旧版 Action API）──────────
+# 与 /v1/videos/image2video（仅接受 kling-v2-6/kling-v3 白名单）不同，
+# Omni 图片参考模式走旧版 Action 接口：
+#   提交：POST /v1/video/generations      Header: X-TC-Action: SubmitVideoEditKlingJob
+#   轮询：GET  /v1/video/generations/{id} Header: X-TC-Action: DescribeVideoEditKlingJob
+TOKENSTAR_KLING_OMNI_MODEL     = os.getenv("TOKENSTAR_KLING_OMNI_MODEL", "kling-v3-omni")
+TOKENSTAR_KLING_ELEMENT_TAG_ID = os.getenv("TOKENSTAR_KLING_ELEMENT_TAG_ID", "o_105")
 
 # ── 图床（首帧图上传，用于 Kling 图生视频）──────────────────────────────────────
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "")
@@ -1691,6 +1701,338 @@ def generate_video_tokenstar_i2v(
         "task_id": task_id,
         "status": "processing",
         "source": "tokenstar",
+    }
+
+
+# ── TokenStar 旧版 Action API 通用请求封装 ──────────────────────────────────
+# 旧版接口都走同一个 POST/GET 路径，用 X-TC-Action header 区分具体操作
+# （SubmitVideoEditKlingJob / DescribeVideoEditKlingJob / CreateAigcElement /
+# DescribeAigcElement 等）。
+
+def _tokenstar_action_request(
+    path: str,
+    action: str,
+    json_body: Optional[Dict[str, Any]] = None,
+    method: str = "POST",
+    timeout: int = 60,
+) -> Dict[str, Any]:
+    """调用 TokenStar 旧版 Action API。成功返回 {"data": <解析后的 JSON>}；
+    失败返回 {"error": "..."}。"""
+    if not TOKENSTAR_API_KEY:
+        return {"error": "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 接口"}
+    headers = {
+        "Authorization": f"Bearer {TOKENSTAR_API_KEY}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-TC-Action": action,
+    }
+    url = _tokenstar_url(path)
+    try:
+        if method.upper() == "GET":
+            response = _requests.get(url, headers=headers, timeout=timeout)
+        else:
+            response = _requests.post(url, headers=headers, json=json_body or {}, timeout=timeout)
+    except _requests.RequestException as exc:
+        return {"error": f"TokenStar 请求异常：{exc}"}
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        payload = None
+    if response.status_code >= 400 or payload is None:
+        detail = (
+            _tokenstar_error_detail(payload, response.status_code, _tokenstar_request_id(response))
+            if payload is not None
+            else f"HTTP {response.status_code} {getattr(response, 'text', '')[:300]}"
+        )
+        return {"error": f"TokenStar 请求失败：{detail}"}
+    return {"data": payload}
+
+
+def _kling_extract_field(data: Any, *field_names: str) -> Optional[str]:
+    """在旧版 Action API 各种可能的响应结构（root / Response / Response.Result /
+    data）里查找字段值，兼容 TokenStar 不同模块的返回形状。"""
+    if not isinstance(data, dict):
+        return None
+    candidates = [data]
+    response = data.get("Response")
+    if isinstance(response, dict):
+        candidates.append(response)
+        result = response.get("Result")
+        if isinstance(result, dict):
+            candidates.append(result)
+        error = response.get("Error")
+        if isinstance(error, dict):
+            candidates.append(error)
+    inner_data = data.get("data")
+    if isinstance(inner_data, dict):
+        candidates.append(inner_data)
+    for field_name in field_names:
+        for candidate in candidates:
+            value = candidate.get(field_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return str(value)
+    return None
+
+
+def _dedupe_strings(values: List[str]) -> List[str]:
+    seen: List[str] = []
+    for value in values or []:
+        value = str(value or "").strip()
+        if value and value not in seen:
+            seen.append(value)
+    return seen
+
+
+def _kling_element_id_value(value: str) -> Any:
+    """与旧版 Action API 保持一致：纯数字 ID 转成 int，否则原样传字符串。"""
+    return int(value) if value.isdigit() else value
+
+
+def _omni_mode_for(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized == "4k":
+        return "4k"
+    if normalized in ("1080p", "pro"):
+        return "pro"
+    if normalized in ("720p", "std"):
+        return "std"
+    return "pro"
+
+
+def _omni_prompt(prompt: str, image_count: int, element_count: int) -> str:
+    """在 prompt 前拼接图片/主体元素的引用占位符，方便模型用
+    <<<image_1>>>/<<<element_1>>> 这类写法指代具体参考素材。"""
+    import re as _re_omni
+
+    if _re_omni.search(r"<<<(?:image|video|element)_\d+>>>", prompt):
+        return prompt
+    refs = []
+    if image_count:
+        refs.append(
+            "reference images are available as "
+            + ", ".join(f"<<<image_{i + 1}>>>" for i in range(image_count))
+        )
+    if element_count:
+        refs.append(
+            "reference elements are available as "
+            + ", ".join(f"<<<element_{i + 1}>>>" for i in range(element_count))
+        )
+    return (("; ".join(refs) + ".\n" + prompt) if refs else prompt)
+
+
+# ── AIGC Element（主体一致性，可选）────────────────────────────────────────
+
+def create_aigc_element(image_url: str, name: str, description: str = "") -> Dict[str, Any]:
+    """创建 Kling 主体一致性所需的 AIGC Element。image_url 必须是公网 HTTPS
+    URL。创建后必须调用 wait_for_aigc_element 等待 Status=ready，否则视频
+    任务会因主体尚未就绪而失败。"""
+    if not image_url.startswith("https://"):
+        return {"error": "AIGC Element 的参考图片地址必须是公网 HTTPS URL"}
+    body = {
+        "Name": name[:30],
+        "Description": description or name,
+        "ReferenceType": "image_refer",
+        "ElementImageList": {
+            "FrontalImage": image_url,
+            "ReferImages": [{"ImageUrl": image_url}],
+        },
+        "Provider": ["kling"],
+        "TagList": [{"TagId": TOKENSTAR_KLING_ELEMENT_TAG_ID}],
+    }
+    result = _tokenstar_action_request("/aigc/element", "CreateAigcElement", json_body=body)
+    if result.get("error"):
+        return result
+    element_id = _kling_extract_field(result.get("data"), "ElementId")
+    if not element_id:
+        return {"error": f"TokenStar CreateAigcElement 未返回 ElementId：{result.get('data')}"}
+    return {"element_id": element_id, "raw": result.get("data")}
+
+
+def describe_aigc_element(element_id: str) -> Dict[str, Any]:
+    result = _tokenstar_action_request(
+        "/aigc/element", "DescribeAigcElement", json_body={"ElementId": element_id}
+    )
+    if result.get("error"):
+        return result
+    data = result.get("data")
+    status = _kling_extract_field(data, "Status")
+    return {
+        "element_id": _kling_extract_field(data, "ElementId") or element_id,
+        "status": status,
+        "raw": data,
+    }
+
+
+_AIGC_ELEMENT_FAILED_STATUSES = {"failed", "failure", "error", "cancelled", "canceled"}
+_AIGC_ELEMENT_READY_STATUSES = {
+    "succeed", "success", "succeeded", "ready", "active", "completed", "done",
+}
+
+
+def wait_for_aigc_element(element_id: str, attempts: int = 40, interval_sec: int = 5) -> Dict[str, Any]:
+    """轮询 AIGC 主体元素状态直到 ready。使用 element_list 前必须先等待其
+    状态变为 ready，否则视频任务会失败。"""
+    last: Dict[str, Any] = {}
+    for attempt in range(attempts):
+        last = describe_aigc_element(element_id)
+        if last.get("error"):
+            return last
+        status = str(last.get("status") or "").strip().lower()
+        if status in _AIGC_ELEMENT_FAILED_STATUSES:
+            return {"error": f"AIGC 主体元素 {element_id} 失败（状态：{status}）"}
+        if status in _AIGC_ELEMENT_READY_STATUSES:
+            return last
+        if attempt < attempts - 1:
+            time.sleep(interval_sec)
+    return {"error": f"AIGC 主体元素 {element_id} 等待超时未就绪"}
+
+
+def _kling_omni_task_id(data: Any) -> Optional[str]:
+    return _kling_extract_field(data, "id", "JobId")
+
+
+def _kling_omni_result_url(data: Any) -> Optional[str]:
+    return _kling_extract_field(data, "ResultVideoUrl", "result_url", "video_url")
+
+
+def _kling_omni_status(data: Any) -> Optional[str]:
+    return _kling_extract_field(data, "Status", "StatusStr", "status")
+
+
+def _kling_omni_error_message(data: Any) -> Optional[str]:
+    return _kling_extract_field(data, "ErrorMessage", "FailReason", "Reason", "Message")
+
+
+def generate_video_tokenstar_kling_omni_image(
+    prompt: str,
+    image_urls: List[str],
+    element_ids: Optional[List[str]] = None,
+    aspect_ratio: str = "16:9",
+    duration: int = 5,
+    resolution: str = "1080p",
+    generate_audio: Optional[bool] = None,
+    poll: bool = True,
+    max_wait: int = 600,
+) -> Dict[str, Any]:
+    """通过 TokenStar 旧版 Action API 调用 Kling v3 Omni「图片参考模式」生成视频。
+
+    提交：POST /v1/video/generations       X-TC-Action: SubmitVideoEditKlingJob
+    轮询：GET  /v1/video/generations/{id}  X-TC-Action: DescribeVideoEditKlingJob
+
+    注意事项（务必遵守，否则任务会失败）：
+      1) image_urls 里每一张地址必须是公网可访问的 HTTPS URL；浏览器 blob 或
+         本地文件需要先经 _resolve_video_frame_image 上传到图床/CDN，不能直接
+         把 data: URL 或本地路径传给 TokenStar。
+      2) 使用 element_ids（主体一致性）时，必须先对每个 ID 等待其状态变为
+         ready，否则视频任务会失败；本函数会在提交前自动调用
+         wait_for_aigc_element 等待。
+      3) 单图时自动打上 Type: "first_frame"；多图时不加该字段，由模型自行
+         判断每张图的用途。
+      4) 轮询必须使用与提交相同的 DescribeVideoEditKlingJob action，不能用
+         新版 omni-video 端点的轮询方式（那是「视频参考模式」专用的）。
+    """
+    import logging as _logo
+
+    log_o = _logo.getLogger("llm_client.tokenstar_kling_omni")
+
+    if not TOKENSTAR_API_KEY:
+        return {"error": "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 视频接口", "source": "kling_v3_omni"}
+
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return {"error": "Kling Omni 需要 prompt", "source": "kling_v3_omni"}
+
+    # ── 1) 图片必须是公网 HTTPS URL；data: URL 先上传到图床 ──────────────
+    resolved_urls: List[str] = []
+    for raw_url in _dedupe_strings(image_urls or []):
+        public_url = _resolve_video_frame_image(raw_url, log_o) if raw_url.startswith("data:") else raw_url
+        if not public_url or not public_url.startswith("https://"):
+            return {
+                "error": f"图片参考地址必须是公网 HTTPS URL，当前处理失败：{raw_url[:120]}",
+                "source": "kling_v3_omni",
+            }
+        resolved_urls.append(public_url)
+    resolved_urls = resolved_urls[:7]
+    if not resolved_urls:
+        return {"error": "Kling Omni 图片参考模式至少需要一张图片", "source": "kling_v3_omni"}
+
+    # ── 2) 主体一致性：先等待每个 element 就绪 ───────────────────────────
+    resolved_element_ids: List[Any] = []
+    for element_id in _dedupe_strings(element_ids or []):
+        waited = wait_for_aigc_element(element_id)
+        if waited.get("error"):
+            return {"error": waited["error"], "source": "kling_v3_omni"}
+        resolved_element_ids.append(_kling_element_id_value(element_id))
+
+    # ── 3) 单图打 Type: first_frame；多图不加该字段 ─────────────────────
+    if len(resolved_urls) == 1:
+        image_list = [{"ImageUrl": resolved_urls[0], "Type": "first_frame"}]
+    else:
+        image_list = [{"ImageUrl": url} for url in resolved_urls]
+
+    if generate_audio is None:
+        sound_value = os.getenv("TOKENSTAR_KLING_SOUND", "on").strip().lower()
+    else:
+        sound_value = "on" if generate_audio else "off"
+    if sound_value not in ("on", "off"):
+        return {"error": "TOKENSTAR_KLING_SOUND 只能是 on 或 off", "source": "kling_v3_omni"}
+
+    body: Dict[str, Any] = {
+        "Model": TOKENSTAR_KLING_OMNI_MODEL,
+        "Prompt": _omni_prompt(prompt, len(resolved_urls), len(resolved_element_ids)),
+        "AspectRatio": aspect_ratio,
+        "Duration": duration,
+        "Mode": _omni_mode_for(resolution or os.getenv("TOKENSTAR_KLING_MODE")),
+        "Sound": sound_value,
+        "LogoAdd": 0,
+        "ImageList": image_list,
+    }
+    if resolved_element_ids:
+        body["ElementList"] = [{"ElementId": eid} for eid in resolved_element_ids]
+
+    submitted = _tokenstar_action_request(
+        "/v1/video/generations", "SubmitVideoEditKlingJob", json_body=body
+    )
+    if submitted.get("error"):
+        return {"error": f"Kling Omni 提交失败：{submitted['error']}", "source": "kling_v3_omni"}
+
+    task_id = _kling_omni_task_id(submitted.get("data"))
+    if not task_id:
+        return {"error": f"TokenStar 未返回任务 ID：{submitted.get('data')}", "source": "kling_v3_omni"}
+
+    if not poll:
+        return {"task_id": task_id, "status": "submitted", "source": "kling_v3_omni"}
+
+    # ── 4) 轮询必须用 DescribeVideoEditKlingJob，不能用新版 omni-video 轮询端点 ──
+    elapsed, interval = 0, 15
+    while elapsed < max_wait:
+        time.sleep(interval)
+        elapsed += interval
+        polled = _tokenstar_action_request(
+            f"/v1/video/generations/{task_id}",
+            "DescribeVideoEditKlingJob",
+            method="GET",
+        )
+        if polled.get("error"):
+            # 查询本身失败（例如限流）时继续轮询，避免把仍在执行的昂贵任务
+            # 误报为失败。
+            continue
+        data = polled.get("data")
+        result_url = _kling_omni_result_url(data)
+        if result_url:
+            return {"url": result_url, "task_id": task_id, "source": "kling_v3_omni"}
+        status = (_kling_omni_status(data) or "").strip().lower()
+        if status in ("failed", "failure", "error", "cancelled", "canceled"):
+            reason = _kling_omni_error_message(data) or "未知原因"
+            return {"error": f"Kling Omni 任务失败：{reason}", "task_id": task_id, "source": "kling_v3_omni"}
+
+    return {
+        "error": f"Kling Omni 视频等待超时（{max_wait}s），可手动查询 task_id={task_id}",
+        "task_id": task_id,
+        "status": "processing",
+        "source": "kling_v3_omni",
     }
 
 
