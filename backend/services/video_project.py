@@ -348,6 +348,7 @@ def normalize_manifest(
         "project_id": project_id,
         "memorial_id": memorial_id,
         "script_sha256": script_hash,
+        "provider_asset_group_id": "",
         "aspect_ratio": aspect,
         "fps": 25,
         "clips": clips,
@@ -624,6 +625,8 @@ def _persist_clip_result(
         if clip.get("job_id") != job_id:
             return
         clip.update(patch)
+        if patch.get("provider_asset_group_id"):
+            manifest["provider_asset_group_id"] = str(patch["provider_asset_group_id"])
         clip["updated_at"] = storage.now_iso()
         manifest["updated_at"] = storage.now_iso()
         _write_json(path, manifest)
@@ -653,6 +656,16 @@ def run_clip_generation(
             "seedance-asset": "seedance-2.0-asset",
             "seedance-asset-fast": "seedance-2.0-asset-fast",
         }.get(configured_model, configured_model)
+        shared_group_id = str(manifest.get("provider_asset_group_id") or "")
+        if not shared_group_id:
+            shared_group_id = next(
+                (
+                    str(item.get("provider_asset_group_id") or "")
+                    for item in manifest.get("clips", [])
+                    if item.get("provider_asset_group_id")
+                ),
+                "",
+            )
         cached_asset = ""
         if (
             clip.get("provider_source_sha256") == source_hash
@@ -734,7 +747,7 @@ def run_clip_generation(
                 generate_audio=False,
                 model=configured_model,
                 group_name=f"nian-{memorial_id[-12:]}-{project_id[-12:]}",
-                group_id=str(clip.get("provider_asset_group_id") or ""),
+                group_id=shared_group_id,
                 asset_id=cached_asset,
                 poll=True,
                 max_wait=600,

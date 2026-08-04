@@ -272,6 +272,32 @@ class VideoProjectTests(unittest.TestCase):
         delete.assert_called_once_with("niannian/tokenstar/scope/job/frame.jpg")
         public_frame.assert_not_called()
 
+    def test_project_level_asset_group_is_persisted_and_reused(self):
+        self.ready_manifest()
+        captured = {}
+        with patch.object(video_project, "_script", return_value=SCRIPT), \
+             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=lambda **kwargs: captured.update(kwargs) or {"error": "stop"}):
+            job_id, _ = video_project.queue_clip_generation(
+                "u_one", "m_one", PROJECT_ID, "clip_001"
+            )
+            video_project._persist_clip_result(
+                "u_one", "m_one", PROJECT_ID, "clip_001", job_id,
+                {"provider_asset_group_id": "ag-project-shared"},
+            )
+            manifest_path = video_project._manifest_path(
+                "u_one", "m_one", PROJECT_ID
+            )
+            manifest = video_project._read_json(manifest_path, {})
+            self.assertEqual(manifest["provider_asset_group_id"], "ag-project-shared")
+            # Simulate another clip which has no clip-level copy of the ID.
+            manifest["clips"][0]["provider_asset_group_id"] = ""
+            video_project._write_json(manifest_path, manifest)
+            video_project.run_clip_generation(
+                "u_one", "m_one", PROJECT_ID, "clip_001", job_id
+            )
+
+        self.assertEqual(captured["group_id"], "ag-project-shared")
+
     def test_render_is_blocked_until_every_clip_is_approved(self):
         self.ready_manifest()
         with patch.object(video_project, "_script", return_value=SCRIPT):

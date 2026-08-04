@@ -123,6 +123,7 @@ class TokenStarVideoTests(unittest.TestCase):
     @patch.object(llm_client._requests, "post")
     def test_seedance_asset_upload_matches_unlimited_map_and_polls_readiness(self, post, get, _sleep):
         post.side_effect = [
+            _response(200, {"Items": [], "TotalCount": 0}),
             _response(200, {"Result": {"Id": "group-1"}}),
             _response(200, {"Result": {"Id": "asset-1"}}),
             _response(200, {"Result": {"Items": [{"AssetId": "asset-1", "Status": "Active"}]}}),
@@ -146,14 +147,15 @@ class TokenStarVideoTests(unittest.TestCase):
 
         self.assertEqual(result["url"], "https://cdn.example/seedance.mp4")
         self.assertEqual(result["model"], "seedance-2.0-asset-fast")
-        self.assertEqual(post.call_args_list[0].args[0], "https://api.tokenstar.world/volc/asset/CreateAssetGroup")
-        upload_body = post.call_args_list[1].kwargs["json"]
+        self.assertEqual(post.call_args_list[0].args[0], "https://api.tokenstar.world/volc/asset/ListAssetGroups")
+        self.assertEqual(post.call_args_list[1].args[0], "https://api.tokenstar.world/volc/asset/CreateAssetGroup")
+        upload_body = post.call_args_list[2].kwargs["json"]
         self.assertEqual(upload_body["GroupId"], "group-1")
         self.assertEqual(upload_body["MaterialGroupId"], "group-1")
         self.assertTrue(upload_body["URL"].startswith("data:image/jpeg;base64,"))
-        list_body = post.call_args_list[2].kwargs["json"]
+        list_body = post.call_args_list[3].kwargs["json"]
         self.assertEqual(list_body["Filter"]["GroupIds"], ["group-1"])
-        generation_body = post.call_args_list[3].kwargs["json"]
+        generation_body = post.call_args_list[4].kwargs["json"]
         self.assertEqual(generation_body["model"], "seedance-2.0-asset-fast")
         self.assertEqual([item["type"] for item in generation_body["content"]], ["text", "image_url"])
         self.assertEqual(generation_body["content"][1]["image_url"]["url"], "asset://asset-1")
@@ -198,6 +200,7 @@ class TokenStarVideoTests(unittest.TestCase):
     @patch.object(llm_client._requests, "post")
     def test_seedance_asset_upload_falls_back_to_full_compat_multipart(self, post, get, _sleep):
         post.side_effect = [
+            _response(200, {"Items": [], "TotalCount": 0}),
             _response(200, {"Result": {"Id": "group-1"}}),
             _response(500, {"error": {"code": "material_create_failed", "message": "create material failed"}}),
             _response(200, {"Result": {"Id": "asset-1"}}),
@@ -216,8 +219,8 @@ class TokenStarVideoTests(unittest.TestCase):
         )
 
         self.assertEqual(result["url"], "https://cdn.example/out.mp4")
-        fallback_form = post.call_args_list[2].kwargs["data"]
-        fallback_file = post.call_args_list[2].kwargs["files"]["file"]
+        fallback_form = post.call_args_list[3].kwargs["data"]
+        fallback_file = post.call_args_list[3].kwargs["files"]["file"]
         self.assertEqual(fallback_form["GroupId"], "group-1")
         self.assertEqual(fallback_form["MaterialGroupId"], "group-1")
         self.assertEqual(fallback_form["asset_group_id"], "group-1")
@@ -230,6 +233,7 @@ class TokenStarVideoTests(unittest.TestCase):
     @patch.object(llm_client._requests, "post")
     def test_seedance_retries_until_asset_oss_object_is_ready(self, post, get, _sleep):
         post.side_effect = [
+            _response(200, {"Items": [], "TotalCount": 0}),
             _response(200, {"Id": "group-1"}),
             _response(200, {"Id": "asset-1"}),
             _response(200, {"Result": {"Items": [{"Id": "asset-1", "Status": "READY"}]}}),
@@ -253,6 +257,69 @@ class TokenStarVideoTests(unittest.TestCase):
             if call.args[0].endswith("/v1/video/generations")
         ]
         self.assertEqual(len(generation_calls), 2)
+
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_reuses_existing_group_before_create(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {
+                "Items": [{"Id": "ag-existing", "Name": "nian-video-project"}],
+                "TotalCount": 1,
+            }),
+            _response(200, {"Id": "asset-1"}),
+            _response(200, {"Items": [{"Id": "asset-1", "Status": "Active"}]}),
+            _response(200, {"id": "task-1"}),
+        ]
+        get.return_value = _response(
+            200, {"status": "succeeded", "result_url": "https://cdn.example/reused.mp4"}
+        )
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Only a restrained camera move.",
+            b"\xff\xd8\xffimage",
+            max_wait=8,
+        )
+
+        self.assertEqual(result["asset_group_id"], "ag-existing")
+        self.assertFalse(any(
+            call.args[0].endswith("/CreateAssetGroup") for call in post.call_args_list
+        ))
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["GroupId"], "ag-existing")
+
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_recovers_group_id_after_name_conflict(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {"Items": [], "TotalCount": 0}),
+            _response(409, {
+                "error": {
+                    "code": "material_name_conflict",
+                    "message": "material resource name already exists",
+                }
+            }),
+            _response(200, {
+                "Items": [{"Id": "ag-race-winner", "Name": "nian-video-project"}],
+                "TotalCount": 1,
+            }),
+            _response(200, {"Id": "asset-1"}),
+            _response(200, {"Items": [{"Id": "asset-1", "Status": "Active"}]}),
+            _response(200, {"id": "task-1"}),
+        ]
+        get.return_value = _response(
+            200, {"status": "succeeded", "result_url": "https://cdn.example/race.mp4"}
+        )
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Only a restrained camera move.",
+            b"\xff\xd8\xffimage",
+            max_wait=8,
+        )
+
+        self.assertEqual(result["url"], "https://cdn.example/race.mp4")
+        self.assertEqual(result["asset_group_id"], "ag-race-winner")
+        self.assertEqual(post.call_args_list[3].kwargs["json"]["GroupId"], "ag-race-winner")
 
 
 class PublicSceneFrameTests(unittest.TestCase):

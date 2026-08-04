@@ -1633,6 +1633,27 @@ def _tokenstar_find_asset(payload: Any, asset_id: str, name: str) -> Dict[str, A
     return fallback
 
 
+def _tokenstar_find_group(payload: Any, name: str) -> Dict[str, Any]:
+    """Find an exact-name asset group without accepting unrelated IDs."""
+    wanted_name = (name or "").strip()
+    for record in _tokenstar_nested_records(payload):
+        candidate_name = _tokenstar_record_text(record, "Name", "name", "Title", "title")
+        candidate_id = _tokenstar_record_text(
+            record,
+            "GroupId",
+            "group_id",
+            "AssetGroupId",
+            "asset_group_id",
+            "MaterialGroupId",
+            "material_group_id",
+            "Id",
+            "id",
+        )
+        if candidate_name == wanted_name and candidate_id:
+            return record
+    return {}
+
+
 def generate_video_tokenstar_seedance_asset(
     prompt: str,
     image_bytes: bytes,
@@ -1692,9 +1713,58 @@ def generate_video_tokenstar_seedance_asset(
 
     asset_route_model = TOKENSTAR_SEEDANCE_ASSET_MODEL or "volc-asset"
     if not group_id:
+        resolved_group_name = (group_name or "nian-video-project")[:80]
+
+        def find_existing_group() -> tuple[str, str]:
+            list_body = {
+                "model": asset_route_model,
+                "Filter": {"Name": resolved_group_name},
+                "PageNumber": 1,
+                "PageSize": 20,
+            }
+            try:
+                list_response = _requests.post(
+                    _tokenstar_url("/volc/asset/ListAssetGroups"),
+                    headers=headers,
+                    json=list_body,
+                    timeout=60,
+                )
+                list_payload = list_response.json()
+            except (_requests.RequestException, ValueError, TypeError) as exc:
+                return "", f"查询同名素材组异常：{exc}"
+            if _tokenstar_response_failed(list_response.status_code, list_payload):
+                return "", "查询同名素材组失败：" + _tokenstar_error_detail(
+                    list_payload,
+                    list_response.status_code,
+                    _tokenstar_request_id(list_response),
+                )
+            record = _tokenstar_find_group(list_payload, resolved_group_name)
+            existing_id = _tokenstar_record_text(
+                record,
+                "GroupId",
+                "group_id",
+                "AssetGroupId",
+                "asset_group_id",
+                "MaterialGroupId",
+                "material_group_id",
+                "Id",
+                "id",
+            )
+            return existing_id, ""
+
+        # TokenStar requires group names to be unique. Reuse an exact-name
+        # group before creating, then repeat the lookup to recover creation
+        # races reported as material_name_conflict / HTTP 409.
+        group_id, preflight_error = find_existing_group()
+        group_reused = bool(group_id)
+    else:
+        preflight_error = ""
+        group_reused = True
+
+    if not group_id:
         body = {
             "model": asset_route_model,
-            "Name": (group_name or "nian-video-project")[:80],
+            "Name": resolved_group_name,
             "Description": "NianNian memorial video project assets",
             "GroupType": "AIGC",
         }
@@ -1709,16 +1779,38 @@ def generate_video_tokenstar_seedance_asset(
         except (_requests.RequestException, ValueError, TypeError) as exc:
             return {"error": f"TokenStar 素材组创建异常：{exc}", "source": "tokenstar"}
         if _tokenstar_response_failed(response.status_code, payload):
-            return {
-                "error": "TokenStar 素材组创建失败：" + _tokenstar_error_detail(
-                    payload, response.status_code, _tokenstar_request_id(response)
-                ),
-                "source": "tokenstar",
-            }
-        group_id = _tokenstar_result_id(payload, "GroupId", "Id", "id")
+            create_detail = _tokenstar_error_detail(
+                payload, response.status_code, _tokenstar_request_id(response)
+            )
+            conflict = response.status_code == 409 or bool(
+                re.search(r"material_name_conflict|name already exists", create_detail, re.I)
+            )
+            if conflict:
+                group_id, recovery_error = find_existing_group()
+                group_reused = bool(group_id)
+                if not group_id:
+                    return {
+                        "error": "TokenStar 素材组名称冲突且无法恢复已有 GroupId："
+                        + create_detail
+                        + (f"；{recovery_error}" if recovery_error else "")
+                        + (f"；首次查询：{preflight_error}" if preflight_error else ""),
+                        "source": "tokenstar",
+                    }
+            else:
+                return {
+                    "error": "TokenStar 素材组创建失败：" + create_detail,
+                    "source": "tokenstar",
+                }
+        else:
+            group_id = _tokenstar_result_id(payload, "GroupId", "Id", "id")
         if not group_id:
             return {"error": f"TokenStar 未返回 GroupId：{payload}", "source": "tokenstar"}
-        emit({"asset_group_id": group_id, "model": model_name, "provider_status": "uploading"})
+    emit({
+        "asset_group_id": group_id,
+        "asset_group_reused": group_reused,
+        "model": model_name,
+        "provider_status": "uploading",
+    })
 
     if not asset_id:
         actual_mime = (mime_type or "").lower().split(";", 1)[0].strip()
