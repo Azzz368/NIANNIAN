@@ -1092,9 +1092,9 @@ def gen_scene_video(
         image_urls=[image_url],
         duration=5,
         poll=True,
-        # 最多等待 5 分钟；超过该窗口明确返回失败状态，避免
+        # 最多等待 6.5 分钟；超过该窗口明确返回失败状态，避免
         # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
-        max_wait=300,
+        max_wait=390,
     )
     debug["task_id"] = res.get("task_id", "")
     debug["source"] = res.get("source", "")
