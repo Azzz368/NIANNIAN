@@ -1,0 +1,132 @@
+{
+  "schema_version": "1.0",
+  "project": {
+    "session_id": "session_example",
+    "memorial_id": "m_example",
+    "resolution": "1280x720",
+    "fps": 25,
+    "aspect_ratio": "16:9",
+    "target_duration_sec": 15,
+    "transition_default": {
+      "type": "crossfade",
+      "duration_sec": 0.8
+    }
+  },
+  "clips": [
+    {
+      "clip_id": "clip_001",
+      "parent_scene_id": "scene_01",
+      "order": 1,
+      "duration_sec": 5,
+      "source_asset_ids": [
+        "a_portrait_example"
+      ],
+      "source_kind": "image",
+      "strategy": "ken_burns",
+      "motion": {
+        "template": "slow_zoom_in",
+        "prompt": ""
+      },
+      "fallback_strategy": "ken_burns",
+      "provenance": "user_asset",
+      "narration": {
+        "text": "这是家人最熟悉的笑容。",
+        "audio_ref": "",
+        "start_sec": 0,
+        "volume": 1.0
+      },
+      "subtitle": {
+        "text": "这是家人最熟悉的笑容。",
+        "style": "memorial_default"
+      },
+      "transition_out": {
+        "type": "crossfade",
+        "duration_sec": 0.8
+      },
+      "render_state": "queued"
+    },
+    {
+      "clip_id": "clip_002",
+      "parent_scene_id": "scene_01",
+      "order": 2,
+      "duration_sec": 5,
+      "source_asset_ids": [
+        "a_boat_example"
+      ],
+      "source_kind": "image",
+      "strategy": "ai_i2v",
+      "motion": {
+        "template": "subtle_documentary",
+        "prompt": "Preserve the exact person, face, clothing, boat and background from the source image. Only subtle natural body movement, gentle sea motion and a very slow camera push-in. No talking, no new people, no face redesign."
+      },
+      "fallback_strategy": "ken_burns",
+      "provenance": "user_asset",
+      "generation": {
+        "provider": "tokenstar",
+        "model": "kling-v3",
+        "task_id": "",
+        "result_url": ""
+      },
+      "narration": {
+        "text": "他也喜欢在海风里，安静地看向远方。",
+        "audio_ref": "",
+        "start_sec": 4.2,
+        "volume": 1.0
+      },
+      "subtitle": {
+        "text": "他也喜欢在海风里，安静地看向远方。",
+        "style": "memorial_default"
+      },
+      "transition_out": {
+        "type": "crossfade",
+        "duration_sec": 0.8
+      },
+      "render_state": "queued"
+    },
+    {
+      "clip_id": "clip_003",
+      "parent_scene_id": "scene_02",
+      "order": 3,
+      "duration_sec": 5,
+      "source_asset_ids": [
+        "a_video_example"
+      ],
+      "source_kind": "video",
+      "strategy": "direct_video",
+      "trim": {
+        "in_sec": 2.5,
+        "out_sec": 7.5
+      },
+      "fallback_strategy": "title_card",
+      "provenance": "user_asset",
+      "narration": {
+        "text": "",
+        "audio_ref": "use_original_audio",
+        "start_sec": 0,
+        "volume": 0.85
+      },
+      "subtitle": {
+        "text": "",
+        "style": "memorial_default"
+      },
+      "transition_out": {
+        "type": "fade_to_black",
+        "duration_sec": 1.2
+      },
+      "render_state": "queued"
+    }
+  ],
+  "audio_program": {
+    "bgm_asset_id": "",
+    "bgm_volume": 0.22,
+    "ducking_volume": 0.12,
+    "fade_in_sec": 2,
+    "fade_out_sec": 3
+  },
+  "output": {
+    "format": "mp4",
+    "video_codec": "h264",
+    "audio_codec": "aac",
+    "render_manifest": "render_manifest.json"
+  }
+}

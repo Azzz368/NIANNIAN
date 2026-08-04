@@ -118,6 +118,142 @@ class TokenStarVideoTests(unittest.TestCase):
         self.assertEqual(result["task_id"], "task-2")
         self.assertIn("ImageDownloadError", result["error"])
 
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_asset_upload_matches_unlimited_map_and_polls_readiness(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {"Result": {"Id": "group-1"}}),
+            _response(200, {"Result": {"Id": "asset-1"}}),
+            _response(200, {"Result": {"Items": [{"AssetId": "asset-1", "Status": "Active"}]}}),
+            _response(200, {"id": "task-1"}),
+        ]
+        get.return_value = _response(
+            200,
+            {"status": "succeeded", "result_url": "https://cdn.example/seedance.mp4"},
+        )
+        progress = []
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Preserve the portrait; apply only a very slow camera push-in.",
+            b"\xff\xd8\xfflocal-image-bytes",
+            filename="portrait.jpg",
+            duration=5,
+            model="seedance-asset-fast",
+            max_wait=8,
+            progress=progress.append,
+        )
+
+        self.assertEqual(result["url"], "https://cdn.example/seedance.mp4")
+        self.assertEqual(result["model"], "seedance-2.0-asset-fast")
+        self.assertEqual(post.call_args_list[0].args[0], "https://api.tokenstar.world/volc/asset/CreateAssetGroup")
+        upload_body = post.call_args_list[1].kwargs["json"]
+        self.assertEqual(upload_body["GroupId"], "group-1")
+        self.assertEqual(upload_body["MaterialGroupId"], "group-1")
+        self.assertTrue(upload_body["URL"].startswith("data:image/jpeg;base64,"))
+        list_body = post.call_args_list[2].kwargs["json"]
+        self.assertEqual(list_body["Filter"]["GroupIds"], ["group-1"])
+        generation_body = post.call_args_list[3].kwargs["json"]
+        self.assertEqual(generation_body["model"], "seedance-2.0-asset-fast")
+        self.assertEqual([item["type"] for item in generation_body["content"]], ["text", "image_url"])
+        self.assertEqual(generation_body["content"][1]["image_url"]["url"], "asset://asset-1")
+        self.assertEqual(generation_body["content"][1]["role"], "reference_image")
+        self.assertEqual(generation_body["resolution"], "720p")
+        self.assertEqual(get.call_args.args[0], "https://api.tokenstar.world/v1/video/generations/task-1")
+        self.assertTrue(any(item.get("task_id") == "task-1" for item in progress))
+
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_prefers_public_https_asset_url(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {"Id": "asset-public-1"}),
+            _response(200, {"Items": [{"Id": "asset-public-1", "Status": "Active"}]}),
+            _response(200, {"id": "task-public-1"}),
+        ]
+        get.return_value = _response(
+            200,
+            {"status": "succeeded", "result_url": "https://cdn.example/public.mp4"},
+        )
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Only a restrained camera push-in.",
+            b"\xff\xd8\xffimage",
+            image_url="https://nian.example/api/video-projects/public-frame/frame.jpg",
+            group_id="group-existing",
+            max_wait=8,
+        )
+
+        self.assertEqual(result["url"], "https://cdn.example/public.mp4")
+        upload_call = post.call_args_list[0]
+        self.assertEqual(
+            upload_call.kwargs["json"]["URL"],
+            "https://nian.example/api/video-projects/public-frame/frame.jpg",
+        )
+        self.assertNotIn("files", upload_call.kwargs)
+        self.assertEqual(post.call_args_list[1].kwargs["json"]["Filter"]["GroupIds"], ["group-existing"])
+
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_asset_upload_falls_back_to_full_compat_multipart(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {"Result": {"Id": "group-1"}}),
+            _response(500, {"error": {"code": "material_create_failed", "message": "create material failed"}}),
+            _response(200, {"Result": {"Id": "asset-1"}}),
+            _response(200, {"Result": {"Items": [{"Id": "asset-1", "Status": "ACTIVE"}]}}),
+            _response(200, {"task_id": "task-1"}),
+        ]
+        get.return_value = _response(
+            200, {"status": "succeeded", "result_url": "https://cdn.example/out.mp4"}
+        )
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Only a slow camera push-in.",
+            b"\x89PNG\r\n\x1a\nimage-bytes",
+            mime_type="application/octet-stream",
+            max_wait=8,
+        )
+
+        self.assertEqual(result["url"], "https://cdn.example/out.mp4")
+        fallback_form = post.call_args_list[2].kwargs["data"]
+        fallback_file = post.call_args_list[2].kwargs["files"]["file"]
+        self.assertEqual(fallback_form["GroupId"], "group-1")
+        self.assertEqual(fallback_form["MaterialGroupId"], "group-1")
+        self.assertEqual(fallback_form["asset_group_id"], "group-1")
+        self.assertEqual(fallback_form["model"], "volc-asset")
+        self.assertEqual(fallback_form["AssetType"], "Image")
+        self.assertEqual(fallback_file[2], "image/png")
+
+    @patch.object(llm_client.time, "sleep", return_value=None)
+    @patch.object(llm_client._requests, "get")
+    @patch.object(llm_client._requests, "post")
+    def test_seedance_retries_until_asset_oss_object_is_ready(self, post, get, _sleep):
+        post.side_effect = [
+            _response(200, {"Id": "group-1"}),
+            _response(200, {"Id": "asset-1"}),
+            _response(200, {"Result": {"Items": [{"Id": "asset-1", "Status": "READY"}]}}),
+            _response(422, {"error": {"code": "material_resource_oss_missing", "message": "material resource oss object is missing"}}),
+            _response(200, {"id": "task-1"}),
+        ]
+        get.return_value = _response(
+            200,
+            {"status": "SUCCESS", "content": {"video_url": "https://cdn.example/ready.mp4"}},
+        )
+
+        result = llm_client.generate_video_tokenstar_seedance_asset(
+            "Use only a restrained camera move.",
+            b"\xff\xd8\xffimage",
+            max_wait=8,
+        )
+
+        self.assertEqual(result["url"], "https://cdn.example/ready.mp4")
+        generation_calls = [
+            call for call in post.call_args_list
+            if call.args[0].endswith("/v1/video/generations")
+        ]
+        self.assertEqual(len(generation_calls), 2)
+
 
 class PublicSceneFrameTests(unittest.TestCase):
     def test_generated_frame_uses_public_https_service_url(self):
