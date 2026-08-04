@@ -8,6 +8,7 @@ const state = {
   chatHistory: [],
   libraryImages: [],
   selectedAssetIds: [],
+  sessionMemorialId: '', // 恢复的旧会话对应人物，用于识别资料库切换
 };
 
 // ───── 字段映射 ─────
@@ -403,6 +404,7 @@ async function bootstrap() {
     try {
       const res = await apiGet(`/intake/session/${sid}`);
       state.form = res.form_data || {};
+      state.sessionMemorialId = state.form.memorial_id || '';
       writeForm(state.form);
       state.chatHistory = res.chat_history || [];
     } catch { /* 过期则忽略 */ }
@@ -423,34 +425,77 @@ async function prefillFromLibrary() {
     if (!resp.ok) return;
     const mdata = await resp.json();
     const subj = (mdata.dossier || {}).subject || {};
+    const switchedMemorial = Boolean(
+      state.sessionMemorialId && state.sessionMemorialId !== mid
+    );
     state.libraryImages = (mdata.assets || []).filter(isImageAsset);
     const validAssetIds = new Set(state.libraryImages.map(asset => asset.asset_id));
-    const savedAssetIds = Array.isArray(state.form.selected_asset_ids) ? state.form.selected_asset_ids : [];
+    const savedAssetIds = switchedMemorial
+      ? []
+      : (Array.isArray(state.form.selected_asset_ids) ? state.form.selected_asset_ids : []);
     state.selectedAssetIds = savedAssetIds.filter(assetId => validAssetIds.has(assetId));
     const prefill = {
-      deceased_name:   subj.name       || '',
+      deceased_name:   subj.name       || mdata.meta?.name || '',
       birth_date:      subj.birth      || '',
       death_date:      subj.passing    || '',
       occupation:      subj.occupation || '',
       deceased_gender: subj.gender     || '',
     };
-    // 仅填入目前仍为空的字段，不覆盖用户已填内容
-    FIELD_IDS.forEach(k => {
-      const el = document.getElementById('f_' + k);
-      if (el && !el.value && prefill[k]) el.value = prefill[k];
-    });
-    if (prefill.deceased_gender && !document.querySelector('input[name="gender"]:checked')) {
-      const r = document.querySelector(`input[name="gender"][value="${prefill.deceased_gender}"]`);
-      if (r) r.checked = true;
-    }
-    // 仅在用户未填写时自动带入资料库的结构化记忆。
+    const story = dossierStory(mdata.dossier || {});
     const memoryInput = document.getElementById('f_family_memory_text');
-    if (memoryInput && !memoryInput.value.trim()) {
-      const story = dossierStory(mdata.dossier || {});
-      if (story) {
+
+    if (switchedMemorial) {
+      // 资料库切换到另一人时，旧会话中的姓名、回忆、发言人和图片选择都属于
+      // 上一人物，必须清空后再写入当前人物资料，不能再使用“仅填空字段”的策略。
+      const resetForm = {
+        deceased_name: '', birth_date: '', death_date: '', occupation: '',
+        ceremony_date: '', ceremony_venue: '', total_duration_sec: 300,
+        family_memory_text: '', last_wishes: '', speaker_name: '',
+        speaker_relation: '', speaker_style: '', deceased_gender: '男',
+        selected_asset_ids: [], user_id: state.form.user_id || '', memorial_id: mid,
+      };
+      state.form = { ...state.form, ...resetForm, ...prefill };
+      writeForm(state.form);
+      const defaultGender = document.querySelector('input[name="gender"][value="男"]');
+      if (defaultGender) defaultGender.checked = true;
+      if (prefill.deceased_gender) {
+        const r = document.querySelector(`input[name="gender"][value="${prefill.deceased_gender}"]`);
+        if (r) r.checked = true;
+      }
+      if (memoryInput) memoryInput.value = story;
+      state.form.family_memory_text = story;
+      state.chatHistory = [];
+      state.sessionMemorialId = mid;
+      const currentSessionId = getSessionId();
+      if (currentSessionId) {
+        try {
+          const saved = await apiPost('/intake/submit', {
+            session_id: currentSessionId,
+            form_data: state.form,
+            reset_chat: true,
+          });
+          state.form = saved.form_data || state.form;
+          setSessionId(saved.session_id);
+        } catch (error) {
+          console.warn('[memorial] 切换人物后的会话重置失败:', error);
+        }
+      }
+      toast(`已切换到资料库「${prefill.deceased_name || mdata.meta?.name || '当前人物'}」，旧人物表单已清空`);
+    } else {
+      // 同一人物刷新页面时保留用户输入，仅补齐仍为空的资料库字段。
+      FIELD_IDS.forEach(k => {
+        const el = document.getElementById('f_' + k);
+        if (el && !el.value && prefill[k]) el.value = prefill[k];
+      });
+      if (prefill.deceased_gender && !document.querySelector('input[name="gender"]:checked')) {
+        const r = document.querySelector(`input[name="gender"][value="${prefill.deceased_gender}"]`);
+        if (r) r.checked = true;
+      }
+      if (memoryInput && !memoryInput.value.trim() && story) {
         memoryInput.value = story;
         state.form.family_memory_text = story;
       }
+      state.form.memorial_id = mid;
     }
     renderLibraryPhotos();
     // 顶部提示条：告知用户数据来源
