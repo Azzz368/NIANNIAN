@@ -67,6 +67,22 @@ class BunnyStorageTests(unittest.TestCase):
         self.assertTrue(delete.call_args.args[0].startswith("https://sg.storage.bunnycdn.com/"))
         self.assertEqual(delete.call_args.kwargs["headers"]["AccessKey"], "test-secret")
 
+    def test_library_and_scene_paths_are_type_separated(self):
+        image_path = bunny_storage.library_asset_path(
+            "user 1", "memorial 1", "image", "a_123", "旧照片 01.jpg"
+        )
+        video_path = bunny_storage.library_asset_path(
+            "user 1", "memorial 1", "video", "a_456", "采访.mp4"
+        )
+
+        self.assertIn("/image/", image_path)
+        self.assertIn("/video/", video_path)
+        self.assertNotEqual(image_path, video_path)
+        self.assertEqual(
+            bunny_storage.scene_frame_path("session 1", 2, "png"),
+            "niannian/studio/session-1/images/scene-002.png",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

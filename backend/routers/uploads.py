@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from openai import OpenAI
 from core import security, storage
 from core.dashscope_config import compatible_base_url
-from services import asset_analysis, asset_vision, material_context
+from services import asset_analysis, asset_vision, bunny_storage, material_context
 
 router = APIRouter(prefix="/memorials", tags=["uploads"])
 
@@ -73,6 +73,62 @@ def _merge_tags(*tag_lists) -> list[str]:
             if tag and tag not in merged:
                 merged.append(tag)
     return merged[:12]
+
+
+def _sync_asset_to_bunny(user_id: str, memorial_id: str, asset: dict) -> dict:
+    """Upload one local library asset to Bunny and return its metadata patch.
+
+    Bunny is the public CDN copy used by media providers. The local file remains as
+    the private archival/analysis source and keeps existing authenticated API reads
+    compatible.
+    """
+    if not bunny_storage.is_configured():
+        return {}
+    asset_id = str(asset.get("asset_id") or "")
+    stored_name = str(asset.get("stored_name") or "")
+    if not asset_id or not stored_name:
+        return {}
+    path = storage.memorial_dir(user_id, memorial_id) / "assets" / stored_name
+    if not path.exists():
+        raise bunny_storage.BunnyStorageError("本地资料库文件不存在，无法同步 Bunny")
+    remote_path = bunny_storage.library_asset_path(
+        user_id,
+        memorial_id,
+        str(asset.get("kind") or "other"),
+        asset_id,
+        str(asset.get("filename") or stored_name),
+    )
+    result = bunny_storage.upload_bytes(
+        path.read_bytes(),
+        remote_path,
+        str(asset.get("mime") or "application/octet-stream"),
+    )
+    return {
+        "storage_provider": "bunny",
+        "bunny_storage_key": result["storage_key"],
+        "bunny_cdn_url": result["cdn_url"],
+        "bunny_sync_status": "succeeded",
+        "bunny_sync_error": "",
+        "bunny_synced_at": storage.now_iso(),
+    }
+
+
+def _sync_memorial_assets_to_bunny(user_id: str, memorial_id: str) -> None:
+    """Best-effort background migration for existing pictures, videos, audio, etc."""
+    if not bunny_storage.is_configured():
+        return
+    for asset in storage.list_assets(user_id, memorial_id):
+        if asset.get("bunny_cdn_url") and asset.get("bunny_sync_status") == "succeeded":
+            continue
+        try:
+            patch = _sync_asset_to_bunny(user_id, memorial_id, asset)
+            if patch:
+                storage.update_asset(user_id, memorial_id, str(asset.get("asset_id") or ""), patch)
+        except Exception as exc:
+            storage.update_asset(user_id, memorial_id, str(asset.get("asset_id") or ""), {
+                "bunny_sync_status": "failed",
+                "bunny_sync_error": str(exc)[:300],
+            })
 
 
 def _analyze_library_asset(user_id: str, memorial_id: str, asset_id: str) -> None:
@@ -190,6 +246,7 @@ async def upload(
         "emotion": [],
         "related_memory_ids": [],
         "analysis_status": "queued",
+        "bunny_sync_status": "pending" if bunny_storage.is_configured() else "not_configured",
     }
     if kind == "image":
         asset.update({
@@ -201,6 +258,20 @@ async def upload(
             "search_text": "",
         })
     storage.add_asset(uid, mid, asset)
+    if bunny_storage.is_configured():
+        try:
+            patch = _sync_asset_to_bunny(uid, mid, asset)
+            asset.update(patch)
+            storage.update_asset(uid, mid, aid, patch)
+        except Exception as exc:
+            # The original local archive remains available; surface the CDN failure in
+            # metadata so users and providers never receive a misleading public URL.
+            patch = {
+                "bunny_sync_status": "failed",
+                "bunny_sync_error": str(exc)[:300],
+            }
+            asset.update(patch)
+            storage.update_asset(uid, mid, aid, patch)
     background_tasks.add_task(_analyze_library_asset, uid, mid, aid)
     return {"asset": asset}
 
@@ -247,10 +318,33 @@ def analyze_asset(
 
 
 @router.get("/{mid}/assets")
-def list_assets(mid: str, user = Depends(security.get_current_user)):
+def list_assets(mid: str, background_tasks: BackgroundTasks, user = Depends(security.get_current_user)):
     if not storage.get_memorial(user["user_id"], mid):
         raise HTTPException(404, "未找到")
+    if bunny_storage.is_configured():
+        background_tasks.add_task(_sync_memorial_assets_to_bunny, user["user_id"], mid)
     return {"assets": storage.list_assets(user["user_id"], mid)}
+
+
+@router.post("/{mid}/assets/sync-bunny")
+def sync_assets_to_bunny(
+    mid: str,
+    background_tasks: BackgroundTasks,
+    user = Depends(security.get_current_user),
+):
+    """Queue a type-separated Bunny migration for all existing library assets."""
+    if not storage.get_memorial(user["user_id"], mid):
+        raise HTTPException(404, "未找到")
+    if not bunny_storage.is_configured():
+        raise HTTPException(409, "Bunny Storage 尚未配置")
+    assets = storage.list_assets(user["user_id"], mid)
+    pending_ids = [
+        str(asset.get("asset_id") or "")
+        for asset in assets
+        if not (asset.get("bunny_cdn_url") and asset.get("bunny_sync_status") == "succeeded")
+    ]
+    background_tasks.add_task(_sync_memorial_assets_to_bunny, user["user_id"], mid)
+    return {"queued": len(pending_ids), "asset_ids": pending_ids}
 
 
 @router.get("/{mid}/assets/catalog")
@@ -348,4 +442,9 @@ def delete_asset(mid: str, aid: str, user = Depends(security.get_current_user)):
     asset = storage.delete_asset(user["user_id"], mid, aid)
     if not asset:
         raise HTTPException(404, "文件不存在")
+    if bunny_storage.is_configured() and asset.get("bunny_storage_key"):
+        try:
+            bunny_storage.delete_file(str(asset["bunny_storage_key"]))
+        except Exception as exc:
+            print(f"[bunny] delete library asset failed: {exc}")
     return {"deleted": True}

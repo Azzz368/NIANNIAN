@@ -54,6 +54,41 @@ def safe_segment(value: str, fallback: str = "item") -> str:
     return cleaned[:100] or fallback
 
 
+def library_asset_path(
+    user_id: str,
+    memorial_id: str,
+    kind: str,
+    asset_id: str,
+    filename: str,
+) -> str:
+    """Return a stable, type-separated Bunny key for a library asset.
+
+    The original filename is kept only as a safe suffix. The generated asset ID keeps
+    the path unique even when users upload files with identical names.
+    """
+    suffix = safe_segment(filename or "file")
+    return "/".join([
+        "niannian",
+        "library",
+        safe_segment(user_id, "user"),
+        safe_segment(memorial_id, "memorial"),
+        safe_segment(kind, "other"),
+        f"{safe_segment(asset_id, 'asset')}-{suffix}",
+    ])
+
+
+def scene_frame_path(session_id: str, scene_index: int, extension: str = "png") -> str:
+    """Return the public Bunny key for an AI-generated studio first frame."""
+    extension = safe_segment(extension, "png").lstrip(".") or "png"
+    return "/".join([
+        "niannian",
+        "studio",
+        safe_segment(session_id, "session"),
+        "images",
+        f"scene-{max(0, int(scene_index)):03d}.{extension}",
+    ])
+
+
 def _storage_path(remote_path: str) -> str:
     parts = [safe_segment(part) for part in str(remote_path or "").replace("\\", "/").split("/") if part]
     if not parts:

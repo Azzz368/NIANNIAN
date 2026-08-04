@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import gate_manager, material_context, session_store  # noqa: F401  触发 backend.services.__init__ 注入 sys.path
+from . import bunny_storage, gate_manager, material_context, session_store  # noqa: F401  触发 backend.services.__init__ 注入 sys.path
 
 # ── 从项目根模块导入业务函数（共享同一份代码）─────────────────────────────
 from llm_client import (  # type: ignore
@@ -1038,6 +1038,31 @@ def gen_scene_video(
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
 
+    # Bunny 是制作台首选的公网图片中转：把 AI 首帧稳定地存到 Bunny Pull Zone，
+    # 再将 CDN HTTPS URL 交给 TokenStar。未配置 Bunny 或上传失败时保留 data URL，
+    # 由下层兼容图床处理，但会在诊断信息中明确显示实际通道。
+    bunny_reference_url = ""
+    bunny_storage_key = ""
+    if bunny_storage.is_configured() and isinstance(raw_image_url, str) and raw_image_url.startswith("data:"):
+        try:
+            import base64 as _base64
+
+            header, encoded = raw_image_url.split(",", 1)
+            mime = header.split(":", 1)[1].split(";", 1)[0]
+            extension = mime.split("/")[-1] if "/" in mime else "png"
+            bunny_result = bunny_storage.upload_bytes(
+                _base64.b64decode(encoded),
+                bunny_storage.scene_frame_path(sid, scene_idx, extension),
+                mime,
+            )
+            bunny_reference_url = str(bunny_result["cdn_url"])
+            bunny_storage_key = str(bunny_result["storage_key"])
+            image_url = bunny_reference_url
+            scene["_image_public_url"] = bunny_reference_url
+            scene["_image_bunny_storage_key"] = bunny_storage_key
+        except Exception as exc:
+            print(f"[scene-video] Bunny 首帧中转失败，回退兼容图床：{exc}")
+
     # 视频 prompt
     try:
         prompts = build_scene_prompts(scene, character_bible=mv03 if isinstance(mv03, dict) else None)
@@ -1055,6 +1080,8 @@ def gen_scene_video(
             image_url if str(image_url).startswith("https://")
             else "data URL（将自动上传为临时公网 HTTPS 图片）"
         ),
+        "reference_transport": "bunny_cdn" if bunny_reference_url else "provider_fallback_upload",
+        "bunny_storage_key": bunny_storage_key,
         "public_base_url_configured": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
     }
 

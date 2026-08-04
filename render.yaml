@@ -106,13 +106,13 @@ services:
         sync: false
       # ─── 推荐：Bunny 临时 CDN 首帧，避免 TokenStar Data URI/multipart 500 ───
       - key: BUNNY_STORAGE_ZONE
-        sync: false
+        value: niannian
       - key: BUNNY_ACCESS_KEY
         sync: false
       - key: BUNNY_STORAGE_REGION
         value: sg
       - key: BUNNY_PULL_ZONE_URL
-        sync: false
+        value: https://NIAN.b-cdn.net
     healthCheckPath: /api/health
     # ─── 持久化磁盘（重要）───
     # ⚠️ 注意：此处 disk 段已注释，避免与 Render Dashboard 手动添加的 Disk 冲突。

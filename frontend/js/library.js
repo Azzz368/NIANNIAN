@@ -211,6 +211,13 @@
       renderDetail();
       setSwitchStatus('已切换');
       loadConversations(mid, requestSeq);
+      // 已有资料库文件会在后台补同步到 Bunny，并按 image/video/audio 等类型分目录保存。
+      // 失败不会影响资料库正常浏览；下一次刷新会读取同步后的 CDN 元数据。
+      NianAuth.fetch('/api/memorials/' + encodeURIComponent(mid) + '/assets/sync-bunny', {
+        method: 'POST'
+      }).catch(function (error) {
+        console.info('[library] Bunny sync skipped:', error && error.message);
+      });
     } catch (e) {
       if (requestSeq !== state.loadSeq || mid !== state.currentId) return;
       console.error('[library] failed to load memorial', mid, e);
