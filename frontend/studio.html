@@ -39,6 +39,12 @@
   .scene-video-debug summary{cursor:pointer;color:var(--gold);font-weight:600;}
   .scene-video-debug pre{margin:4px 0 6px;white-space:pre-wrap;word-break:break-word;font:inherit;color:var(--ink-m);}
   .scene-video-debug-error{margin-top:6px;color:var(--red);}
+  .studio-material-stage{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:22px;padding:18px 20px;border:1px solid rgba(156,122,69,.32);border-radius:14px;background:linear-gradient(135deg,rgba(156,122,69,.08),rgba(255,255,255,.55));}
+  .studio-material-title{margin-top:2px;font-family:"Cormorant Garamond",serif;font-size:1.22rem;font-weight:600;color:var(--ink);}
+  .studio-material-desc{max-width:630px;font-size:.84rem;line-height:1.7;color:var(--ink-m);}
+  .material-workspace-host{margin-top:16px;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surf);box-shadow:var(--shadow-sm);}
+  .material-workspace-host iframe{display:block;width:100%;min-height:860px;border:0;background:var(--bg);}
+  @media(max-width:640px){.studio-material-stage{align-items:flex-start;flex-direction:column;}.studio-material-stage .btn{width:100%;}}
 
   /* 图片悬停、点击放大 */
   .media-slot img.zoomable{cursor:zoom-in;transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease;}
@@ -150,6 +156,17 @@
       <div class="step-desc">每个分镜都可以单独挑选参考照片；AI 会基于参考图重新生成该镜头的画面，而不是直接使用原图。</div>
     </div>
     <div id="sceneList"></div>
+
+    <section class="studio-material-stage" aria-labelledby="materialStageTitle">
+      <div>
+        <div class="step-eyebrow">第三步 · 可选</div>
+        <div class="studio-material-title" id="materialStageTitle">真实素材动态化</div>
+        <div class="studio-material-desc">仅推荐已完成分析、与分镜真正相关且未被重复使用的资料库图片。无合适素材时保留 AI 画面，不强行动态化。</div>
+        <div id="materialStageStatus" class="text-muted" style="margin-top:8px;"></div>
+      </div>
+      <button class="btn btn-primary" id="btnOpenMaterialWorkspace" type="button">进入真实素材动态化 →</button>
+    </section>
+    <section id="materialWorkspaceHost" class="material-workspace-host hidden" aria-label="真实素材动态化工作台"></section>
 
     <div class="btn-row" style="justify-content:space-between;margin-top:24px;">
       <a class="btn" href="pipeline.html">← 返回方案确认</a>

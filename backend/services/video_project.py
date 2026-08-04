@@ -174,11 +174,12 @@ def _compiler_prompt(project_id: str, script: str, source_bundle: Dict[str, Any]
 1. 镜头选择、顺序、时间和动态化提示词必须依据导演脚本与资料包自行判断，不套用固定图片顺序。
 2. 只能引用 asset_catalog 中真实存在的 asset_id。图片使用 image_to_video；真实视频使用 source_video，不为缺失画面编造新素材。
 3. motion_prompt 只描述镜头运动和画面中可安全发生的轻微自然变化；保持人物身份、年龄、五官、服装、人数、物件与背景不变，默认不让照片人物开口说话。
-4. 用户描述优先于 AI 识别。存在冲突或素材不足时不要生成该镜头，应在 warnings 中说明。
-5. 时间轴从 0 开始、连续、不重叠。每个镜头必须绑定一个真实图片或视频。
-6. narration 与 subtitle 只能使用导演脚本已有文字或忠实缩写。音频字段只可引用资料包中 kind=audio 的素材；不确定时填 null。
-7. transition.type 仅可使用 cut、fade、dissolve、wipeleft、wiperight、smoothleft、smoothright。
-8. 只输出 JSON 对象，不要 Markdown 或解释。
+4. 用户描述优先于 AI 识别。先逐镜检查导演脚本缺少的时间、人物、场景、物件或情绪元素，再从 asset_catalog 中选择确实覆盖该缺口的素材。只选 analysis_status/vision_status 已完成、且 user_description 或 ai_summary 能支持镜头事实的图片。
+5. 同一个 image asset_id 默认只能用于一个图片动态化镜头；不得因为素材不足而重复使用同一张照片。没有高度相关的未使用图片时，不要生成该镜头，应在 warnings 中说明“建议保留 AI 画面”，并写明缺少的元素。
+6. 时间轴从 0 开始、连续、不重叠。每个镜头必须绑定一个真实图片或视频。
+7. narration 与 subtitle 只能使用导演脚本已有文字或忠实缩写。音频字段只可引用资料包中 kind=audio 的素材；不确定时填 null。
+8. transition.type 仅可使用 cut、fade、dissolve、wipeleft、wiperight、smoothleft、smoothright。
+9. 只输出 JSON 对象，不要 Markdown 或解释。
 
 JSON 结构：
 {{
@@ -274,6 +275,7 @@ def normalize_manifest(
         raise VideoProjectError("画幅只支持 16:9、9:16 或 1:1")
 
     clips: List[Dict[str, Any]] = []
+    used_image_asset_ids: set[str] = set()
     previous_end = 0.0
     for index, raw in enumerate(raw_clips):
         if not isinstance(raw, dict):
@@ -292,6 +294,20 @@ def normalize_manifest(
         kind = str(asset.get("kind") or "")
         if kind not in ("image", "video"):
             raise VideoProjectError(f"镜头主素材必须是图片或视频：{asset_id}")
+        if kind == "image":
+            if asset_id in used_image_asset_ids:
+                raise VideoProjectError(
+                    f"同一张真实图片不能重复动态化：{asset_id}。请在 warnings 中说明素材不足，或改用未使用的相关图片。"
+                )
+            analysis_status = str(asset.get("analysis_status") or "").strip().lower()
+            vision_status = str(asset.get("vision_status") or "").strip().lower()
+            if (analysis_status and analysis_status != "succeeded") or (
+                vision_status and vision_status != "succeeded"
+            ):
+                raise VideoProjectError(
+                    f"图片素材尚未完成视觉分析，不可推荐动态化：{asset_id}"
+                )
+            used_image_asset_ids.add(asset_id)
         prompt = str(raw.get("motion_prompt") or "").strip()
         if kind == "image" and len(prompt) < 12:
             raise VideoProjectError(f"图片镜头 {asset_id} 缺少有效的动态化 Prompt")

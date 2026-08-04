@@ -5,11 +5,17 @@
   var params = new URLSearchParams(location.search);
   var memorialId = params.get('memorial_id') || '';
   var projectId = params.get('project_id') || '';
+  var embedded = params.get('embedded') === '1';
   var project = null;
   var pollTimer = null;
   var blobUrls = new Map();
 
   function $(id) { return document.getElementById(id); }
+  if (embedded) {
+    document.body.classList.add('embedded-workspace');
+    var header = document.querySelector('.topbar');
+    if (header) header.hidden = true;
+  }
   function esc(value) {
     return String(value == null ? '' : value)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

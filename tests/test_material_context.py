@@ -123,7 +123,7 @@ class MaterialContractTests(unittest.TestCase):
         self.assertIn("自拍2.png", body)
         self.assertIn("录音.mp3", body)
 
-    def test_storyboard_records_real_source_asset_ids(self):
+    def test_storyboard_skips_unanalysed_or_weak_real_photo_matches(self):
         catalog = [
             material_context.normalize_asset({
                 "asset_id": "asset-yard",
@@ -139,9 +139,10 @@ class MaterialContractTests(unittest.TestCase):
         )
 
         scene = result["scenes"][0]
-        self.assertEqual(scene["source_asset_ids"], ["asset-yard"])
-        self.assertEqual(scene["asset_type"], "user_asset")
-        self.assertEqual(scene["media_strategy"], "reuse_real_asset")
+        self.assertEqual(scene["source_asset_ids"], [])
+        self.assertEqual(scene["media_strategy"], "ai_generated")
+        self.assertEqual(result["material_usage"]["strict_min_score"], 3)
+        self.assertEqual(len(result["material_usage"]["skipped_recommendations"]), 1)
 
 
 class MemorialContextTests(unittest.TestCase):
@@ -247,6 +248,7 @@ class MemorialContextTests(unittest.TestCase):
             ), patch.object(
                 service_manager,
                 "generate_image_tokenstar",
+                return_value=("generated-frame", None),
             ) as generate_image:
                 result = service_manager.gen_scene_image(
                     sid,
@@ -254,10 +256,11 @@ class MemorialContextTests(unittest.TestCase):
                     public_base_url="https://nian.example",
                 )
 
-        self.assertTrue(result["reused"])
+        self.assertFalse(result["reused"])
         self.assertEqual(result["source_asset_id"], "asset-yard")
-        self.assertTrue(result["url"].startswith("data:image/jpeg;base64,"))
-        generate_image.assert_not_called()
+        self.assertTrue(result["url"].startswith("data:image/png;base64,"))
+        generate_image.assert_called_once()
+        self.assertEqual(generate_image.call_args.kwargs["reference_b64"], "cmVhbC1waG90by1ieXRlcw==")
 
 
 if __name__ == "__main__":

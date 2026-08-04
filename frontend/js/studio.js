@@ -564,6 +564,54 @@ async function finalCut() {
   }
 }
 
+// ───── 真实素材动态化（复用既有 NIANNIAN VIDEO WORKSPACE）─────
+async function openMaterialWorkspace() {
+  const button = $('btnOpenMaterialWorkspace');
+  const status = $('materialStageStatus');
+  if (!state.mid) {
+    if (status) status.textContent = '请先从资料库选择人物后再进入真实素材动态化。';
+    toast('当前会话未关联资料库人物');
+    return;
+  }
+  if (!window.NianAuth || !NianAuth.isAuthed()) {
+    toast('请先登录后使用真实素材动态化');
+    return;
+  }
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '正在读取已确认脚本...';
+  if (status) status.textContent = '正在复用该人物已确认的导演脚本与已分析素材，不会重新访谈或重写脚本。';
+  try {
+    const latestResponse = await NianAuth.fetch(
+      `/api/agent/director-script/${encodeURIComponent(state.mid)}/latest`
+    );
+    if (!latestResponse.ok) throw new Error('未找到可用的导演脚本');
+    const latest = await latestResponse.json();
+    if (!latest.project_id || !latest.script) {
+      throw new Error('当前人物尚无已保存的导演脚本，请先在首页生成并确认导演脚本');
+    }
+    const approveResponse = await NianAuth.fetch(
+      `/api/video-projects/${encodeURIComponent(state.mid)}/${encodeURIComponent(latest.project_id)}/approve-script`,
+      { method: 'POST' }
+    );
+    if (!approveResponse.ok) {
+      const detail = await approveResponse.json().catch(() => ({}));
+      throw new Error(detail.detail || '导演脚本确认失败');
+    }
+    const host = $('materialWorkspaceHost');
+    host.innerHTML = `<iframe title="真实素材动态化工作台" src="/static/video_project.html?memorial_id=${encodeURIComponent(state.mid)}&project_id=${encodeURIComponent(latest.project_id)}&embedded=1"></iframe>`;
+    host.classList.remove('hidden');
+    button.textContent = '已打开真实素材动态化';
+    if (status) status.textContent = '工作台已嵌入当前流程：仅会使用严格筛选出的真实图片动态化；其余分镜继续保留 AI 画面。';
+    host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    if (status) status.textContent = e.message || String(e);
+    toast('无法进入真实素材动态化：' + (e.message || String(e)));
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 // ───── 启动 ─────
 async function bootstrap() {
   if (!state.sid) {
@@ -603,4 +651,5 @@ document.addEventListener('DOMContentLoaded', () => {
   bootstrap();
   $('btnGenScenes').onclick = genScenes;
   $('btnFinalCut').onclick  = finalCut;
+  $('btnOpenMaterialWorkspace').onclick = openMaterialWorkspace;
 });

@@ -98,6 +98,7 @@ def normalize_asset(asset: Dict[str, Any]) -> Dict[str, Any]:
             asset.get("vision_status") or asset.get("analysis_status") or "not_analyzed",
             40,
         ),
+        "analysis_status": _text(asset.get("analysis_status"), 40),
         "created_at": _text(asset.get("created_at"), 80),
     }
 
@@ -241,6 +242,33 @@ def search_asset_catalog(
     return [item[2] for item in ranked[:limit]]
 
 
+def is_high_confidence_image_asset(asset: Dict[str, Any]) -> bool:
+    """Return whether an image has enough verified analysis to be reused as real media.
+
+    A merely uploaded portrait should not automatically become a repeated dynamic clip.
+    Require a completed visual analysis plus substantive user- or AI-confirmed context.
+    """
+    if asset.get("kind") != "image":
+        return False
+    # New uploads always carry an explicit analysis_status and must finish visual
+    # analysis first. Legacy assets without that field remain eligible only when a
+    # sufficiently detailed user description provides factual grounding.
+    analysis_status = str(asset.get("analysis_status") or "").strip().lower()
+    if analysis_status and analysis_status != "succeeded":
+        return False
+    evidence = " ".join(str(value or "") for value in (
+        asset.get("user_description"), asset.get("visual_summary"),
+        asset.get("ai_summary"), asset.get("scene"), asset.get("event"),
+        asset.get("time_period"),
+    )).strip()
+    signals = sum(bool(value) for value in (
+        asset.get("people"), asset.get("objects"), asset.get("visual_tags"),
+        asset.get("tags"), asset.get("emotion"), asset.get("event"), asset.get("scene"),
+        asset.get("user_description"), asset.get("ai_summary"),
+    ))
+    return len(evidence) >= 18 and signals >= 1
+
+
 def build_memorial_context(session: Dict[str, Any]) -> Dict[str, Any]:
     """Build one bounded context shared by MV01-MV04."""
     form_data = dict(session.get("form_data") or {})
@@ -335,7 +363,11 @@ def attach_assets_to_storyboard(
     else:
         return mv04_result
 
-    for scene in scenes:
+    used_image_ids: set[str] = set()
+    strict_min_score = 3
+    skipped_recommendations: List[Dict[str, Any]] = []
+
+    for scene_index, scene in enumerate(scenes):
         if not isinstance(scene, dict):
             continue
         query = " ".join(
@@ -356,16 +388,46 @@ def attach_assets_to_storyboard(
                 if asset_id in by_id and asset_id not in requested:
                     requested.append(asset_id)
 
-        matched = requested[:max_assets_per_scene]
+        # Explicit user/model references remain valid, but automatic recommendations
+        # are deliberately stricter: no duplicate image across scenes, no unanalyzed
+        # upload, and no weak keyword match.
+        matched = [
+            asset_id for asset_id in requested
+            if asset_id not in used_image_ids or by_id.get(asset_id, {}).get("kind") != "image"
+        ][:max_assets_per_scene]
         if not matched:
-            ranked = search_asset_catalog(query, catalog, limit=max_assets_per_scene)
-            matched = [
-                asset["asset_id"]
+            image_candidates = [
+                asset for asset in catalog
+                if is_high_confidence_image_asset(asset)
+                and asset.get("asset_id") not in used_image_ids
+            ]
+            ranked = search_asset_catalog(query, image_candidates, limit=max_assets_per_scene * 3)
+            high_score_candidates = [
+                asset
                 for asset in ranked
-                if _asset_score(query, asset) >= 2
+                if _asset_score(query, asset) >= strict_min_score
+            ]
+            # Reuse the existing visual-semantic ranker after strict factual filtering.
+            # It does not add a new agent or script; it ranks the already analysed
+            # library descriptions to prefer the picture that covers this scene's
+            # missing person/time/place/object elements.
+            try:
+                from services import asset_vision
+
+                semantic_ids = asset_vision.semantic_rank_assets(
+                    query, high_score_candidates, limit=max_assets_per_scene
+                )
+            except Exception:
+                semantic_ids = []
+            matched = semantic_ids or [
+                asset["asset_id"]
+                for asset in high_score_candidates
             ][:max_assets_per_scene]
 
         selected = [by_id[asset_id] for asset_id in matched if asset_id in by_id]
+        used_image_ids.update(
+            str(asset.get("asset_id")) for asset in selected if asset.get("kind") == "image"
+        )
         scene["source_asset_ids"] = [asset["asset_id"] for asset in selected]
         scene["source_assets"] = [
             {
@@ -390,6 +452,11 @@ def attach_assets_to_storyboard(
         else:
             scene["media_strategy"] = "ai_generated"
             scene.setdefault("source_asset_ids", [])
+            skipped_recommendations.append({
+                "scene_index": scene_index,
+                "scene_id": scene.get("scene_id") or scene.get("id") or "",
+                "reason": "资料库中没有同时满足视觉分析完成、语义高度相关且未被其他分镜使用的真实图片；建议保留 AI 画面。",
+            })
 
     mv04_result["material_usage"] = {
         "real_asset_scene_count": sum(
@@ -397,5 +464,7 @@ def attach_assets_to_storyboard(
             if isinstance(scene, dict) and scene.get("source_asset_ids")
         ),
         "total_scene_count": len(scenes),
+        "strict_min_score": strict_min_score,
+        "skipped_recommendations": skipped_recommendations,
     }
     return mv04_result
