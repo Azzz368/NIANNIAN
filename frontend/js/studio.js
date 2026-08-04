@@ -295,6 +295,17 @@ function renderScenes() {
            </div>
          </div>`
       : `<div class="media-slot"><div class="media-cap">短视频</div>${vidBadge}</div>`;
+    const videoDebug = sc._video_debug;
+    const debugHtml = videoDebug
+      ? `<details class="scene-video-debug">
+           <summary>查看视频生成提示词与诊断${videoDebug.error ? '（本次失败）' : ''}</summary>
+           <div><strong>模型：</strong>${esc(videoDebug.provider || 'TokenStar Kling v3 Omni')}</div>
+           <div><strong>提示词：</strong><pre>${esc(videoDebug.prompt || '')}</pre></div>
+           <div><strong>参考图：</strong>${esc(videoDebug.reference_image || '')}</div>
+           ${videoDebug.task_id ? `<div><strong>任务 ID：</strong>${esc(videoDebug.task_id)}</div>` : ''}
+           ${videoDebug.error ? `<div class="scene-video-debug-error"><strong>失败原因：</strong>${esc(videoDebug.error)}</div>` : ''}
+         </details>`
+      : '';
 
     list.insertAdjacentHTML('beforeend', `
       <div class="scene-row" data-idx="${i}">
@@ -307,6 +318,7 @@ function renderScenes() {
         ${sourceHtml}
         ${state.libImages.length ? renderSceneRefBar(sc, i) : ''}
         <div class="scene-media">${imgHtml}${vidHtml}</div>
+        ${debugHtml}
         <div class="scene-actions">
           <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新生成画面' : '生成 AI 图片'}</button>
           <button class="btn" data-act="vid" data-idx="${i}" ${vidStatus === 'run' || !sc._img_url ? 'disabled' : ''}>${sc._vid_url ? '重新生成视频' : '生成视频'}</button>
@@ -453,11 +465,13 @@ async function genSceneVideo(idx) {
     const res = await apiPost(`/pipeline/scene/video/${state.sid}/${idx}`, {
       image_url: sc._img_url,
     });
+    if (res.debug) sc._video_debug = res.debug;
     if (res.error) throw new Error(res.message || '视频生成失败');
     sc._vid_url    = res.url || res.video_url;
     sc._vid_status = 'done';
   } catch (e) {
     sc._vid_status = 'err';
+    sc._video_debug = sc._video_debug || { error: e.message || String(e) };
     toast('视频生成失败：' + e.message);
   } finally {
     renderScenes();

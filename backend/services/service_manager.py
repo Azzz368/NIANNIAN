@@ -1031,7 +1031,10 @@ def gen_scene_video(
                 scene["_image_public_url"] = public_image_url
         except Exception:
             public_image_url = ""
-    image_url = public_image_url or raw_image_url
+    # Omni 只接受公网 HTTPS 图片。若当前服务未配置 PUBLIC_BASE_URL，
+    # _public_scene_frame_url 可能只是 http://localhost/...；此时保留 data URL，
+    # 让 Kling Omni 调用层上传到临时公网图床，而不是把不可访问的本地地址交给 TokenStar。
+    image_url = public_image_url if str(public_image_url).startswith("https://") else raw_image_url
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
 
@@ -1045,6 +1048,16 @@ def gen_scene_video(
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
+    debug: Dict[str, Any] = {
+        "provider": "TokenStar Kling v3 Omni · 图片参考模式",
+        "prompt": video_prompt,
+        "reference_image": (
+            image_url if str(image_url).startswith("https://")
+            else "data URL（将自动上传为临时公网 HTTPS 图片）"
+        ),
+        "public_base_url_configured": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
+    }
+
     # 统一调用 TokenStar Kling v3 Omni「图片参考模式」（旧版 Action API），
     # 不回退到 302.ai 或旧可灵官方接口。分镜首帧图作为唯一参考图传入。
     res = generate_video_tokenstar_kling_omni_image(
@@ -1056,12 +1069,20 @@ def gen_scene_video(
         # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
         max_wait=300,
     )
+    debug["task_id"] = res.get("task_id", "")
+    debug["source"] = res.get("source", "")
     if res.get("error"):
-        return {"error": True, "message": res.get("error")}
+        debug["error"] = res.get("error")
+        scene["_video_debug"] = debug
+        return {"error": True, "message": res.get("error"), "debug": debug}
     url = res.get("url")
     if not url:
-        return {"error": True, "message": f"视频未返回 URL：{res}"}
+        debug["error"] = f"视频未返回 URL：{res}"
+        scene["_video_debug"] = debug
+        return {"error": True, "message": debug["error"], "debug": debug}
     scene["_video_url"] = url
+    debug["status"] = "succeeded"
+    scene["_video_debug"] = debug
 
     # 逐镜接口不经过 run_pipeline_step；全部视频生成后主动完成 MV05 门控，
     # 避免界面已完成渲染而服务端仍显示 pending。
@@ -1070,7 +1091,7 @@ def gen_scene_video(
         s["pipeline_state"]["MV05"] = {
             "status": "approved", "duration_sec": None, "error": None,
         }
-    return {"url": url}
+    return {"url": url, "debug": debug}
 
 
 def _ffmpeg_bin() -> str:
