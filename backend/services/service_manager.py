@@ -23,7 +23,7 @@ from llm_client import (  # type: ignore
     transcribe_audio,
     build_scene_prompts,
     generate_image_tokenstar,
-    generate_video_tokenstar_i2v,
+    generate_video_tokenstar_kling_omni_image,
 )
 from skill_loader import load_skill  # type: ignore
 from core import storage as core_storage  # type: ignore
@@ -93,10 +93,21 @@ def get_biography_assets(s: dict) -> List[dict]:
     assets: List[dict] = []
     seen: set[str] = set()
     form = s.get("form_data", {}) or {}
+    # 新版传记页面会显式传入资料库勾选的照片；空列表代表本次不使用图片。
+    # 字段缺省时保持旧流程兼容：仍自动带入所有已有素材。
+    has_selection = "selected_asset_ids" in form
+    selected_ids = {
+        str(asset_id) for asset_id in (form.get("selected_asset_ids") or [])
+        if asset_id
+    }
+
+    def include(asset: dict) -> bool:
+        asset_id = str(asset.get("asset_id") or asset.get("saved_as") or asset.get("filename") or "")
+        return not has_selection or asset_id in selected_ids
 
     for asset in s.get("assets", []) or []:
         norm = normalize_bio_asset(asset)
-        if norm["url"] and norm["asset_id"] not in seen:
+        if include(asset) and norm["url"] and norm["asset_id"] not in seen:
             assets.append(norm)
             seen.add(norm["asset_id"])
 
@@ -107,7 +118,7 @@ def get_biography_assets(s: dict) -> List[dict]:
             stored_assets = core_storage.list_assets(user_id, memorial_id)
             for asset in stored_assets:
                 norm = normalize_bio_asset(asset)
-                if norm["url"] and norm["asset_id"] not in seen:
+                if include(asset) and norm["url"] and norm["asset_id"] not in seen:
                     assets.append(norm)
                     seen.add(norm["asset_id"])
         except Exception:
@@ -319,6 +330,10 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     返回结构：{"organized": "...", "name": "...", "quotes": [...], "core_memories": [...], ...}
     """
     import os as _os
+    try:
+        research_system = load_skill(str(SKILLS_DIR / "BIO00-public-figure-research.md"))
+    except Exception:
+        research_system = _DEEP_SEARCH_SYSTEM
     user_msg = f"请帮我搜索并整理关于以下人物的生平资料：{query}"
     if extra.strip():
         user_msg += f"\n\n补充背景：{extra.strip()}"
@@ -346,7 +361,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
                     resp = _ds.chat.completions.create(
                         model=ds_model,
                         messages=[
-                            {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                            {"role": "system", "content": research_system},
                             {"role": "user",   "content": user_msg},
                         ],
                         extra_body={"enable_search": True},
@@ -369,7 +384,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
             resp = PRIMARY_CLIENT.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": _DEEP_SEARCH_SYSTEM},
+                    {"role": "system", "content": research_system},
                     {"role": "user",   "content": user_msg},
                 ],
                 temperature=0.4,
@@ -382,9 +397,9 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
             continue
 
     # ── 3) 降级：302.ai 知识库 ──
-    kb_system = _DEEP_SEARCH_SYSTEM.replace(
-        "具备联网实时搜索能力。",
-        "请根据已有知识尽量全面作答；若信息存在时效性，请在 organized 字段里注明（信息可能有更新）。",
+    kb_system = research_system + (
+        "\n\n当前无法联网。请只依据已有知识作答，并在 organized 和 family_memory_text 中"
+        "明确提示信息可能有更新，不能声称已经检索或核验来源。"
     )
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
@@ -755,6 +770,57 @@ def _get_scenes_from_mv04(mv04_out: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _contains_chinese_text(value: Any) -> bool:
+    """Return whether a value contains at least one CJK character."""
+    import re
+
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
+
+
+def localize_scene_texts(sid: str) -> List[Dict[str, Any]]:
+    """Translate legacy English scene display fields to Chinese once and cache them.
+
+    Image/video prompts remain English for model quality. This function only changes
+    user-facing fields such as description and narration in the persisted MV04 result.
+    """
+    session = session_store.require(sid)
+    scenes = _get_scenes_from_mv04(session["mv_outputs"].get("MV04"))
+    candidates: List[Dict[str, Any]] = []
+    candidate_fields: Dict[int, set[str]] = {}
+    for index, scene in enumerate(scenes):
+        fields: Dict[str, str] = {}
+        for key in ("description", "scene_desc", "visual", "narration", "voiceover", "subtitle"):
+            value = scene.get(key)
+            if isinstance(value, str) and value.strip() and not _contains_chinese_text(value):
+                fields[key] = value.strip()
+        if fields:
+            candidates.append({"index": index, "fields": fields})
+            candidate_fields[index] = set(fields)
+    if not candidates:
+        return scenes
+
+    result = call_structured(
+        "你是影视分镜本地化编辑。把输入 JSON 中每个 fields 的英文内容翻译为自然、简洁的简体中文。"
+        "只翻译用户界面展示文案，不要改写事实，不要添加解释。严格返回 JSON："
+        '{"items":[{"index":0,"fields":{"description":"中文"}}]}。',
+        json.dumps({"items": candidates}, ensure_ascii=False),
+    )
+    translated = result.get("items", []) if isinstance(result, dict) else []
+    if not isinstance(translated, list):
+        return scenes
+    for item in translated:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        fields = item.get("fields")
+        if not isinstance(index, int) or index not in candidate_fields or not isinstance(fields, dict):
+            continue
+        for key, value in fields.items():
+            if key in candidate_fields[index] and isinstance(value, str) and value.strip():
+                scenes[index][key] = value.strip()
+    return scenes
+
+
 def get_characters(sid: str) -> Dict[str, Any]:
     """返回角色档案：主角（逝者）+ 配角列表（来自 MV03 character_bible）"""
     s = session_store.require(sid)
@@ -856,56 +922,46 @@ def gen_scene_image(
     if scene_idx < 0 or scene_idx >= len(scenes):
         return {"error": True, "message": f"无效的分镜索引 {scene_idx}"}
     scene = scenes[scene_idx]
+    # 重新生成时清除旧的画面和视频缓存，避免前端仍显示旧图而误以为按钮无效。
+    scene.pop("_image_data_url", None)
+    scene.pop("_image_public_url", None)
+    scene.pop("_video_url", None)
 
-    # 真实素材优先。分镜已经在 MV04 后处理时绑定 source_asset_ids；
-    # 若首个匹配项是图片，直接复用原图并生成稳定的公网缓存，不调用生图模型。
+    # 真实素材只作为图生图的参考底图，不再直接把原始照片当成分镜画面使用。
+    # 前端每个分镜都可以独立挑选参考图（ref_b64）；若用户未选择，则在分镜绑定的
+    # source_asset_ids 中取第一张图片作为默认参考，仍然会调用生图模型重新生成画面。
     form = s.get("form_data", {}) or {}
     user_id = form.get("user_id", "")
     memorial_id = form.get("memorial_id", "")
-    source_ids = scene.get("source_asset_ids") or []
-    if user_id and memorial_id and source_ids:
-        try:
-            import base64 as _base64
+    source_asset_id = ""
+    reference_b64 = ref_b64 or ""
 
-            stored_assets = core_storage.list_assets(user_id, memorial_id)
-            by_id = {
-                asset.get("asset_id"): asset
-                for asset in stored_assets
-                if asset.get("kind") == "image"
-            }
-            source_asset = next(
-                (by_id.get(asset_id) for asset_id in source_ids if by_id.get(asset_id)),
-                None,
-            )
-            if source_asset:
-                source_path = (
-                    core_storage.memorial_dir(user_id, memorial_id)
-                    / "assets"
-                    / source_asset.get("stored_name", "")
-                )
-                source_bytes = source_path.read_bytes()
-                source_b64 = _base64.b64encode(source_bytes).decode("ascii")
-                source_mime = source_asset.get("mime") or "image/jpeg"
-                data_url = f"data:{source_mime};base64,{source_b64}"
-                public_url = _public_scene_frame_url(
-                    sid,
-                    scene_idx,
-                    source_b64,
-                    public_base_url=public_base_url,
-                )
-                scene["_image_data_url"] = data_url
-                scene["_image_source_asset_id"] = source_asset.get("asset_id")
-                scene["_image_reused"] = True
-                if public_url:
-                    scene["_image_public_url"] = public_url
-                return {
-                    "url": data_url,
-                    "public_url": public_url,
-                    "source_asset_id": source_asset.get("asset_id"),
-                    "reused": True,
+    if not reference_b64:
+        source_ids = scene.get("source_asset_ids") or []
+        if user_id and memorial_id and source_ids:
+            try:
+                import base64 as _base64
+
+                stored_assets = core_storage.list_assets(user_id, memorial_id)
+                by_id = {
+                    asset.get("asset_id"): asset
+                    for asset in stored_assets
+                    if asset.get("kind") == "image"
                 }
-        except Exception as exc:
-            print(f"[scene-image] reuse real asset failed, falling back to generation: {exc}")
+                source_asset = next(
+                    (by_id.get(asset_id) for asset_id in source_ids if by_id.get(asset_id)),
+                    None,
+                )
+                if source_asset:
+                    source_path = (
+                        core_storage.memorial_dir(user_id, memorial_id)
+                        / "assets"
+                        / source_asset.get("stored_name", "")
+                    )
+                    reference_b64 = _base64.b64encode(source_path.read_bytes()).decode("ascii")
+                    source_asset_id = source_asset.get("asset_id") or ""
+            except Exception as exc:
+                print(f"[scene-image] load real asset as reference failed: {exc}")
 
     # 构造图片 prompt：优先 build_scene_prompts，失败则用 description 兜底
     try:
@@ -917,7 +973,7 @@ def gen_scene_image(
     if not image_prompt:
         return {"error": True, "message": "无法构造图片 prompt"}
 
-    b64, err = generate_image_tokenstar(image_prompt, reference_b64=ref_b64 or None)
+    b64, err = generate_image_tokenstar(image_prompt, reference_b64=reference_b64 or None)
     if not b64:
         return {"error": True, "message": err or "图片生成失败"}
 
@@ -931,9 +987,16 @@ def gen_scene_image(
     # 缓存到 scene
     scene["_image_data_url"] = data_url
     scene["_image_prompt"]   = image_prompt
+    scene["_image_source_asset_id"] = source_asset_id
+    scene["_image_reused"] = False
     if public_url:
         scene["_image_public_url"] = public_url
-    return {"url": data_url, "public_url": public_url}
+    return {
+        "url": data_url,
+        "public_url": public_url,
+        "source_asset_id": source_asset_id,
+        "reused": False,
+    }
 
 
 def gen_scene_video(
@@ -968,7 +1031,10 @@ def gen_scene_video(
                 scene["_image_public_url"] = public_image_url
         except Exception:
             public_image_url = ""
-    image_url = public_image_url or raw_image_url
+    # Omni 只接受公网 HTTPS 图片。若当前服务未配置 PUBLIC_BASE_URL，
+    # _public_scene_frame_url 可能只是 http://localhost/...；此时保留 data URL，
+    # 让 Kling Omni 调用层上传到临时公网图床，而不是把不可访问的本地地址交给 TokenStar。
+    image_url = public_image_url if str(public_image_url).startswith("https://") else raw_image_url
     if not image_url:
         return {"error": True, "message": "请先生成首帧图片"}
 
@@ -982,20 +1048,41 @@ def gen_scene_video(
     if not video_prompt:
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
-    # 统一调用 TokenStar Kling 图生视频接口，不回退到 302.ai 或旧可灵官方接口。
-    res = generate_video_tokenstar_i2v(
+    debug: Dict[str, Any] = {
+        "provider": "TokenStar Kling v3 Omni · 图片参考模式",
+        "prompt": video_prompt,
+        "reference_image": (
+            image_url if str(image_url).startswith("https://")
+            else "data URL（将自动上传为临时公网 HTTPS 图片）"
+        ),
+        "public_base_url_configured": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
+    }
+
+    # 统一调用 TokenStar Kling v3 Omni「图片参考模式」（旧版 Action API），
+    # 不回退到 302.ai 或旧可灵官方接口。分镜首帧图作为唯一参考图传入。
+    res = generate_video_tokenstar_kling_omni_image(
         prompt=video_prompt,
-        image_url=image_url,
+        image_urls=[image_url],
         duration=5,
         poll=True,
-        max_wait=600,
+        # 最多等待 5 分钟；超过该窗口明确返回失败状态，避免
+        # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
+        max_wait=300,
     )
+    debug["task_id"] = res.get("task_id", "")
+    debug["source"] = res.get("source", "")
     if res.get("error"):
-        return {"error": True, "message": res.get("error")}
+        debug["error"] = res.get("error")
+        scene["_video_debug"] = debug
+        return {"error": True, "message": res.get("error"), "debug": debug}
     url = res.get("url")
     if not url:
-        return {"error": True, "message": f"视频未返回 URL：{res}"}
+        debug["error"] = f"视频未返回 URL：{res}"
+        scene["_video_debug"] = debug
+        return {"error": True, "message": debug["error"], "debug": debug}
     scene["_video_url"] = url
+    debug["status"] = "succeeded"
+    scene["_video_debug"] = debug
 
     # 逐镜接口不经过 run_pipeline_step；全部视频生成后主动完成 MV05 门控，
     # 避免界面已完成渲染而服务端仍显示 pending。
@@ -1004,7 +1091,7 @@ def gen_scene_video(
         s["pipeline_state"]["MV05"] = {
             "status": "approved", "duration_sec": None, "error": None,
         }
-    return {"url": url}
+    return {"url": url, "debug": debug}
 
 
 def _ffmpeg_bin() -> str:

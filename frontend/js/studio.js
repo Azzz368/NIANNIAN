@@ -8,8 +8,9 @@ const state = {
   chars:          null,
   mv04:           null,
   libImages:      [],     // 素材库中的图片资产
-  refB64:         '',     // 当前选中的参考图 base64（用于后端生成）
-  refAsset:       null,   // 当前选中的资产对象（用于展示）
+  refB64:         '',     // 角色档案卡片当前选中的参考图 base64（仅用于展示/默认值）
+  refAsset:       null,   // 角色档案卡片当前选中的资产对象
+  refB64Cache:    new Map(), // asset_id -> base64，避免同一张照片重复下载
 };
 
 const $    = id => document.getElementById(id);
@@ -150,8 +151,7 @@ function openPhotoPicker() {
       state.refAsset = null;
       closePhotoPicker();
       renderCharSummary();
-      renderRefPhotoBar();
-      toast('已清除参考图，将使用纯文生图');
+      toast('已清除主角参考图（各分镜仍可单独选择参考照片）');
     };
   }
 }
@@ -161,31 +161,88 @@ function closePhotoPicker() {
   if (o) o.style.display = 'none';
 }
 
+async function fetchAssetBase64(asset) {
+  if (!asset || !asset.asset_id) return '';
+  if (state.refB64Cache.has(asset.asset_id)) return state.refB64Cache.get(asset.asset_id);
+  const tok = localStorage.getItem('nian_token') || '';
+  const r = await fetch(asset.url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const blob = await r.blob();
+  const b64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  state.refB64Cache.set(asset.asset_id, b64);
+  return b64;
+}
+
 async function selectRefPhotoFromLib(idx) {
   const a = state.libImages[idx];
   if (!a) return;
-  const tok = localStorage.getItem('nian_token') || '';
   closePhotoPicker();
   toast('正在加载照片...');
   try {
-    const r = await fetch(a.url, { headers: tok ? { 'Authorization': 'Bearer ' + tok } : {} });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const blob = await r.blob();
-    state.refB64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+    state.refB64 = await fetchAssetBase64(a);
     state.refAsset = a;
     renderCharSummary();
-    renderRefPhotoBar();
-    toast('参考照片已选：' + (a.filename || '照片'));
+    toast('主角参考图已选：' + (a.filename || '照片') + '（各分镜仍可单独选择）');
   } catch (e) {
     state.refB64 = '';
     state.refAsset = null;
     toast('照片加载失败：' + e.message);
   }
+}
+
+// ───── 每个分镜独立的参考照片选择 ─────
+function renderSceneRefBar(sc, i) {
+  const tok = localStorage.getItem('nian_token') || '';
+  const noneActive = !sc._refAssetId ? ' active' : '';
+  const items = [`<div class="ref-photo-item${noneActive}" data-idx="${i}" data-ref="none" title="不用参考，纯文生图"><div class="ref-photo-none">不用参考<br>纯文生图</div></div>`];
+  state.libImages.forEach((a, ai) => {
+    const dispUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
+    const active = sc._refAssetId === a.asset_id ? ' active' : '';
+    items.push(`<div class="ref-photo-item${active}" data-idx="${i}" data-ref="${ai}" title="${esc(a.filename || '')}"><img src="${esc(dispUrl)}" alt="${esc(a.filename || '')}" loading="lazy"></div>`);
+  });
+  return `<div class="ref-photo-bar scene-ref-bar">
+    <div class="ref-photo-label">参考照片 · 图生图（本镜专用，可与其他分镜不同）</div>
+    <div class="ref-photo-list">${items.join('')}</div>
+  </div>`;
+}
+
+async function selectSceneRefPhoto(sceneIdx, libIdx) {
+  const sc = state.scenes[sceneIdx];
+  const asset = state.libImages[libIdx];
+  if (!sc || !asset) return;
+  try {
+    await fetchAssetBase64(asset); // 预热缓存，生成时直接复用
+    sc._refAssetId = asset.asset_id;
+    renderScenes();
+    toast(`分镜 ${sceneIdx + 1} 的参考照片已选：` + (asset.filename || '照片'));
+  } catch (e) {
+    toast('照片加载失败：' + e.message);
+  }
+}
+
+function clearSceneRefPhoto(sceneIdx) {
+  const sc = state.scenes[sceneIdx];
+  if (!sc) return;
+  sc._refAssetId = '';
+  renderScenes();
+}
+
+// 若分镜绑定了真实素材（例如从资料库匹配到的照片），默认把它设为该分镜的参考图；
+// 用户仍可在分镜卡片里随时更换或取消。
+function initSceneRefDefaults() {
+  if (!state.libImages.length) return;
+  const byId = new Map(state.libImages.map(a => [a.asset_id, a]));
+  state.scenes.forEach(sc => {
+    if (sc._refAssetId) return;
+    const sourceImg = (sc.source_assets || []).find(a => a && a.kind === 'image' && byId.has(a.asset_id));
+    if (sourceImg) { sc._refAssetId = sourceImg.asset_id; return; }
+    if (state.refAsset && byId.has(state.refAsset.asset_id)) sc._refAssetId = state.refAsset.asset_id;
+  });
 }
 
 // ───── 分镜卡片渲染 ─────
@@ -202,7 +259,6 @@ function renderScenes() {
     const desc = sc.description || sc.scene_desc || sc.prompt_global || sc.visual || '';
     const narr = sc.narration   || sc.voiceover  || sc.subtitle      || '';
     const sourceAssets = Array.isArray(sc.source_assets) ? sc.source_assets : [];
-    const hasRealImage = sourceAssets.some(asset => asset && asset.kind === 'image');
     const sourceHtml = sourceAssets.length
       ? `<div class="scene-narr" style="margin-top:8px;">
            真实素材：${sourceAssets.map(asset =>
@@ -227,7 +283,7 @@ function renderScenes() {
     const imgHtml = sc._img_url
       ? `<div class="media-slot has-media">
            <img class="zoomable" data-idx="${i}" src="${esc(sc._img_url)}" alt="scene image">
-           <div class="media-cap">${sc._image_reused ? '真实素材 · ' : ''}点击图片放大查看</div>
+           <div class="media-cap">${sc._image_source_asset_id ? '已参考真实素材生成 · ' : ''}点击图片放大查看</div>
          </div>`
       : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
 
@@ -239,6 +295,17 @@ function renderScenes() {
            </div>
          </div>`
       : `<div class="media-slot"><div class="media-cap">短视频</div>${vidBadge}</div>`;
+    const videoDebug = sc._video_debug;
+    const debugHtml = videoDebug
+      ? `<details class="scene-video-debug">
+           <summary>查看视频生成提示词与诊断${videoDebug.error ? '（本次失败）' : ''}</summary>
+           <div><strong>模型：</strong>${esc(videoDebug.provider || 'TokenStar Kling v3 Omni')}</div>
+           <div><strong>提示词：</strong><pre>${esc(videoDebug.prompt || '')}</pre></div>
+           <div><strong>参考图：</strong>${esc(videoDebug.reference_image || '')}</div>
+           ${videoDebug.task_id ? `<div><strong>任务 ID：</strong>${esc(videoDebug.task_id)}</div>` : ''}
+           ${videoDebug.error ? `<div class="scene-video-debug-error"><strong>失败原因：</strong>${esc(videoDebug.error)}</div>` : ''}
+         </details>`
+      : '';
 
     list.insertAdjacentHTML('beforeend', `
       <div class="scene-row" data-idx="${i}">
@@ -249,9 +316,11 @@ function renderScenes() {
         ${desc ? `<div class="scene-desc">${esc(desc)}</div>` : ''}
         ${narr ? `<div class="scene-narr">${esc(narr)}</div>` : ''}
         ${sourceHtml}
+        ${state.libImages.length ? renderSceneRefBar(sc, i) : ''}
         <div class="scene-media">${imgHtml}${vidHtml}</div>
+        ${debugHtml}
         <div class="scene-actions">
-          <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新准备画面' : (hasRealImage ? '使用真实素材' : '生成 AI 图片')}</button>
+          <button class="btn" data-act="img" data-idx="${i}" ${imgStatus === 'run' ? 'disabled' : ''}>${sc._img_url ? '重新生成画面' : '生成 AI 图片'}</button>
           <button class="btn" data-act="vid" data-idx="${i}" ${vidStatus === 'run' || !sc._img_url ? 'disabled' : ''}>${sc._vid_url ? '重新生成视频' : '生成视频'}</button>
         </div>
       </div>
@@ -264,6 +333,15 @@ function renderScenes() {
       const idx = +btn.dataset.idx;
       if (act === 'img') genSceneImage(idx);
       else if (act === 'vid') genSceneVideo(idx);
+    };
+  });
+
+  list.querySelectorAll('.scene-ref-bar [data-ref]').forEach(el => {
+    el.onclick = () => {
+      const idx = +el.dataset.idx;
+      const ref = el.dataset.ref;
+      if (ref === 'none') clearSceneRefPhoto(idx);
+      else selectSceneRefPhoto(idx, +ref);
     };
   });
 
@@ -331,24 +409,49 @@ async function genSceneImage(idx) {
   const sc = state.scenes[idx];
   if (!sc) return;
   sc._img_status = 'run';
+  sc._img_url = '';
+  sc._vid_url = '';
+  sc._vid_status = 'idle';
   renderScenes();
   setPill('MV05', 'active');
   try {
     const body = {};
-    if (state.refB64) body.ref_b64 = state.refB64;
+    if (sc._refAssetId) {
+      const refAsset = state.libImages.find(a => a.asset_id === sc._refAssetId);
+      if (refAsset) body.ref_b64 = await fetchAssetBase64(refAsset);
+    }
     const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, body);
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
     sc._image_reused = !!res.reused;
-    sc._image_source_asset_id = res.source_asset_id || '';
-    if (res.reused) toast('已使用真实素材：' + (res.source_asset_id || ''));
+    // 用户在本镜手动选的参考图优先展示为“已参考真实素材”；否则以后端自动匹配结果为准。
+    sc._image_source_asset_id = sc._refAssetId || res.source_asset_id || '';
+    if (sc._image_source_asset_id) toast('已参考真实素材生成画面');
   } catch (e) {
     sc._img_status = 'err';
     toast('图片生成失败：' + e.message);
   } finally {
     renderScenes();
     if (state.scenes.length && state.scenes.every(s => s._img_url)) setPill('MV05', 'done');
+  }
+}
+
+async function localizeSceneDisplayCopy() {
+  const hasEnglishOnlyCopy = state.scenes.some(sc => {
+    const text = sc.description || sc.scene_desc || sc.visual || '';
+    return text && !/[\u4e00-\u9fff]/.test(text);
+  });
+  if (!hasEnglishOnlyCopy) return;
+  try {
+    const result = await apiPost(`/pipeline/scenes/${state.sid}/localize`, {});
+    if (Array.isArray(result.scenes) && result.scenes.length) {
+      state.scenes = result.scenes.map(normalizeSceneMedia);
+      initSceneRefDefaults();
+      renderScenes();
+    }
+  } catch (e) {
+    console.warn('[studio] 分镜中文本地化失败:', e);
   }
 }
 
@@ -362,11 +465,13 @@ async function genSceneVideo(idx) {
     const res = await apiPost(`/pipeline/scene/video/${state.sid}/${idx}`, {
       image_url: sc._img_url,
     });
+    if (res.debug) sc._video_debug = res.debug;
     if (res.error) throw new Error(res.message || '视频生成失败');
     sc._vid_url    = res.url || res.video_url;
     sc._vid_status = 'done';
   } catch (e) {
     sc._vid_status = 'err';
+    sc._video_debug = sc._video_debug || { error: e.message || String(e) };
     toast('视频生成失败：' + e.message);
   } finally {
     renderScenes();
@@ -391,10 +496,8 @@ async function selectPreferredReferencePhoto() {
 
 function refreshReferencePhotoUi() {
   renderCharSummary();
-  if (state.libImages.length) {
-    renderRefPhotoBar();
-    $('refPhotoBar').classList.remove('hidden');
-  }
+  initSceneRefDefaults();
+  if (state.scenes.length) renderScenes();
 }
 
 async function loadLibraryAssets() {
@@ -431,36 +534,6 @@ async function loadSessionAssets() {
     console.warn('[studio] 加载会话照片失败:', e);
   }
 }
-
-function renderRefPhotoBar() {
-  const list = $('refPhotoList');
-  list.innerHTML = '';
-  // 「不用参考」选项
-  const none = document.createElement('div');
-  none.className = 'ref-photo-item' + (state.refB64 ? '' : ' active');
-  none.innerHTML = `<div class="ref-photo-none">不用参考<br>纯文生图</div>`;
-  none.onclick = () => {
-    state.refB64 = '';
-    state.refAsset = null;
-    renderRefPhotoBar();
-    renderCharSummary();
-    toast('已切换为纯文生图');
-  };
-  list.appendChild(none);
-
-  const tok = localStorage.getItem('nian_token') || '';
-  state.libImages.forEach((a, i) => {
-    const dispUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
-    const isActive = state.refAsset && state.refAsset.asset_id === a.asset_id;
-    const el = document.createElement('div');
-    el.className = 'ref-photo-item' + (isActive ? ' active' : '');
-    el.title = a.filename || a.asset_id;
-    el.innerHTML = `<img src="${esc(dispUrl)}" alt="${esc(a.filename || '')}">`;
-    el.onclick = () => selectRefPhotoFromLib(i);
-    list.appendChild(el);
-  });
-}
-
 
 // ───── 最终合成 MV06（调用服务端 FFmpeg 拼接）─────
 async function finalCut() {
@@ -515,6 +588,8 @@ async function bootstrap() {
       hide('phaseGenScenes');
       show('phaseScenes');
       renderScenes();
+      await localizeSceneDisplayCopy();
+      await localizeSceneDisplayCopy();
     }
   } catch { /* 没生成过则保持初始 UI */ }
 

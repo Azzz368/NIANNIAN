@@ -111,7 +111,11 @@
     <div class="card">
       <div class="section-label">家庭回忆与生平故事 *</div>
       <div class="field"><textarea id="f_family_memory_text" rows="10" placeholder="可包含：性格、爱好、人生重要节点、令您难忘的小事..."></textarea></div>
-      <div class="text-muted" style="margin-top:6px;">建议 300 字以上，越详细影像越打动人。</div>
+      <div class="bio-memory-actions">
+        <div class="text-muted">已自动整合当前资料库的人物信息；您可继续补充最珍贵的回忆。</div>
+        <button class="btn btn-ghost" id="btnResearchPublicBio" type="button">AI 联网补全公开生平</button>
+      </div>
+      <div class="text-muted bio-public-note">仅适用于有公开资料的人物。联网结果会标注为公开资料，请核对后再使用。</div>
     </div>
 
     <div class="card">
@@ -129,10 +133,20 @@
     </div>
 
     <div class="card">
-      <div class="section-label">照片上传（选填）</div>
+      <div class="section-label">照片素材（选填）</div>
+      <div class="library-photo-head">
+        <div>
+          <div class="library-photo-title">当前资料库中的照片</div>
+          <div class="text-muted" id="libraryPhotoStatus">正在读取当前角色的素材库...</div>
+        </div>
+        <div class="library-photo-count" id="selectedPhotoHint">已选 0 张</div>
+      </div>
+      <div class="library-photo-grid" id="libraryPhotoGrid"></div>
+      <div class="upload-divider"><span>或补充上传新的素材</span></div>
       <label class="upload-zone" for="upload_input">
-        点击或拖拽上传照片 / 视频<br/>
-        <span class="text-muted">支持多文件，可上传不同时期的照片</span>
+        <span class="upload-zone-icon" aria-hidden="true">＋</span>
+        <strong>添加照片或视频</strong>
+        <span class="text-muted">点击选择，或将文件拖放到这里</span>
       </label>
       <input type="file" id="upload_input" class="upload-input" multiple accept="image/*,video/*">
       <div class="upload-list" id="uploadList"></div>

@@ -6,6 +6,8 @@ const state = {
   step: 1,
   form: {},
   chatHistory: [],
+  libraryImages: [],
+  selectedAssetIds: [],
 };
 
 // ───── 字段映射 ─────
@@ -51,6 +53,99 @@ function hasChatContextChanged(previous, current) {
   return CHAT_CONTEXT_FIELDS.some(key =>
     String(previous[key] ?? '') !== String(current[key] ?? '')
   );
+}
+
+function isImageAsset(asset) {
+  return asset?.kind === 'image' || /^image\//i.test(asset?.mime || '') ||
+    /\.(jpe?g|png|webp|gif)$/i.test(asset?.filename || '');
+}
+
+function assetDisplayUrl(asset) {
+  const token = localStorage.getItem('nian_token') || '';
+  const url = asset?.url || '';
+  return token && url ? url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) : url;
+}
+
+function dossierStory(dossier) {
+  const subject = dossier?.subject || {};
+  const parts = [];
+  const intro = [subject.name, subject.birth ? `生于${subject.birth}` : '', subject.passing ? `卒于${subject.passing}` : '', subject.occupation || ''].filter(Boolean).join('，');
+  if (intro) parts.push(intro + '。');
+  const personality = dossier?.personality || {};
+  const traits = [...(personality.keywords || []), ...(personality.habits || [])].filter(Boolean);
+  if (traits.length) parts.push(`性格与生活印记：${traits.join('、')}。`);
+  (dossier?.memories || []).slice(0, 8).forEach(memory => {
+    if (memory?.content) parts.push(memory.title ? `${memory.title}：${memory.content}` : memory.content);
+  });
+  (dossier?.quotes || []).slice(0, 3).forEach(quote => { if (quote) parts.push(`“${quote}”`); });
+  return parts.join('\n\n');
+}
+
+function renderLibraryPhotos() {
+  const grid = document.getElementById('libraryPhotoGrid');
+  const status = document.getElementById('libraryPhotoStatus');
+  const hint = document.getElementById('selectedPhotoHint');
+  if (!grid || !status || !hint) return;
+  hint.textContent = `已选 ${state.selectedAssetIds.length} 张`;
+  if (!getActiveMemorialId()) {
+    status.textContent = '请先在资料库选择一位角色。';
+    grid.innerHTML = '<div class="library-photo-empty">尚未选择资料库角色</div>';
+    return;
+  }
+  status.textContent = state.libraryImages.length ? `已加载 ${state.libraryImages.length} 张图片，勾选后将用于本次影像。` : '当前角色的资料库还没有图片。';
+  if (!state.libraryImages.length) {
+    grid.innerHTML = '<div class="library-photo-empty">暂无可选图片。可在下方补充上传，或前往资料库添加素材。</div>';
+    return;
+  }
+  grid.innerHTML = state.libraryImages.map(asset => {
+    const selected = state.selectedAssetIds.includes(asset.asset_id);
+    return `<button class="library-photo-item${selected ? ' selected' : ''}" type="button" data-asset-id="${esc(asset.asset_id)}" aria-pressed="${selected}">
+      <img src="${esc(assetDisplayUrl(asset))}" alt="${esc(asset.filename || '资料库照片')}" loading="lazy">
+      <span class="library-photo-check">${selected ? '✓' : ''}</span>
+      <span class="library-photo-name">${esc(asset.filename || '未命名照片')}</span>
+    </button>`;
+  }).join('');
+  grid.querySelectorAll('[data-asset-id]').forEach(button => {
+    button.onclick = () => toggleLibraryPhoto(button.dataset.assetId);
+  });
+}
+
+function toggleLibraryPhoto(assetId) {
+  if (!assetId) return;
+  state.selectedAssetIds = state.selectedAssetIds.includes(assetId)
+    ? state.selectedAssetIds.filter(id => id !== assetId)
+    : [...state.selectedAssetIds, assetId];
+  state.form.selected_asset_ids = state.selectedAssetIds;
+  renderLibraryPhotos();
+}
+
+async function researchPublicBiography() {
+  const form = readForm();
+  if (!form.deceased_name) { toast('请先填写人物姓名'); return; }
+  const memorialId = getActiveMemorialId();
+  const user = window.NianAuth?.getUser?.() || {};
+  if (!memorialId || !user.user_id) { toast('请先在资料库选择该角色后再联网补全'); return; }
+  const btn = document.getElementById('btnResearchPublicBio');
+  const label = btn?.textContent || '';
+  if (btn) { btn.disabled = true; btn.textContent = '正在联网整理...'; }
+  try {
+    const response = await NianAuth.fetch('/api/intake/deep-search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: form.deceased_name, memorial_id: memorialId, user_id: user.user_id })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || '联网搜索失败');
+    const story = result.fields?.family_memory_text || result.organized || '';
+    if (story) {
+      document.getElementById('f_family_memory_text').value = story;
+      state.form.family_memory_text = story;
+    }
+    toast(result.fallback ? '已按可用知识整理，请核对后使用' : '已联网补全公开生平，请核对后使用');
+  } catch (e) {
+    toast('公开生平补全失败：' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
 }
 
 // ───── 步骤导航 ─────
@@ -280,7 +375,13 @@ async function handleUpload(files) {
 
       // 最新上传的图片自动成为主角参考图；在分镜制作台仍可随时更换。
       if (f.type.startsWith('image/')) {
+        if (asset && isImageAsset(asset)) {
+          state.libraryImages.push(asset);
+          state.selectedAssetIds = [...new Set([...state.selectedAssetIds, asset.asset_id])];
+          state.form.selected_asset_ids = state.selectedAssetIds;
+        }
         await persistReferencePhoto(asset, memorialId);
+        renderLibraryPhotos();
       }
       if (f.type.startsWith('image/')) {
         const url = URL.createObjectURL(f);
@@ -322,6 +423,10 @@ async function prefillFromLibrary() {
     if (!resp.ok) return;
     const mdata = await resp.json();
     const subj = (mdata.dossier || {}).subject || {};
+    state.libraryImages = (mdata.assets || []).filter(isImageAsset);
+    const validAssetIds = new Set(state.libraryImages.map(asset => asset.asset_id));
+    const savedAssetIds = Array.isArray(state.form.selected_asset_ids) ? state.form.selected_asset_ids : [];
+    state.selectedAssetIds = savedAssetIds.filter(assetId => validAssetIds.has(assetId));
     const prefill = {
       deceased_name:   subj.name       || '',
       birth_date:      subj.birth      || '',
@@ -338,6 +443,16 @@ async function prefillFromLibrary() {
       const r = document.querySelector(`input[name="gender"][value="${prefill.deceased_gender}"]`);
       if (r) r.checked = true;
     }
+    // 仅在用户未填写时自动带入资料库的结构化记忆。
+    const memoryInput = document.getElementById('f_family_memory_text');
+    if (memoryInput && !memoryInput.value.trim()) {
+      const story = dossierStory(mdata.dossier || {});
+      if (story) {
+        memoryInput.value = story;
+        state.form.family_memory_text = story;
+      }
+    }
+    renderLibraryPhotos();
     // 顶部提示条：告知用户数据来源
     const name = prefill.deceased_name || mdata.meta?.name || '';
     if (name) {
@@ -353,6 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnFillTest').onclick = fillTestData;
   document.getElementById('btnToStep2').onclick = gotoStep2;
   document.getElementById('btnToStep3').onclick = gotoStep3;
+  document.getElementById('btnResearchPublicBio').onclick = researchPublicBiography;
   document.getElementById('btnBackTo1').onclick = () => showStep(1);
   document.getElementById('btnBackTo2').onclick = () => showStep(2);
   document.getElementById('btnSendChat').onclick = sendChat;

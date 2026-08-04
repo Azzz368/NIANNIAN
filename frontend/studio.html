@@ -35,6 +35,10 @@
   .scene-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
   .btn-sm{padding:4px 12px;font-size:.78rem;border-radius:8px;}
   .media-cap{font-size:.74rem;color:var(--muted-l);margin-top:6px;text-align:center;letter-spacing:.02em;}
+  .scene-video-debug{margin-top:10px;padding:9px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surf2);color:var(--muted-l);font-size:.76rem;line-height:1.65;}
+  .scene-video-debug summary{cursor:pointer;color:var(--gold);font-weight:600;}
+  .scene-video-debug pre{margin:4px 0 6px;white-space:pre-wrap;word-break:break-word;font:inherit;color:var(--ink-m);}
+  .scene-video-debug-error{margin-top:6px;color:var(--red);}
 
   /* 图片悬停、点击放大 */
   .media-slot img.zoomable{cursor:zoom-in;transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease;}
@@ -48,16 +52,21 @@
   .lightbox-close{position:absolute;top:18px;right:24px;width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:24px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .2s,transform .2s;}
   .lightbox-close:hover{background:rgba(255,255,255,.22);transform:rotate(90deg);}
 
-  /* 参考照片选择器 */
+  /* 参考照片选择器（每个分镜独立一份） */
   .ref-photo-bar{background:var(--surf2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:16px;}
+  .ref-photo-bar.scene-ref-bar{margin:12px 0 0;padding:10px 12px;}
   .ref-photo-label{font-size:.8rem;font-weight:600;color:var(--muted-l);letter-spacing:.05em;margin-bottom:10px;}
+  .scene-ref-bar .ref-photo-label{font-size:.74rem;margin-bottom:8px;}
   .ref-photo-list{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
   .ref-photo-item{cursor:pointer;border-radius:8px;border:2px solid var(--border);overflow:hidden;transition:border-color .2s,transform .2s;flex-shrink:0;}
   .ref-photo-item:hover{border-color:var(--gold);transform:scale(1.04);}
   .ref-photo-item.active{border-color:var(--gold);box-shadow:0 0 0 3px rgba(196,150,74,.25);}
   .ref-photo-item img{width:72px;height:72px;object-fit:cover;display:block;}
+  .scene-ref-bar .ref-photo-item img{width:56px;height:56px;}
   .ref-photo-none{width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-size:.68rem;color:var(--muted-l);text-align:center;padding:6px;line-height:1.4;}
+  .scene-ref-bar .ref-photo-none{width:56px;height:56px;font-size:.62rem;}
   .ref-photo-hint{font-size:.72rem;color:var(--muted-l);margin-top:8px;}
+
 
   /* 角色档案照片槽 */
   .char-photo-slot{width:72px;height:72px;flex-shrink:0;border-radius:8px;border:2px dashed var(--border);cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;background:var(--surf3);transition:border-color .2s,transform .2s;}
@@ -138,13 +147,7 @@
     <div class="step-header" style="margin-top:20px;">
       <div class="step-eyebrow">第二步</div>
       <div class="step-title">逐镜生成画面 &amp; 短视频</div>
-      <div class="step-desc">点击每个分镜下方的按钮，AI 会为该画面生成图片和动画。</div>
-    </div>
-    <!-- 参考照片选择器（来自素材库）-->
-    <div id="refPhotoBar" class="ref-photo-bar hidden">
-      <div class="ref-photo-label">参考照片 · 图生图（让 AI 保留 Ta 的面貌特征）</div>
-      <div id="refPhotoList" class="ref-photo-list"></div>
-      <div class="ref-photo-hint">选中照片后，AI 会以该人物面貌生成每张画面；点「不用参考」则纯文生图</div>
+      <div class="step-desc">每个分镜都可以单独挑选参考照片；AI 会基于参考图重新生成该镜头的画面，而不是直接使用原图。</div>
     </div>
     <div id="sceneList"></div>
 
