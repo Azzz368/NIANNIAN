@@ -1052,9 +1052,9 @@ def gen_scene_video(
         image_urls=[image_url],
         duration=5,
         poll=True,
-        # UI 告知用户通常需要 1-3 分钟；超过该窗口明确返回失败状态，避免
+        # 最多等待 5 分钟；超过该窗口明确返回失败状态，避免
         # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
-        max_wait=180,
+        max_wait=300,
     )
     if res.get("error"):
         return {"error": True, "message": res.get("error")}
