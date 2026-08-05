@@ -608,6 +608,7 @@ async function openMaterialWorkspace() {
             narration: sc.narration || sc.voiceover || sc.subtitle || '',
             image_prompt: sc._image_prompt || sc.prompt_start || sc.mj_prompt || '',
             image_url: sc._image_public_url || '',
+            has_generated_image: Boolean(sc._img_url || sc._image_data_url),
           })),
         }),
       }

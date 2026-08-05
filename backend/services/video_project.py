@@ -157,7 +157,7 @@ def create_fresh_project_from_script(
     # stale before its first compile.
     persisted_script = _script(user_id, memorial_id, project_id)
     digest = _hash_text(persisted_script)
-    clean_scenes: List[Dict[str, str]] = []
+    clean_scenes: List[Dict[str, Any]] = []
     for raw_scene in (studio_scenes or [])[:30]:
         if not isinstance(raw_scene, dict):
             continue
@@ -168,6 +168,7 @@ def create_fresh_project_from_script(
             "description": str(raw_scene.get("description") or "")[:1200],
             "narration": str(raw_scene.get("narration") or "")[:1200],
             "image_prompt": str(raw_scene.get("image_prompt") or "")[:2000],
+            "has_generated_image": bool(raw_scene.get("has_generated_image")),
             # Never persist giant session data URLs; keep only provider-downloadable frames.
             "image_url": image_url if image_url.startswith("https://") else "",
         })
@@ -240,7 +241,7 @@ def _compiler_prompt(project_id: str, script: str, source_bundle: Dict[str, Any]
 6. 时间轴从 0 开始、连续、不重叠。每个镜头必须绑定一个真实图片或视频。
 7. narration 与 subtitle 只能使用导演脚本已有文字或忠实缩写。音频字段只可引用资料包中 kind=audio 的素材；不确定时填 null。
 8. transition.type 仅可使用 cut、fade、dissolve、wipeleft、wiperight、smoothleft、smoothright。
-9. `studio_storyboard`（若存在）是影视制作台已经生成的分镜描述、图片 Prompt 和可选首帧。它可用于理解当前故事线和缺失元素；不得等待短视频，也不得把没有 asset_id 的 AI 首帧误当作真实资料素材。
+9. `studio_storyboard`（若存在）是影视制作台已经生成的分镜描述、图片 Prompt、可选首帧和 `has_generated_image` 标记。它可用于理解当前故事线和缺失元素；不得等待短视频，也不得把没有 asset_id 的 AI 首帧误当作真实资料素材。
 10. 只输出 JSON 对象，不要 Markdown 或解释。
 
 JSON 结构：
@@ -441,6 +442,9 @@ def compile_project(user_id: str, memorial_id: str, project_id: str, *, force: b
     digest = _hash_text(script)
     state_path = _state_path(user_id, memorial_id, project_id)
     state = _read_json(state_path, _base_state(memorial_id, project_id))
+    if state.get("workspace_mode") == "fresh_material_selection":
+        state["approved_script_sha256"] = digest
+        state["script_status"] = "approved"
     if state.get("script_status") != "approved" or state.get("approved_script_sha256") != digest:
         raise VideoProjectError("导演脚本尚未确认，或确认后又被修改")
     manifest_path = _manifest_path(user_id, memorial_id, project_id)
@@ -538,6 +542,8 @@ def _public_project(user_id: str, memorial_id: str, project_id: str) -> Dict[str
     state = _read_json(_state_path(user_id, memorial_id, project_id), _base_state(memorial_id, project_id))
     manifest = _read_json(_manifest_path(user_id, memorial_id, project_id), {})
     current_hash = _current_script_hash(user_id, memorial_id, project_id)
+    if state.get("workspace_mode") == "fresh_material_selection":
+        current_hash = str(state.get("approved_script_sha256") or current_hash)
     stale = state.get("approved_script_sha256") != current_hash or (
         manifest and manifest.get("script_sha256") != current_hash
     )
