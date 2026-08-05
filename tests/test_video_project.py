@@ -294,6 +294,38 @@ class VideoProjectTests(unittest.TestCase):
         self.assertEqual(clip["provider_status"], "succeeded")
         self.assertTrue(clip["preview_url"].endswith("/clips/clip_001/file"))
 
+    def test_truncated_download_is_retried_not_silently_accepted(self):
+        # A connection dropped mid-stream can leave a short but still-playable file
+        # without requests raising an error. Content-Length says 900 bytes but only
+        # 9 arrive; this must surface as a retryable failure, not a silently accepted
+        # clip that stops playing a couple of seconds in.
+        self.ready_manifest()
+
+        def fake_generate(**kwargs):
+            return {"url": "https://cdn.example/generated.mp4", "task_id": "task-1", "model": "seedance-2.0-asset-fast"}
+
+        response = SimpleNamespace(
+            headers={"content-length": "900"},
+            raise_for_status=lambda: None,
+            iter_content=lambda _size: [b"video-mp4"],
+        )
+        with patch.object(video_project, "_script", return_value=SCRIPT), \
+             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=fake_generate), \
+             patch.object(video_project, "_public_frame_url", return_value=""), \
+             patch.object(video_project.bunny_storage, "is_configured", return_value=False), \
+             patch.object(video_project.requests, "get", return_value=response):
+            job_id, _ = video_project.queue_clip_generation(
+                "u_one", "m_one", PROJECT_ID, "clip_001"
+            )
+            video_project.run_clip_generation(
+                "u_one", "m_one", PROJECT_ID, "clip_001", job_id
+            )
+            refreshed = video_project.get_project("u_one", "m_one", PROJECT_ID)
+
+        clip = refreshed["clips"][0]
+        self.assertEqual(clip["status"], "failed")
+        self.assertIn("下载不完整", clip["error"])
+
     def test_seedance_uses_bunny_cdn_and_deletes_temporary_object(self):
         self.ready_manifest()
         captured = {}

@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -543,6 +544,31 @@ def _age_seconds(value: Any) -> float:
         return 0.0
 
 
+def _probe_video_duration(path: Path) -> Optional[float]:
+    """Return the decodable duration of a downloaded clip, or None if unknown.
+
+    A network hiccup can truncate a streamed download without requests raising an
+    exception (some servers close the connection mid-chunk without signalling an
+    error). The resulting file still has a playable prefix, so byte-count alone is
+    not enough; probing the real duration catches videos that silently stop a few
+    seconds in.
+    """
+    ffprobe = os.getenv("FFPROBE_PATH", "").strip() or "ffprobe"
+    try:
+        process = subprocess.run(
+            [
+                ffprobe, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            capture_output=True, text=True, timeout=30, shell=False,
+        )
+        if process.returncode != 0:
+            return None
+        return float((process.stdout or "").strip())
+    except Exception:
+        return None
+
+
 def _recover_stale_jobs(user_id: str, memorial_id: str, project_id: str) -> None:
     """Turn abandoned in-process jobs into retryable failures after a restart."""
     manifest_path = _manifest_path(user_id, memorial_id, project_id)
@@ -904,6 +930,22 @@ def run_clip_generation(
                 handle.write(chunk)
         if total == 0:
             raise VideoProjectError("生成视频下载结果为空")
+        # A dropped connection mid-stream can leave a truncated but still partially
+        # playable file without requests raising an error. Verify the byte count
+        # against Content-Length, then probe the real decodable duration so a clip
+        # that silently stops a few seconds in is retried instead of accepted.
+        if expected and total < expected:
+            part.unlink(missing_ok=True)
+            raise VideoProjectError(
+                f"生成视频下载不完整（{total}/{expected} 字节），可能是网络中断，请重新生成。"
+            )
+        probed_duration = _probe_video_duration(part)
+        if probed_duration is not None and probed_duration < model_duration - 1.0:
+            part.unlink(missing_ok=True)
+            raise VideoProjectError(
+                f"生成视频时长异常（约 {probed_duration:.1f} 秒，应为 {model_duration} 秒），"
+                "文件可能在传输中被截断，请重新生成。"
+            )
         part.replace(target)
         _persist_clip_result(user_id, memorial_id, project_id, clip_id, job_id, {
             "status": "needs_review",
