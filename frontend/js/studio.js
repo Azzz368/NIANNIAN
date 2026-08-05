@@ -272,6 +272,7 @@ function renderScenes() {
     const imgBadge =
       imgStatus === 'done' ? '<span class="badge badge-done">已生成</span>' :
       imgStatus === 'run'  ? '<span class="badge badge-run">生成中...</span>' :
+      imgStatus === 'timeout' ? '<span class="badge badge-run">已超时 · 仍可能在生成</span>' :
       imgStatus === 'err'  ? '<span class="badge badge-err">失败</span>' :
                               '<span class="badge badge-idle">未生成</span>';
     const vidBadge =
@@ -421,7 +422,16 @@ async function genSceneImage(idx) {
       if (refAsset) body.ref_b64 = await fetchAssetBase64(refAsset);
     }
     const res = await apiPost(`/pipeline/scene/image/${state.sid}/${idx}`, body);
-    if (res.error) throw new Error(res.message || '图片生成失败');
+    if (res.error) {
+      if (res.timedout) {
+        // 后台可能仍在生成：不判定为失败，提示用户可稍后重新生成。
+        sc._img_status = 'timeout';
+        sc._img_error = res.message || '生成已超时，但可能仍在后台生成。';
+        toast(sc._img_error);
+        return;
+      }
+      throw new Error(res.message || '图片生成失败');
+    }
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
     sc._img_error = '';

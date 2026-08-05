@@ -320,6 +320,15 @@ def _transition(value: Any, duration: float) -> Dict[str, Any]:
     return {"type": kind, "duration_sec": round(min(max(seconds, 0.04), maximum), 3)}
 
 
+def _safe_transition(value: Any, duration: float) -> Dict[str, Any]:
+    """Never let an unusual transition value abort compilation; default to a fade."""
+    try:
+        return _transition(value, duration)
+    except VideoProjectError:
+        seconds = round(min(0.6, max(0.04, duration / 2)), 3)
+        return {"type": "fade", "duration_sec": seconds}
+
+
 def normalize_manifest(
     user_id: str,
     memorial_id: str,
@@ -338,42 +347,57 @@ def normalize_manifest(
         raise VideoProjectError("画幅只支持 16:9、9:16 或 1:1")
 
     clips: List[Dict[str, Any]] = []
+    warnings: List[str] = [str(item) for item in (payload.get("warnings") or []) if str(item).strip()]
     used_image_asset_ids: set[str] = set()
+    # A single problematic clip must never block the entire storyboard. Recoverable
+    # issues (duplicate image, unanalyzed image, weak prompt, bad transition) are
+    # skipped with a warning; the surviving clips are re-chained into a continuous
+    # timeline so the workspace always renders something usable.
     previous_end = 0.0
     for index, raw in enumerate(raw_clips):
         if not isinstance(raw, dict):
-            raise VideoProjectError(f"第 {index + 1} 个镜头格式无效")
-        start = _number(raw.get("start_sec"), "开始时间")
-        end = _number(raw.get("end_sec"), "结束时间")
-        if end <= start:
-            raise VideoProjectError(f"第 {index + 1} 个镜头结束时间必须晚于开始时间")
-        if abs(start - previous_end) > 0.15:
-            raise VideoProjectError(f"第 {index + 1} 个镜头与上一镜头时间轴不连续")
+            warnings.append(f"第 {index + 1} 个镜头格式无效，已跳过。")
+            continue
+        try:
+            start = _number(raw.get("start_sec"), "开始时间")
+            end = _number(raw.get("end_sec"), "结束时间")
+        except VideoProjectError:
+            warnings.append(f"第 {index + 1} 个镜头时间无效，已跳过。")
+            continue
         duration = round(end - start, 3)
+        if duration <= 0:
+            duration = round(max(0.5, end - start if end > start else 4.0), 3)
         asset_id = str(raw.get("asset_id") or "")
         asset = assets.get(asset_id)
         if not asset:
-            raise VideoProjectError(f"镜头引用了不属于当前人物的素材：{asset_id or '空'}")
+            warnings.append(f"镜头引用了不属于当前人物的素材（{asset_id or '空'}），已跳过。")
+            continue
         kind = str(asset.get("kind") or "")
         if kind not in ("image", "video"):
-            raise VideoProjectError(f"镜头主素材必须是图片或视频：{asset_id}")
+            warnings.append(f"素材 {asset_id} 不是图片或视频，已跳过。")
+            continue
+        prompt = str(raw.get("motion_prompt") or "").strip()
         if kind == "image":
             if asset_id in used_image_asset_ids:
-                raise VideoProjectError(
-                    f"同一张真实图片不能重复动态化：{asset_id}。请在 warnings 中说明素材不足，或改用未使用的相关图片。"
+                warnings.append(
+                    f"真实图片 {asset_id} 已在其他镜头使用，为避免重复动态化本镜已跳过；素材不足处将保留 AI 画面。"
                 )
+                continue
             analysis_status = str(asset.get("analysis_status") or "").strip().lower()
             vision_status = str(asset.get("vision_status") or "").strip().lower()
             if (analysis_status and analysis_status != "succeeded") or (
                 vision_status and vision_status != "succeeded"
             ):
-                raise VideoProjectError(
-                    f"图片素材尚未完成视觉分析，不可推荐动态化：{asset_id}"
+                warnings.append(
+                    f"图片素材 {asset_id} 尚未完成视觉分析，已跳过，避免误用不确定素材。"
+                )
+                continue
+            if len(prompt) < 12:
+                prompt = (
+                    "镜头在时长内极慢地向画面主体推进约 3%，保持人物身份、五官、"
+                    "服装、人数和背景完全不变，营造温暖克制的纪实氛围。"
                 )
             used_image_asset_ids.add(asset_id)
-        prompt = str(raw.get("motion_prompt") or "").strip()
-        if kind == "image" and len(prompt) < 12:
-            raise VideoProjectError(f"图片镜头 {asset_id} 缺少有效的动态化 Prompt")
 
         audio_fields: Dict[str, Optional[str]] = {}
         for field in ("narration_audio_asset_id", "original_audio_asset_id", "bgm_audio_asset_id"):
@@ -381,15 +405,20 @@ def normalize_manifest(
             if audio_id:
                 audio_asset = assets.get(audio_id)
                 if not audio_asset or audio_asset.get("kind") != "audio":
-                    raise VideoProjectError(f"{field} 引用了无效或跨人物音频素材：{audio_id}")
-                audio_fields[field] = audio_id
+                    warnings.append(f"{field} 引用了无效或跨人物音频素材（{audio_id}），已忽略。")
+                    audio_fields[field] = None
+                else:
+                    audio_fields[field] = audio_id
             else:
                 audio_fields[field] = None
 
-        clip_id = f"clip_{index + 1:03d}"
+        order = len(clips)
+        start = round(previous_end, 3)
+        end = round(previous_end + duration, 3)
+        clip_id = f"clip_{order + 1:03d}"
         clips.append({
             "clip_id": clip_id,
-            "order": index,
+            "order": order,
             "start_sec": start,
             "end_sec": end,
             "duration_sec": duration,
@@ -404,7 +433,7 @@ def normalize_manifest(
             "subtitle": str(raw.get("subtitle") or "").strip(),
             "use_source_audio": bool(raw.get("use_source_audio")) if kind == "video" else False,
             **audio_fields,
-            "transition": _transition(raw.get("transition"), duration),
+            "transition": _safe_transition(raw.get("transition"), duration),
             "fact_basis": str(raw.get("fact_basis") or "").strip(),
             "status": "pending" if kind == "image" else "needs_review",
             "attempts": 0,
@@ -422,6 +451,12 @@ def normalize_manifest(
         })
         previous_end = end
 
+    if not clips:
+        raise VideoProjectError(
+            "根据当前脚本与已分析素材，没有可用于真实素材动态化的镜头。"
+            "可先在资料库补充并分析相关图片，或直接使用影视制作台的 AI 画面。"
+        )
+
     return {
         "schema_version": 1,
         "project_id": project_id,
@@ -431,7 +466,7 @@ def normalize_manifest(
         "aspect_ratio": aspect,
         "fps": 25,
         "clips": clips,
-        "warnings": [str(item) for item in (payload.get("warnings") or []) if str(item).strip()],
+        "warnings": warnings[:40],
         "created_at": storage.now_iso(),
         "updated_at": storage.now_iso(),
     }
@@ -541,12 +576,15 @@ def _recover_stale_jobs(user_id: str, memorial_id: str, project_id: str) -> None
 def _public_project(user_id: str, memorial_id: str, project_id: str) -> Dict[str, Any]:
     state = _read_json(_state_path(user_id, memorial_id, project_id), _base_state(memorial_id, project_id))
     manifest = _read_json(_manifest_path(user_id, memorial_id, project_id), {})
-    current_hash = _current_script_hash(user_id, memorial_id, project_id)
     if state.get("workspace_mode") == "fresh_material_selection":
-        current_hash = str(state.get("approved_script_sha256") or current_hash)
-    stale = state.get("approved_script_sha256") != current_hash or (
-        manifest and manifest.get("script_sha256") != current_hash
-    )
+        # A fresh material workspace is a point-in-time snapshot by design. It never
+        # locks itself against later edits of the source director script.
+        stale = False
+    else:
+        current_hash = _current_script_hash(user_id, memorial_id, project_id)
+        stale = state.get("approved_script_sha256") != current_hash or (
+            manifest and manifest.get("script_sha256") != current_hash
+        )
     clips: List[Dict[str, Any]] = []
     for raw in manifest.get("clips", []) if isinstance(manifest, dict) else []:
         clip = {key: value for key, value in raw.items() if key != "video_path"}

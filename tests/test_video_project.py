@@ -131,6 +131,32 @@ class VideoProjectTests(unittest.TestCase):
             project = video_project.get_project("u_one", "m_one", fresh_id)
         self.assertFalse(project["script_stale"])
 
+    def test_duplicate_image_clip_is_skipped_with_warning_not_hard_failure(self):
+        duplicate_payload = {
+            "aspect_ratio": "16:9",
+            "clips": [
+                {
+                    "start_sec": 0, "end_sec": 5, "narrative_role": "开场", "asset_id": "a_one",
+                    "motion_prompt": "镜头非常缓慢地向人物推进，保持身份不变。",
+                    "transition": {"type": "fade", "duration_sec": 0.5},
+                },
+                {
+                    "start_sec": 5, "end_sec": 10, "narrative_role": "发展", "asset_id": "a_one",
+                    "motion_prompt": "再次极缓慢地推进，保持身份不变。",
+                    "transition": {"type": "fade", "duration_sec": 0.5},
+                },
+            ],
+            "warnings": [],
+        }
+        digest = video_project._hash_text(SCRIPT)
+        manifest = video_project.normalize_manifest(
+            "u_one", "m_one", PROJECT_ID, digest, duplicate_payload
+        )
+        self.assertEqual(len(manifest["clips"]), 1)
+        self.assertTrue(any("已在其他镜头使用" in warning for warning in manifest["warnings"]))
+        self.assertEqual(manifest["clips"][0]["start_sec"], 0)
+        self.assertEqual(manifest["clips"][0]["end_sec"], 5)
+
     def test_compiler_agent_prompt_and_output_are_grounded_in_owned_asset(self):
         captured = {}
         completion = SimpleNamespace(
@@ -156,12 +182,14 @@ class VideoProjectTests(unittest.TestCase):
         self.assertIn("保持人物身份", prompt_text)
         self.assertIn("真实照片动态化执行导演", captured["messages"][0]["content"])
 
-    def test_foreign_asset_id_is_rejected(self):
+    def test_foreign_asset_id_is_never_used_in_manifest(self):
+        # A cross-person asset must never be silently rendered. It is skipped with a
+        # warning; because it is the only clip, no usable storyboard remains.
         with self.assertRaises(video_project.VideoProjectError) as raised:
             video_project.normalize_manifest(
                 "u_one", "m_one", PROJECT_ID, "hash", payload("a_other_person")
             )
-        self.assertIn("不属于当前人物", str(raised.exception))
+        self.assertIn("没有可用于真实素材动态化的镜头", str(raised.exception))
 
     def test_prompt_edit_invalidates_old_result_and_persists_after_refresh(self):
         self.ready_manifest()

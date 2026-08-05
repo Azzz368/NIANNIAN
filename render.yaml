@@ -33,7 +33,7 @@ services:
       - key: TOKENSTAR_IMAGE_SOURCE_SIZE
         value: 2048x1152
       - key: TOKENSTAR_IMAGE_TIMEOUT_SECONDS
-        value: "420"
+        value: "300"
       - key: TOKENSTAR_SEEDANCE_MODEL
         value: seedance-2.0-asset-fast
       - key: TOKENSTAR_SEEDANCE_ASSET_MODEL

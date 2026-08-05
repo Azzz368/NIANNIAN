@@ -975,6 +975,14 @@ def gen_scene_image(
 
     b64, err = generate_image_tokenstar(image_prompt, reference_b64=reference_b64 or None)
     if not b64:
+        if err == "__TOKENSTAR_IMAGE_TIMEOUT__":
+            # The provider may still be finishing this frame. Report a soft timeout so
+            # the studio can let the user wait or retry instead of showing a hard error.
+            return {
+                "error": True,
+                "timedout": True,
+                "message": "生成已超过等待时间，但可能仍在后台生成。可稍后点击重新生成再试。",
+            }
         return {"error": True, "message": err or "图片生成失败"}
 
     data_url = f"data:image/png;base64,{b64}"

@@ -621,7 +621,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
         f"{composition_rules}"
     )
     headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
-    request_timeout = max(60, int(os.getenv("TOKENSTAR_IMAGE_TIMEOUT_SECONDS", "420") or 420))
+    request_timeout = max(60, int(os.getenv("TOKENSTAR_IMAGE_TIMEOUT_SECONDS", "300") or 300))
 
     try:
         if reference_b64:
@@ -663,6 +663,11 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
                 timeout=request_timeout,
             )
         response.raise_for_status()
+    except (_requests.Timeout, _requests.ConnectionError) as exc:
+        # The provider request timed out on our side, but the image may still be
+        # generating on TokenStar. Never report this as a hard failure; let the caller
+        # surface a "已超时，但仍在生成" state so users can retry instead of losing work.
+        return None, "__TOKENSTAR_IMAGE_TIMEOUT__"
     except _requests.RequestException as exc:
         response_text = getattr(getattr(exc, "response", None), "text", "")
         return None, f"TokenStar 图片生成请求失败：{str(exc)} {response_text[:500]}"
