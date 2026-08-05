@@ -597,7 +597,19 @@ async function openMaterialWorkspace() {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_project_id: latest.project_id }),
+        body: JSON.stringify({
+          source_project_id: latest.project_id,
+          // 不等待短视频：把当前分镜的故事、Prompt 和已完成首帧作为可选上下文
+          // 交给编排台，用于判断故事线缺口和真实素材插入点。
+          studio_scenes: state.scenes.map(sc => ({
+            scene_id: sc.id || sc.scene_id || '',
+            time: sc.time || sc.duration || '',
+            description: sc.description || sc.scene_desc || sc.visual || '',
+            narration: sc.narration || sc.voiceover || sc.subtitle || '',
+            image_prompt: sc._image_prompt || sc.prompt_start || sc.mj_prompt || '',
+            image_url: sc._image_public_url || '',
+          })),
+        }),
       }
     );
     if (!freshResponse.ok) {

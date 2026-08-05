@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -25,6 +25,7 @@ class CompileRequest(BaseModel):
 
 class FreshProjectRequest(BaseModel):
     source_project_id: str
+    studio_scenes: List[Dict[str, Any]] = []
 
 
 def _error(exc: Exception, status: int = 422) -> HTTPException:
@@ -62,7 +63,7 @@ def fresh_from_script(
     """Start a clean material-selection workspace without reusing old clip caches."""
     try:
         return video_project.create_fresh_project_from_script(
-            user["user_id"], memorial_id, req.source_project_id
+            user["user_id"], memorial_id, req.source_project_id, req.studio_scenes
         )
     except Exception as exc:
         raise _error(exc, 409)

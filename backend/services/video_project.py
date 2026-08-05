@@ -138,6 +138,7 @@ def create_fresh_project_from_script(
     user_id: str,
     memorial_id: str,
     source_project_id: str,
+    studio_scenes: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Create an isolated, empty execution project from an approved source script.
 
@@ -148,10 +149,28 @@ def create_fresh_project_from_script(
     """
     script = _script(user_id, memorial_id, source_project_id)
     project_id = storage.new_id("vp_")
-    digest = _hash_text(script)
     script_path = director_script.director_script_path(user_id, memorial_id, project_id)
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(script + "\n", encoding="utf-8")
+    # Hash the exact persisted/validated project copy rather than the source project
+    # string, so whitespace normalization can never make a brand-new project appear
+    # stale before its first compile.
+    persisted_script = _script(user_id, memorial_id, project_id)
+    digest = _hash_text(persisted_script)
+    clean_scenes: List[Dict[str, str]] = []
+    for raw_scene in (studio_scenes or [])[:30]:
+        if not isinstance(raw_scene, dict):
+            continue
+        image_url = str(raw_scene.get("image_url") or "").strip()
+        clean_scenes.append({
+            "scene_id": str(raw_scene.get("scene_id") or raw_scene.get("id") or "")[:80],
+            "time": str(raw_scene.get("time") or raw_scene.get("duration") or "")[:80],
+            "description": str(raw_scene.get("description") or "")[:1200],
+            "narration": str(raw_scene.get("narration") or "")[:1200],
+            "image_prompt": str(raw_scene.get("image_prompt") or "")[:2000],
+            # Never persist giant session data URLs; keep only provider-downloadable frames.
+            "image_url": image_url if image_url.startswith("https://") else "",
+        })
     state = _base_state(memorial_id, project_id)
     state.update({
         "script_status": "approved",
@@ -159,6 +178,7 @@ def create_fresh_project_from_script(
         "approved_at": storage.now_iso(),
         "source_project_id": source_project_id,
         "workspace_mode": "fresh_material_selection",
+        "studio_scene_context": clean_scenes,
         "updated_at": storage.now_iso(),
     })
     _write_json(_state_path(user_id, memorial_id, project_id), state)
@@ -171,6 +191,7 @@ def create_fresh_project_from_script(
         "source_project_id": source_project_id,
         "script_status": "approved",
         "manifest_status": "missing",
+        "studio_scene_count": len(clean_scenes),
     }
 
 
@@ -219,7 +240,8 @@ def _compiler_prompt(project_id: str, script: str, source_bundle: Dict[str, Any]
 6. 时间轴从 0 开始、连续、不重叠。每个镜头必须绑定一个真实图片或视频。
 7. narration 与 subtitle 只能使用导演脚本已有文字或忠实缩写。音频字段只可引用资料包中 kind=audio 的素材；不确定时填 null。
 8. transition.type 仅可使用 cut、fade、dissolve、wipeleft、wiperight、smoothleft、smoothright。
-9. 只输出 JSON 对象，不要 Markdown 或解释。
+9. `studio_storyboard`（若存在）是影视制作台已经生成的分镜描述、图片 Prompt 和可选首帧。它可用于理解当前故事线和缺失元素；不得等待短视频，也不得把没有 asset_id 的 AI 首帧误当作真实资料素材。
+10. 只输出 JSON 对象，不要 Markdown 或解释。
 
 JSON 结构：
 {{
@@ -429,6 +451,7 @@ def compile_project(user_id: str, memorial_id: str, project_id: str, *, force: b
     _write_json(state_path, state)
     try:
         bundle = director_script._source_bundle(user_id, memorial_id, {"workflow": "video_project_compiler"})
+        bundle["studio_storyboard"] = state.get("studio_scene_context", [])
         response = _client().chat.completions.create(
             model=os.getenv("VIDEO_PROJECT_PLANNER_MODEL", "qwen-plus"),
             messages=[

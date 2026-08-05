@@ -127,6 +127,9 @@ class VideoProjectTests(unittest.TestCase):
         )
         self.assertEqual(state["manifest_status"], "missing")
         self.assertEqual(state["workspace_mode"], "fresh_material_selection")
+        with patch.object(video_project, "_script", return_value=SCRIPT):
+            project = video_project.get_project("u_one", "m_one", fresh_id)
+        self.assertFalse(project["script_stale"])
 
     def test_compiler_agent_prompt_and_output_are_grounded_in_owned_asset(self):
         captured = {}
