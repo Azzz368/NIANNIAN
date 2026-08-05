@@ -108,6 +108,26 @@ class VideoProjectTests(unittest.TestCase):
         video_project._write_json(state_path, state)
         return manifest
 
+    def test_fresh_project_reuses_script_but_not_manifest_or_clip_cache(self):
+        self.ready_manifest()
+        old_manifest = video_project._manifest_path("u_one", "m_one", PROJECT_ID)
+        self.assertTrue(old_manifest.exists())
+
+        with patch.object(video_project, "_script", return_value=SCRIPT):
+            fresh = video_project.create_fresh_project_from_script(
+                "u_one", "m_one", PROJECT_ID
+            )
+
+        fresh_id = fresh["project_id"]
+        self.assertNotEqual(fresh_id, PROJECT_ID)
+        self.assertEqual(fresh["source_project_id"], PROJECT_ID)
+        self.assertFalse(video_project._manifest_path("u_one", "m_one", fresh_id).exists())
+        state = video_project._read_json(
+            video_project._state_path("u_one", "m_one", fresh_id), {}
+        )
+        self.assertEqual(state["manifest_status"], "missing")
+        self.assertEqual(state["workspace_mode"], "fresh_material_selection")
+
     def test_compiler_agent_prompt_and_output_are_grounded_in_owned_asset(self):
         captured = {}
         completion = SimpleNamespace(

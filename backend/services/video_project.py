@@ -134,6 +134,46 @@ def approve_script(user_id: str, memorial_id: str, project_id: str) -> Dict[str,
     return state
 
 
+def create_fresh_project_from_script(
+    user_id: str,
+    memorial_id: str,
+    source_project_id: str,
+) -> Dict[str, Any]:
+    """Create an isolated, empty execution project from an approved source script.
+
+    The source director script is reused verbatim, but no prior manifest, clip prompt,
+    provider asset, generated preview, approval, or final render is copied. This gives
+    every studio entry a clean material-selection pass without asking another agent to
+    rewrite the script.
+    """
+    script = _script(user_id, memorial_id, source_project_id)
+    project_id = storage.new_id("vp_")
+    digest = _hash_text(script)
+    script_path = director_script.director_script_path(user_id, memorial_id, project_id)
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(script + "\n", encoding="utf-8")
+    state = _base_state(memorial_id, project_id)
+    state.update({
+        "script_status": "approved",
+        "approved_script_sha256": digest,
+        "approved_at": storage.now_iso(),
+        "source_project_id": source_project_id,
+        "workspace_mode": "fresh_material_selection",
+        "updated_at": storage.now_iso(),
+    })
+    _write_json(_state_path(user_id, memorial_id, project_id), state)
+    try:
+        oss_sync.push_path(script_path)
+    except Exception as exc:
+        print("[video-project] fresh script OSS sync failed:", exc)
+    return {
+        "project_id": project_id,
+        "source_project_id": source_project_id,
+        "script_status": "approved",
+        "manifest_status": "missing",
+    }
+
+
 def invalidate_after_script_edit(user_id: str, memorial_id: str, project_id: str, script: str) -> None:
     """Mark compiled work stale without deleting generated user artifacts."""
     try:

@@ -590,19 +590,25 @@ async function openMaterialWorkspace() {
     if (!latest.project_id || !latest.script) {
       throw new Error('当前人物尚无已保存的导演脚本，请先在首页生成并确认导演脚本');
     }
-    const approveResponse = await NianAuth.fetch(
-      `/api/video-projects/${encodeURIComponent(state.mid)}/${encodeURIComponent(latest.project_id)}/approve-script`,
-      { method: 'POST' }
+    const freshResponse = await NianAuth.fetch(
+      `/api/video-projects/${encodeURIComponent(state.mid)}/fresh-from-script`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_project_id: latest.project_id }),
+      }
     );
-    if (!approveResponse.ok) {
-      const detail = await approveResponse.json().catch(() => ({}));
-      throw new Error(detail.detail || '导演脚本确认失败');
+    if (!freshResponse.ok) {
+      const detail = await freshResponse.json().catch(() => ({}));
+      throw new Error(detail.detail || '无法创建新的真实素材动态化项目');
     }
+    const fresh = await freshResponse.json();
     const host = $('materialWorkspaceHost');
-    host.innerHTML = `<iframe title="真实素材动态化工作台" src="/static/video_project.html?memorial_id=${encodeURIComponent(state.mid)}&project_id=${encodeURIComponent(latest.project_id)}&embedded=1"></iframe>`;
+    host.innerHTML = `<iframe title="真实素材动态化工作台" src="/static/video_project.html?memorial_id=${encodeURIComponent(state.mid)}&project_id=${encodeURIComponent(fresh.project_id)}&embedded=1"></iframe>`;
     host.classList.remove('hidden');
-    button.textContent = '已打开真实素材动态化';
-    if (status) status.textContent = '工作台已嵌入当前流程：仅会使用严格筛选出的真实图片动态化；其余分镜继续保留 AI 画面。';
+    button.disabled = false;
+    button.textContent = '重新开始新的素材动态化';
+    if (status) status.textContent = `已创建新的素材动态化项目 ${fresh.project_id}：不会复用历史编排、镜头或生成结果；其余分镜继续保留 AI 画面。`;
     host.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
     if (status) status.textContent = e.message || String(e);

@@ -23,6 +23,10 @@ class CompileRequest(BaseModel):
     force: bool = False
 
 
+class FreshProjectRequest(BaseModel):
+    source_project_id: str
+
+
 def _error(exc: Exception, status: int = 422) -> HTTPException:
     if isinstance(exc, KeyError):
         return HTTPException(404, str(exc))
@@ -47,6 +51,21 @@ def approve_script(memorial_id: str, project_id: str, user=Depends(security.get_
         return video_project.approve_script(user["user_id"], memorial_id, project_id)
     except Exception as exc:
         raise _error(exc)
+
+
+@router.post("/{memorial_id}/fresh-from-script")
+def fresh_from_script(
+    memorial_id: str,
+    req: FreshProjectRequest,
+    user=Depends(security.get_current_user),
+):
+    """Start a clean material-selection workspace without reusing old clip caches."""
+    try:
+        return video_project.create_fresh_project_from_script(
+            user["user_id"], memorial_id, req.source_project_id
+        )
+    except Exception as exc:
+        raise _error(exc, 409)
 
 
 @router.post("/{memorial_id}/{project_id}/compile")
