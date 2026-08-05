@@ -565,13 +565,36 @@ def _crop_image_b64_to_16_9(image_b64: str) -> tuple:
 
 
 def _tokenstar_image_b64(response: Any) -> tuple:
-    """读取 TokenStar gpt-image 响应，并统一转换为精确 16:9 PNG。"""
+    """读取 TokenStar gpt-image 响应，并统一转换为精确 16:9 PNG。
+
+    不同网关/额度通道可能返回 ``b64_json``、data URL 或临时 HTTPS URL。
+    HTTP 成功不等于固定返回 b64_json；必须兼容这些成功形态，否则后台已经
+    计费并成功出图时，制作台仍会错误显示“失败”。
+    """
     try:
         payload = response.json()
-        image_b64 = payload.get("data", [{}])[0].get("b64_json", "")
-        if isinstance(image_b64, str) and image_b64:
-            return _crop_image_b64_to_16_9(image_b64)
-        return None, "TokenStar 未返回 data[0].b64_json"
+        items = payload.get("data", []) if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            items = [items]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for key in ("b64_json", "base64", "image_base64"):
+                image_b64 = item.get(key)
+                if isinstance(image_b64, str) and image_b64.strip():
+                    image_b64 = image_b64.strip()
+                    if image_b64.startswith("data:"):
+                        image_b64 = image_b64.split(",", 1)[-1]
+                    return _crop_image_b64_to_16_9(image_b64)
+            for key in ("url", "image_url", "result_url", "output_url"):
+                image_url = item.get(key)
+                if isinstance(image_url, str) and image_url.startswith("http"):
+                    downloaded = _download_url_to_b64(image_url, "[tokenstar_image]")
+                    if downloaded:
+                        return _crop_image_b64_to_16_9(downloaded)
+                    return None, f"TokenStar 已返回图片 URL 但下载失败：{image_url[:180]}"
+        keys = ", ".join(sorted(payload.keys())) if isinstance(payload, dict) else type(payload).__name__
+        return None, f"TokenStar 图片响应未包含可用图片数据（顶层字段：{keys}）"
     except (ValueError, AttributeError, IndexError, TypeError) as exc:
         return None, f"TokenStar 图片响应解析失败：{exc}"
 
@@ -598,6 +621,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
         f"{composition_rules}"
     )
     headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
+    request_timeout = max(60, int(os.getenv("TOKENSTAR_IMAGE_TIMEOUT_SECONDS", "420") or 420))
 
     try:
         if reference_b64:
@@ -622,7 +646,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
                     "output_format": "png",
                 },
                 files={"image": ("reference.png", reference_bytes, "image/png")},
-                timeout=180,
+                timeout=request_timeout,
             )
         else:
             logger.info("[tokenstar_image] 调用 gpt-image-2 文生图接口")
@@ -636,7 +660,7 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
                     "size": TOKENSTAR_IMAGE_SOURCE_SIZE,
                     "output_format": "png",
                 },
-                timeout=180,
+                timeout=request_timeout,
             )
         response.raise_for_status()
     except _requests.RequestException as exc:

@@ -285,7 +285,7 @@ function renderScenes() {
            <img class="zoomable" data-idx="${i}" src="${esc(sc._img_url)}" alt="scene image">
            <div class="media-cap">${sc._image_source_asset_id ? '已参考真实素材生成 · ' : ''}点击图片放大查看</div>
          </div>`
-      : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}</div>`;
+      : `<div class="media-slot"><div class="media-cap">画面图片</div>${imgBadge}${sc._img_error ? `<div class="media-cap" style="color:var(--red);white-space:normal;">${esc(sc._img_error)}</div>` : ''}</div>`;
 
     const vidHtml = sc._vid_url
       ? `<div class="media-slot has-media">
@@ -424,13 +424,15 @@ async function genSceneImage(idx) {
     if (res.error) throw new Error(res.message || '图片生成失败');
     sc._img_url    = res.url || res.image_url;
     sc._img_status = 'done';
+    sc._img_error = '';
     sc._image_reused = !!res.reused;
     // 用户在本镜手动选的参考图优先展示为“已参考真实素材”；否则以后端自动匹配结果为准。
     sc._image_source_asset_id = sc._refAssetId || res.source_asset_id || '';
     if (sc._image_source_asset_id) toast('已参考真实素材生成画面');
   } catch (e) {
     sc._img_status = 'err';
-    toast('图片生成失败：' + e.message);
+    sc._img_error = e.message || String(e);
+    toast('图片生成失败：' + sc._img_error);
   } finally {
     renderScenes();
     if (state.scenes.length && state.scenes.every(s => s._img_url)) setPill('MV05', 'done');
