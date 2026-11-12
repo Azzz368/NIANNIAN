@@ -5,7 +5,7 @@
 <title>声音工坊 · 念念</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="css/library.css">
-<link rel="stylesheet" href="css/voice_studio.css">
+<link rel="stylesheet" href="css/voice_studio.css?v=20261112-consent">
 </head>
 <body>
 
@@ -82,13 +82,14 @@
         </div>
       </div>
 
-      <div class="vs-param">
-        <label><input type="checkbox" id="vsConsent"> 我已获得声音所有者的克隆和合成授权</label>
-      </div>
       <div class="vs-actions">
         <button class="vs-btn-primary" id="vsCloneBtn" type="button">开始克隆</button>
         <button class="vs-btn-ghost" id="vsSaveParamsBtn" type="button">保存参数</button>
       </div>
+      <label class="vs-consent" for="vsConsent">
+        <input type="checkbox" id="vsConsent">
+        <span>我确认已获得声音所有者的声音克隆及语音合成授权</span>
+      </label>
     </section>
 
     <!-- 下：试听 -->
@@ -120,7 +121,7 @@
 <div class="dossier-toast" id="vsToast"></div>
 
 <script src="js/auth.js"></script>
-<script src="js/voice_studio.js"></script>
+<script src="js/voice_studio.js?v=20261112-consent"></script>
 </body>
 </html>
 
