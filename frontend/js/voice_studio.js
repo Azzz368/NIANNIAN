@@ -25,6 +25,7 @@
     presets: [],
     selected: new Set(),
     saveDebounce: null,
+    audioUrl: '',
   };
 
   function toast(msg, ms){
@@ -51,6 +52,7 @@
     }
     sel.addEventListener('change', function(){
       state.mid = sel.value;
+      $('vsConsent').checked = false;
       NianAuth.setActiveMemorialId(state.mid);
       history.replaceState({}, '', '?mid=' + encodeURIComponent(state.mid));
       loadVoice();
@@ -105,9 +107,9 @@
     var map = {
       idle:    '尚未克隆 · 选择音频样本后即可开始',
       cloning: '克隆中...',
-      ready:   '✓ 已就绪 · DashScope 克隆成功 · voice_id=' + (state.voice.voice_id||'').slice(0,32),
-      mock:    '⚠ Mock 模式 · 原因：' + (state.voice.error || 'DashScope 未配置或样本不可公网访问') + '（先用预制音色试听）',
-      failed:  '✗ 失败：' + (state.voice.error || '未知错误'),
+      ready:   '✓ 已就绪 · ' + (state.voice.provider === 'qwen_tts' ? 'QwenCloud' : '旧版') + ' 音色 · voice_id=' + (state.voice.voice_id||'').slice(0,32),
+      mock:    '旧版 Mock 音色不可用于克隆试听，请重新克隆',
+      failed:  '✗ 失败：' + (state.voice.error || '未知错误') + (state.voice.voice_id ? ' · 音色 ID 已保留，可重试试听' : ''),
     };
     txt.textContent = map[s] || s;
   }
@@ -128,7 +130,7 @@
       var tok = (window.NianAuth && NianAuth.getToken && NianAuth.getToken()) || '';
       var audioUrl = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
       row.innerHTML =
-        '<div class="chk"></div>' +
+        '<input type="radio" name="vsSample" aria-label="选择声音样本"' + (state.selected.has(a.asset_id) ? ' checked' : '') + '>' +
         '<div class="info">' +
           '<div class="name">' + esc(a.filename || a.asset_id) + '</div>' +
           '<div class="desc">' + esc(a.description || a.summary || '未填描述') + '</div>' +
@@ -136,8 +138,9 @@
         '<audio src="' + audioUrl + '" controls preload="metadata"></audio>';
       row.addEventListener('click', function(e){
         if (e.target.tagName === 'AUDIO' || e.target.closest('audio')) return;
-        if (state.selected.has(a.asset_id)) state.selected.delete(a.asset_id);
-        else state.selected.add(a.asset_id);
+        $('vsConsent').checked = false;
+        state.selected.clear();
+        state.selected.add(a.asset_id);
         renderSamples();
       });
       box.appendChild(row);
@@ -219,23 +222,23 @@
 
   // ─── 克隆 ───────────────────────────────────────────────────
   $('vsCloneBtn').addEventListener('click', async function(){
-    if (state.selected.size === 0) { toast('请先勾选至少一个声音样本'); return; }
+    if (state.selected.size !== 1) { toast('请选择一个声音样本'); return; }
+    if (!$('vsConsent').checked) { toast('请先确认声音克隆授权'); return; }
     var btn = this; btn.disabled = true; btn.textContent = '克隆中...';
     state.voice.status = 'cloning'; renderStatus();
     try {
       var r = await NianAuth.fetch('/api/memorials/' + state.mid + '/voice/clone', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ sample_ids: Array.from(state.selected), note: '' })
+        body: JSON.stringify({ sample_ids: Array.from(state.selected), note: '', consent_confirmed: $('vsConsent').checked })
       });
       if (!r.ok) { var ed = await r.json().catch(function(){return{};}); throw new Error(ed.detail || ('HTTP '+r.status)); }
       var d = await r.json();
       state.voice = d.voice;
       renderAll();
-      if (state.voice.provider === 'dashscope') toast('克隆成功！可以试听了', 3000);
-      else toast('已切换 Mock 模式（先用预制音色试听）', 3500);
+      toast('克隆成功，可以试听了', 3000);
     } catch(e) {
+      await loadVoice();
       toast('克隆失败：' + e.message, 4000);
-      state.voice.status = 'failed'; state.voice.error = e.message; renderStatus();
     } finally {
       btn.disabled = false; btn.textContent = '开始克隆';
     }
@@ -245,6 +248,7 @@
   $('vsPreviewBtn').addEventListener('click', async function(){
     var text = $('vsPreviewText').value.trim();
     if (!text) { toast('请输入要合成的文本'); return; }
+    if (Array.from(text).length > 600) { toast('试听文本不能超过 600 字'); return; }
     var useClone = document.querySelector('input[name=vsMode]:checked').value === 'clone';
     var btn = this; btn.disabled = true; btn.textContent = '合成中...';
     await saveParams(true);
@@ -258,8 +262,11 @@
         throw new Error(ed.detail || ('HTTP '+r.status));
       }
       var blob = await r.blob();
+      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
       var url = URL.createObjectURL(blob);
+      state.audioUrl = url;
       var pl = $('vsAudioPlayer'); pl.src = url; pl.play();
+      if (useClone) await loadVoice();
       toast('✓ 合成完成', 1800);
     } catch(e) {
       toast('合成失败：' + e.message, 4000);

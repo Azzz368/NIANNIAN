@@ -1,13 +1,15 @@
 # backend/routers/voice.py — 声音工坊：样本管理 + 克隆 + 试听
-import os, time, uuid, json, io
+import os, time, json, io, asyncio
 from pathlib import Path
 from typing import Optional, List
+from urllib.parse import urlparse
+import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
-from openai import OpenAI
 
 from core import security, storage
+from services import qwen_voice
 
 router = APIRouter(prefix="/memorials", tags=["voice"])
 
@@ -35,7 +37,7 @@ def _apply_region_to_sdk():
 # ─── 默认克隆配置 ────────────────────────────────────────────────
 DEFAULT_VOICE = {
     "voice_id": "",           # 克隆完成后的 voice_id；空 = 尚未克隆
-    "provider": "",           # dashscope / mock
+    "provider": "",           # qwen_tts / legacy dashscope / mock
     "status": "idle",         # idle / cloning / ready / failed / mock
     "samples": [],            # 参与克隆的 asset_id 列表
     "params": {
@@ -127,117 +129,114 @@ def update_voice(mid: str, req: UpdateVoiceReq, user = Depends(security.get_curr
 class CloneReq(BaseModel):
     sample_ids: List[str]    # 必须从已上传的音频素材里选
     note: str = ""
+    consent_confirmed: bool = False
+    language: str = ""
+
+
+def _reference_url(user_id: str, mid: str, asset: dict) -> str:
+    cdn_url = asset.get("bunny_cdn_url", "")
+    if cdn_url and asset.get("bunny_sync_status") == "succeeded":
+        if urlparse(cdn_url).scheme == "https":
+            return cdn_url
+    public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    parsed = urlparse(public_base)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(400, "样本需可公网访问：请配置 HTTPS PUBLIC_BASE_URL 或先同步至 Bunny CDN")
+    token = jwt.encode({
+        "purpose": "voice-reference", "user_id": user_id, "mid": mid,
+        "asset_id": asset["asset_id"], "exp": int(time.time()) + 900,
+    }, security.JWT_SECRET, algorithm=security.JWT_ALG)
+    return f"{public_base}/api/memorials/{mid}/voice/reference/{asset['asset_id']}?sig={token}"
+
+
+@router.get("/{mid}/voice/reference/{aid}")
+def voice_reference(mid: str, aid: str, sig: str):
+    try:
+        claims = jwt.decode(sig, security.JWT_SECRET, algorithms=[security.JWT_ALG],
+                            options={"require": ["exp", "purpose", "user_id", "mid", "asset_id"]})
+        if (claims["purpose"] != "voice-reference" or claims["mid"] != mid
+                or claims["asset_id"] != aid):
+            raise ValueError("Reference scope mismatch")
+    except (jwt.PyJWTError, ValueError):
+        raise HTTPException(403, "样本签名无效或已过期")
+    if not storage.get_memorial(claims["user_id"], mid):
+        raise HTTPException(404, "纪念对象不存在")
+    asset = next((item for item in _list_audio_assets(claims["user_id"], mid)
+                  if item["asset_id"] == aid), None)
+    if not asset:
+        raise HTTPException(404, "声音样本不存在")
+    path = storage.memorial_dir(claims["user_id"], mid) / "assets" / asset.get("stored_name", "")
+    if not path.is_file():
+        raise HTTPException(404, "声音样本不存在")
+    return FileResponse(path, media_type=asset.get("mime") or "audio/mpeg",
+                        headers={"Cache-Control": "private, no-store"})
 
 @router.post("/{mid}/voice/clone")
 def clone_voice(mid: str, req: CloneReq, user = Depends(security.get_current_user)):
-    """触发声音克隆。
-    优先走 Qwen-TTS 路径：把音频 base64 直传给 DashScope（不需要公网 URL）。
-    如失败则回落 CosyVoice（需 PUBLIC_BASE_URL）；再失败走 mock。
-    """
+    """注册 QwenCloud Plus 音色并等待就绪，不回退为其他音色。"""
     if not storage.get_memorial(user["user_id"], mid):
         raise HTTPException(404, "纪念对象不存在")
+    if not req.consent_confirmed:
+        raise HTTPException(400, "请先确认已获得声音所有者的克隆授权")
+    if len(req.sample_ids) != 1:
+        raise HTTPException(400, "请仅选择一个声音样本")
+    if req.language and req.language not in qwen_voice.LANGUAGES:
+        raise HTTPException(400, "不支持的声音语言")
     audios = _list_audio_assets(user["user_id"], mid)
-    valid_ids = {a["asset_id"] for a in audios}
-    samples = [s for s in req.sample_ids if s in valid_ids]
-    if not samples:
-        raise HTTPException(400, "请至少选择一个已上传的音频样本")
-
-    cfg = _get_voice_cfg(user["user_id"], mid)
-    cfg["samples"] = samples
-    cfg["status"] = "cloning"
-    cfg["error"] = ""
-    _save_voice_cfg(user["user_id"], mid, cfg)
-
-    api_key = os.getenv("DASHSCOPE_API_KEY", "")
-    sample_asset = next(a for a in audios if a["asset_id"] == samples[0])
+    sample_asset = next((asset for asset in audios if asset["asset_id"] == req.sample_ids[0]), None)
+    if not sample_asset:
+        raise HTTPException(400, "请选择已上传的音频样本")
     sample_path = storage.memorial_dir(user["user_id"], mid) / "assets" / sample_asset.get("stored_name", "")
+    if not sample_path.is_file():
+        raise HTTPException(400, "声音样本文件不存在")
+    if not 0 < sample_path.stat().st_size <= 10 * 1024 * 1024:
+        raise HTTPException(400, "声音样本不能为空，且不能超过 10 MiB")
+    mime = (sample_asset.get("mime") or "").split(";", 1)[0].strip().lower()
+    if mime not in {"audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "audio/mpeg",
+                    "audio/mp3", "audio/mp4", "audio/m4a", "audio/x-m4a"}:
+        raise HTTPException(400, "克隆仅支持 WAV、MP3、M4A/MP4 音频；请先转换 WebM/Ogg/FLAC")
+    reference_url = _reference_url(user["user_id"], mid, sample_asset)
+    cfg = _get_voice_cfg(user["user_id"], mid)
 
-    voice_id = ""
-    provider = ""
-    target_model = ""
-    err = ""
-
-    if not api_key:
-        err = "DASHSCOPE_API_KEY 未配置"
-    elif not sample_path.exists():
-        err = f"样本文件不存在：{sample_path.name}"
-    else:
-        # ─── 路径 A：Qwen-TTS（base64 直传，不需要公网 URL） ───
+    def persist():
         try:
-            import base64, requests
-            mime = sample_asset.get("mime", "audio/mpeg") or "audio/mpeg"
-            b64 = base64.b64encode(sample_path.read_bytes()).decode()
-            data_uri = f"data:{mime};base64,{b64}"
-            target_model = "qwen3-tts-vc-2026-01-22"
-            url = f"{_http_base()}/services/audio/tts/customization"
-            payload = {
-                "model": "qwen-voice-enrollment",
-                "input": {
-                    "action": "create",
-                    "target_model": target_model,
-                    "preferred_name": f"nian{mid[:6]}",
-                    "audio": {"data": data_uri},
-                },
-            }
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            resp = requests.post(url, json=payload, headers=headers, timeout=60)
-            if resp.status_code != 200:
-                raise RuntimeError(f"Qwen-TTS HTTP {resp.status_code}: {resp.text[:300]}")
-            data = resp.json()
-            voice_id = (data.get("output") or {}).get("voice") or ""
-            if not voice_id:
-                raise RuntimeError(f"Qwen-TTS 返回无 voice: {str(data)[:300]}")
-            provider = "qwen_tts"
-            print(f"[voice.clone] qwen_tts OK voice_id={voice_id}")
-        except Exception as e_qwen:
-            print(f"[voice.clone] qwen_tts failed: {e_qwen}")
-            # ─── 路径 B：CosyVoice（公网 URL）兜底 ───
-            try:
-                import dashscope  # type: ignore
-                from dashscope.audio.tts_v2 import VoiceEnrollmentService  # type: ignore
-                _apply_region_to_sdk()
-                dashscope.api_key = api_key
-                public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-                if not public_base:
-                    raise RuntimeError(f"CosyVoice 需要 PUBLIC_BASE_URL；Qwen-TTS 失败原因：{e_qwen}")
-                from .uploads import make_asset_sig
-                sig = make_asset_sig(mid, sample_asset["asset_id"])
-                sample_url = f"{public_base}/api/memorials/{mid}/assets/{sample_asset['asset_id']}/raw?sig={sig}"
-                svc = VoiceEnrollmentService()
-                target_model = "cosyvoice-v1"
-                voice_id = svc.create_voice(target_model=target_model, prefix=f"nian{mid[:6]}", url=sample_url)
-                provider = "dashscope"
-                print(f"[voice.clone] cosyvoice OK voice_id={voice_id}")
-            except Exception as e_cosy:
-                err = f"Qwen-TTS 失败:{e_qwen} | CosyVoice 失败:{e_cosy}"
-                print(f"[voice.clone] both failed: {err}")
+            _save_voice_cfg(user["user_id"], mid, cfg)
+        except OSError:
+            raise HTTPException(500, "VOICE_PERSISTENCE_FAILED：本地保存失败，请保留音色 ID="
+                                f"{cfg.get('voice_id', '')}，模型={cfg.get('target_model', '')}，勿重复克隆")
 
-    if not voice_id:
-        # mock 兜底，不让前端流程卡死
-        voice_id = f"mock_vc_{mid[:6]}_{int(time.time())}"
-        provider = "mock"
-
-    cfg["voice_id"] = voice_id
-    cfg["provider"] = provider
-    cfg["target_model"] = target_model
-    cfg["status"] = "ready" if provider in ("qwen_tts", "dashscope") else "mock"
-    cfg["last_clone_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    cfg["error"] = err
-    cfg["history"] = (cfg.get("history") or [])[-9:] + [{
-        "voice_id": voice_id,
-        "created_at": cfg["last_clone_at"],
-        "sample_count": len(samples),
-        "note": req.note,
-        "provider": provider,
-        "target_model": target_model,
-    }]
-    _save_voice_cfg(user["user_id"], mid, cfg)
+    try:
+        qwen_voice.api_key()
+        qwen_voice.http_base()
+        voice_id, target_model = qwen_voice.create_voice(reference_url, req.language)
+        cfg.update({
+            "voice_id": voice_id, "provider": "qwen_tts", "target_model": target_model,
+            "samples": req.sample_ids, "language": req.language, "status": "cloning", "error": "",
+            "consent_confirmed_at": storage.now_iso(), "last_clone_at": storage.now_iso(),
+            "provider_account": qwen_voice.account_scope(),
+        })
+        cfg["history"] = (cfg.get("history") or [])[-9:] + [{
+            "voice_id": voice_id, "created_at": cfg["last_clone_at"], "sample_count": 1,
+            "note": req.note, "provider": "qwen_tts", "target_model": target_model,
+        }]
+        persist()
+        if target_model != qwen_voice.TARGET_MODEL:
+            raise qwen_voice.VoiceError("注册返回的音色模型与 Plus 不一致，请检查 QwenCloud 配置")
+        qwen_voice.wait_until_ready(voice_id)
+    except qwen_voice.VoiceError as exc:
+        cfg.update({"status": "failed", "error": str(exc)})
+        persist()
+        raise HTTPException(502, str(exc))
+    cfg.update({"status": "ready", "error": ""})
+    persist()
     return {"ok": True, "voice": cfg}
 
 
 class PreviewReq(BaseModel):
     text: str
     use_clone: bool = True    # True 用克隆音色；False 用预制音色
+    instruction: str = ""
+    language: str = ""
 
 @router.post("/{mid}/voice/preview")
 def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)):
@@ -245,47 +244,46 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
     if not storage.get_memorial(user["user_id"], mid):
         raise HTTPException(404, "纪念对象不存在")
     text = (req.text or "").strip()
-    if not text:
-        raise HTTPException(400, "请输入试听文本")
-    if len(text) > 300:
-        text = text[:300]
+    try:
+        text = qwen_voice.validate_text(text, req.instruction, req.language)
+    except qwen_voice.VoiceError as exc:
+        raise HTTPException(400, str(exc))
 
     cfg = _get_voice_cfg(user["user_id"], mid)
     params = cfg["params"]
+    if req.use_clone:
+        if not cfg.get("voice_id") or cfg.get("provider") != "qwen_tts":
+            raise HTTPException(409, "尚无可用的 QwenCloud 克隆音色，请先克隆，不会自动改用预制音色")
+        if cfg.get("target_model") != qwen_voice.TARGET_MODEL:
+            raise HTTPException(409, "旧音色与 QwenCloud Plus 模型不兼容，请使用同一账户重新克隆")
+        try:
+            if cfg.get("provider_account") and cfg["provider_account"] != qwen_voice.account_scope():
+                raise HTTPException(409, "QwenCloud 账户或端点已更改，请切回原配置或重新克隆")
+            if cfg.get("status") != "ready":
+                qwen_voice.wait_until_ready(cfg["voice_id"])
+                cfg.update({"status": "ready", "error": ""})
+                _save_voice_cfg(user["user_id"], mid, cfg)
+            instruction = req.instruction or {
+                "warm": "Speak warmly and naturally.", "serious": "Speak in a serious, steady tone.",
+                "gentle": "Speak gently and softly.",
+            }.get(params.get("emotion"), "")
+            audio_bytes = asyncio.run(qwen_voice.synthesize(
+                text, cfg["voice_id"], cfg["target_model"], instruction=instruction,
+                language=req.language or cfg.get("language", ""),
+            ))
+            return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+        except qwen_voice.VoiceError as exc:
+            raise HTTPException(502, str(exc))
     api_key = os.getenv("DASHSCOPE_API_KEY", "")
     if not api_key:
         raise HTTPException(500, "DASHSCOPE_API_KEY 未配置，无法合成")
 
-    provider = cfg.get("provider", "")
-    voice_id = cfg.get("voice_id", "")
-    target_model = cfg.get("target_model", "")
-    use_clone = req.use_clone and voice_id and provider in ("qwen_tts", "dashscope")
-
     try:
-        # ─── Qwen-TTS 合成 ───
-        if use_clone and provider == "qwen_tts":
-            import dashscope, base64  # type: ignore
-            _apply_region_to_sdk()
-            dashscope.api_key = api_key
-            model = target_model or "qwen3-tts-vc-2026-01-22"
-            resp = dashscope.MultiModalConversation.call(
-                model=model, api_key=api_key, text=text, voice=voice_id, stream=False
-            )
-            # 解析 audio
-            audio_bytes = _extract_audio_from_qwen_resp(resp)
-            if not audio_bytes:
-                print(f"[voice.preview] qwen resp dump: {str(resp)[:500]}")
-                raise RuntimeError("Qwen-TTS 返回无音频")
-            return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
-
-        # ─── CosyVoice 合成（克隆或预制） ───
         import dashscope  # type: ignore
         from dashscope.audio.tts_v2 import SpeechSynthesizer  # type: ignore
         _apply_region_to_sdk()
         dashscope.api_key = api_key
-        cosy_voice = voice_id if (use_clone and provider == "dashscope") else params.get("base_voice", "longxiaochun")
-        cosy_model = target_model if (use_clone and provider == "dashscope") else "cosyvoice-v1"
-        synth = SpeechSynthesizer(model=cosy_model, voice=cosy_voice)
+        synth = SpeechSynthesizer(model="cosyvoice-v1", voice=params.get("base_voice", "longxiaochun"))
         result = synth.call(text)
         audio_bytes = None
         if isinstance(result, (bytes, bytearray)):
@@ -312,55 +310,6 @@ def preview(mid: str, req: PreviewReq, user = Depends(security.get_current_user)
         raise HTTPException(500, f"合成失败：{e}")
 
 
-def _extract_audio_from_qwen_resp(resp) -> bytes | None:
-    """从 Qwen-TTS MultiModalConversation 响应里抽取音频字节。
-    可能返回：
-      - resp.output.audio.data (base64)
-      - resp.output.audio.url  (公网 URL，需要再拉一次)
-      - resp.output.choices[0].message.content -> [{audio: {data|url}}]
-    """
-    import base64, requests
-    try:
-        out = getattr(resp, "output", None) or (resp.get("output") if isinstance(resp, dict) else None)
-        if not out:
-            return None
-        # 路径 1: output.audio
-        audio = out.get("audio") if isinstance(out, dict) else None
-        if isinstance(audio, dict):
-            data = audio.get("data")
-            url = audio.get("url")
-            if data:
-                # data 可能是 base64 或 data URI
-                if isinstance(data, str) and data.startswith("data:"):
-                    data = data.split(",", 1)[1]
-                return base64.b64decode(data)
-            if url:
-                r = requests.get(url, timeout=30)
-                if r.status_code == 200:
-                    return r.content
-        # 路径 2: choices -> message -> content[].audio
-        choices = out.get("choices") if isinstance(out, dict) else None
-        if choices and isinstance(choices, list):
-            msg = (choices[0] or {}).get("message") or {}
-            content = msg.get("content") or []
-            for c in content if isinstance(content, list) else []:
-                a = c.get("audio") if isinstance(c, dict) else None
-                if isinstance(a, dict):
-                    if a.get("data"):
-                        d = a["data"]
-                        if isinstance(d, str) and d.startswith("data:"):
-                            d = d.split(",", 1)[1]
-                        return base64.b64decode(d)
-                    if a.get("url"):
-                        r = requests.get(a["url"], timeout=30)
-                        if r.status_code == 200:
-                            return r.content
-    except Exception as e:
-        print(f"[voice._extract_audio_from_qwen_resp] {e}")
-    return None
-
-
-
 @router.delete("/{mid}/voice")
 def reset_voice(mid: str, user = Depends(security.get_current_user)):
     """重置：清空当前克隆，回到 idle"""
@@ -376,7 +325,7 @@ def reset_voice(mid: str, user = Depends(security.get_current_user)):
 
 @router.get("/{mid}/voice/diagnose")
 def diagnose_voice(mid: str, user = Depends(security.get_current_user)):
-    """诊断声音克隆链路：把每个环节单独探一遍，告诉你卡在哪。"""
+    """检查本地配置与样本访问，不创建音色或发起付费合成。"""
     if not storage.get_memorial(user["user_id"], mid):
         raise HTTPException(404, "纪念对象不存在")
     result = {"checks": [], "ready_for_clone": False}
@@ -384,49 +333,34 @@ def diagnose_voice(mid: str, user = Depends(security.get_current_user)):
     def add(name, ok, detail=""):
         result["checks"].append({"name": name, "ok": bool(ok), "detail": detail})
 
-    # 1) dashscope SDK
     try:
-        import dashscope  # type: ignore
-        from dashscope.audio.tts_v2 import VoiceEnrollmentService, SpeechSynthesizer  # type: ignore
-        add("dashscope SDK 已安装", True, getattr(dashscope, "__version__", "unknown"))
-        sdk_ok = True
-    except ImportError as e:
-        add("dashscope SDK 已安装", False, f"未安装：{e}")
-        sdk_ok = False
-
-    # 2) DASHSCOPE_API_KEY
-    api_key = os.getenv("DASHSCOPE_API_KEY", "")
-    add("DASHSCOPE_API_KEY 已配置", bool(api_key), f"长度={len(api_key)}" if api_key else "未设置")
-
-    # 3) PUBLIC_BASE_URL
-    public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
-    add("PUBLIC_BASE_URL 已配置", bool(public_base), public_base or "未设置")
-
-    # 4) 有音频样本
+        qwen_voice.api_key()
+        add("QwenCloud API Key 已配置", True, "QWEN_API_KEY 或 DASHSCOPE_API_KEY；需与音色同账户")
+    except qwen_voice.VoiceError as exc:
+        add("QwenCloud API Key 已配置", False, str(exc))
+    try:
+        add("QwenCloud HTTP / WebSocket 端点", True,
+            f"{qwen_voice.http_base()} / {qwen_voice.websocket_url()}")
+    except qwen_voice.VoiceError as exc:
+        add("QwenCloud HTTP / WebSocket 端点", False, str(exc))
+    try:
+        from websockets.legacy.client import connect
+        add("WebSocket 依赖已安装", bool(connect))
+    except ImportError:
+        add("WebSocket 依赖已安装", False, "请安装 backend/requirements.txt")
     audios = _list_audio_assets(user["user_id"], mid)
     add("有可用音频样本", len(audios) > 0, f"共 {len(audios)} 个")
-
-    # 5) 样本公网可拉（拿第一个试探）
-    sample_url = ""
-    fetch_ok = False
-    fetch_detail = "跳过：缺前置条件"
-    if audios and public_base:
-        a0 = audios[0]
+    if audios:
         try:
-            from .uploads import make_asset_sig
-            sig = make_asset_sig(mid, a0["asset_id"])
-            sample_url = f"{public_base}/api/memorials/{mid}/assets/{a0['asset_id']}/raw?sig={sig}"
-            import urllib.request
-            req = urllib.request.Request(sample_url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                fetch_ok = (200 <= resp.status < 300)
-                fetch_detail = f"HTTP {resp.status} · Content-Type={resp.headers.get('Content-Type','')} · Content-Length={resp.headers.get('Content-Length','')}"
-        except Exception as e:
-            fetch_detail = f"无法拉取：{type(e).__name__}: {e}"
-    add(f"样本可被 DashScope 拉取（HEAD {sample_url[:80]}...）" if sample_url else "样本可被 DashScope 拉取", fetch_ok, fetch_detail)
-
-    result["ready_for_clone"] = sdk_ok and bool(api_key) and bool(public_base) and len(audios) > 0 and fetch_ok
-    result["sample_url_example"] = sample_url
+            import requests
+            sample_url = _reference_url(user["user_id"], mid, audios[0])
+            with requests.get(sample_url, headers={"Range": "bytes=0-0"}, stream=True, timeout=8) as response:
+                add("样本 HTTPS 可访问", response.status_code in (200, 206), f"HTTP {response.status_code}")
+        except HTTPException as exc:
+            add("样本 HTTPS 可访问", False, str(exc.detail))
+        except Exception:
+            add("样本 HTTPS 可访问", False, "无法拉取样本，请检查 CDN 或公网 HTTPS 域名")
+    result["ready_for_clone"] = all(check["ok"] for check in result["checks"])
     return result
 
 
