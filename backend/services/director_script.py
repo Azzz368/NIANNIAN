@@ -8,7 +8,6 @@ No video generation or FFmpeg execution happens here.
 from __future__ import annotations
 
 import json
-import os
 import re
 import uuid
 from pathlib import Path
@@ -17,7 +16,7 @@ from typing import Any, Dict, Optional
 from openai import OpenAI
 
 from core import oss_sync, storage
-from core.dashscope_config import compatible_base_url
+from core import studio_ai
 from services import material_context, plan_readiness
 
 
@@ -34,10 +33,7 @@ def evaluate_readiness(user_id: str, memorial_id: str) -> Dict[str, Any]:
 
 
 def _client() -> OpenAI:
-    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-    if not api_key:
-        raise DirectorScriptError("服务端未配置 DASHSCOPE_API_KEY，暂时无法生成导演脚本")
-    return OpenAI(api_key=api_key, base_url=compatible_base_url())
+    return studio_ai.client()
 
 
 def _source_bundle(user_id: str, memorial_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -161,7 +157,7 @@ def generate_director_script(
     }
     bundle = _source_bundle(user_id, memorial_id, settings)
     response = _client().chat.completions.create(
-        model=os.getenv("DIRECTOR_SCRIPT_MODEL", "qwen-plus"),
+        model=studio_ai.model(),
         messages=[{"role": "user", "content": _prompt(bundle, project_id)}],
         temperature=0.35,
     )

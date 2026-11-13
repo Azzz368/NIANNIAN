@@ -94,6 +94,29 @@ pip install -r requirements.txt
 
 ### 2. 配置环境变量
 
+当前 Web 影像制作台的导演脚本生成与分镜编译使用 APIMart 的 `gpt-6-luna`。
+在本机 `.env.local` 或部署环境添加以下配置，填入自己的密钥后重启后端：
+
+```dotenv
+APIMART_API_KEY=
+APIMART_BASE_URL=https://api.apimart.ai/v1
+APIMART_STUDIO_MODEL=gpt-6-luna
+```
+
+实际请求为 `POST https://api.apimart.ai/v1/chat/completions`，使用 Bearer 认证。
+未配置 `APIMART_API_KEY` 会明确报错，不会自动回退到其他平台。
+模型 ID 按配置原样发送，需由 APIMart 账户提供对应模型的访问权限。
+本配置不改变普通聊天、图片生成、视频动态化或语音接口。
+
+Gemini Flash 链路也已切换为 APIMart `gemini-3.5-flash-lite`，共用
+`APIMART_API_KEY` 和 `APIMART_BASE_URL`，不使用 `APIMART_STUDIO_MODEL`。
+覆盖原 Gemini Flash 的传记、日记、聊天风格分析、旧管线文本/分镜、图片理解、
+搜索知识库降级及日记音频 LLM 模式。为兼容旧部署，`AI302_TEXT_MODEL`、
+`AI302_TEXT_FALLBACK`、`AI302_STORYBOARD_MODEL`、`AI302_VISION_MODEL` 与日记音频
+LLM 选中的 `gemini-2.5-flash` 会自动映射为新模型，无需修改旧的本地配置。
+其他模型仍使用原平台，包括 302.ai 的文本备用、豆包、Whisper 和搜索模型；
+这次不改变 ASR 模式选择。图片/音频多模态能力需以 APIMart 对该模型的支持为准。
+
 在项目根目录创建 `.env` 文件：
 
 ```env

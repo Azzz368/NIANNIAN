@@ -25,7 +25,7 @@ import requests
 from openai import OpenAI
 
 from core import oss_sync, storage
-from core.dashscope_config import compatible_base_url
+from core import studio_ai
 from llm_client import generate_video_tokenstar_seedance_asset
 from skill_loader import load_skill
 from services import bunny_storage, director_script, video_renderer
@@ -222,10 +222,7 @@ def invalidate_after_script_edit(user_id: str, memorial_id: str, project_id: str
 
 
 def _client() -> OpenAI:
-    key = os.getenv("DASHSCOPE_API_KEY", "").strip()
-    if not key:
-        raise VideoProjectError("服务端未配置 DASHSCOPE_API_KEY，无法解析导演脚本")
-    return OpenAI(api_key=key, base_url=compatible_base_url())
+    return studio_ai.client()
 
 
 def _compiler_prompt(project_id: str, script: str, source_bundle: Dict[str, Any]) -> str:
@@ -493,7 +490,7 @@ def compile_project(user_id: str, memorial_id: str, project_id: str, *, force: b
         bundle = director_script._source_bundle(user_id, memorial_id, {"workflow": "video_project_compiler"})
         bundle["studio_storyboard"] = state.get("studio_scene_context", [])
         response = _client().chat.completions.create(
-            model=os.getenv("VIDEO_PROJECT_PLANNER_MODEL", "qwen-plus"),
+            model=studio_ai.model(),
             messages=[
                 {"role": "system", "content": _motion_prompt_skill()},
                 {"role": "user", "content": _compiler_prompt(project_id, script, bundle)},

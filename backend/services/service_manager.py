@@ -12,6 +12,7 @@ from . import bunny_storage, gate_manager, material_context, session_store  # no
 # ── 从项目根模块导入业务函数（共享同一份代码）─────────────────────────────
 from llm_client import (  # type: ignore
     PRIMARY_CLIENT,
+    model_client,
     TEXT_MODEL,
     TEXT_FALLBACK_MODEL,
     DIALOGUE_MODEL,
@@ -403,7 +404,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     )
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
-            resp = PRIMARY_CLIENT.chat.completions.create(
+            resp = model_client(m).chat.completions.create(
                 model=m,
                 messages=[
                     {"role": "system", "content": kb_system},

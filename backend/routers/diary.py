@@ -61,11 +61,13 @@ def _diary_302_asr_model() -> str:
 
 
 def _diary_llm_audio_model() -> str:
-    return (
+    from llm_client import _migrate_flash_model
+
+    return _migrate_flash_model(
         os.getenv("DIARY_LLM_AUDIO_MODEL", "").strip()
         or os.getenv("DIARY_ASR_MODEL", "").strip()
         or os.getenv("AI302_TEXT_MODEL", "").strip()
-        or "gemini-2.5-flash"
+        or "gemini-3.5-flash-lite"
     )
 
 
@@ -188,12 +190,16 @@ def _audio_format(filename: str, content_type: str) -> str:
 
 
 def _transcribe_with_audio_llm(raw: bytes, filename: str, content_type: str, errors: List[str]) -> str:
-    api_key = os.getenv("AI302_API_KEY", "").strip()
-    if not api_key:
-        errors.append("llm-audio: AI302_API_KEY is not configured")
-        return ""
+    from llm_client import GEMINI_FLASH_MODEL, model_client
 
     model = _diary_llm_audio_model()
+    migrated = model == GEMINI_FLASH_MODEL
+    key_name = "APIMART_API_KEY" if migrated else "AI302_API_KEY"
+    api_key = os.getenv(key_name, "").strip()
+    if not api_key:
+        errors.append(f"llm-audio: {key_name} is not configured")
+        return ""
+
     base_url = os.getenv("AI302_BASE_URL", "https://api.302.ai/v1").strip().rstrip("/")
     audio_data = base64.b64encode(raw).decode("ascii")
     audio_format = _audio_format(filename, content_type)
@@ -204,7 +210,7 @@ def _transcribe_with_audio_llm(raw: bytes, filename: str, content_type: str, err
     else:
         instruction = f"请听这段音频，并转写为{target_lang}原文。只输出转写文字，不要解释，不要总结，不要润色。"
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = model_client(model) if migrated else OpenAI(api_key=api_key, base_url=base_url)
     try:
         response = client.chat.completions.create(
             model=model,

@@ -8,7 +8,7 @@
   语音转写（transcribe_audio）          : whisper-1
 配置项（填写 .env 文件）：
   AI302_API_KEY          = sk-xxxxxxxxxxxx       ← 必填，图文/视频 302.ai 备用均使用
-  AI302_TEXT_MODEL       = gemini-2.5-flash
+    AI302_TEXT_MODEL       = gemini-3.5-flash-lite (APIMart)
   AI302_TEXT_FALLBACK    = claude-sonnet-4-6
   AI302_VISION_MODEL     = gemini-2.0-pro-image-preview
   AI302_IMAGE_GEN_MODEL  = gemini-2.0-pro-image-preview
@@ -42,18 +42,25 @@ _302_BASE_URL = "https://api.302.ai/v1"
 _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 
 # ── 各任务专属模型 ─────────────────────────────────────────────────────────────
-# 文本分析：主力 Gemini Flash，自动回退到 Claude Sonnet
-TEXT_MODEL          = os.getenv("AI302_TEXT_MODEL",      "gemini-2.5-flash")
-TEXT_FALLBACK_MODEL = os.getenv("AI302_TEXT_FALLBACK",   "claude-sonnet-4-6")
+# 文本分析主力走 APIMart，其他备用模型保留原平台。
+GEMINI_FLASH_MODEL = "gemini-3.5-flash-lite"
 
-# 分镜制作（MV04）专属：gemini-2.5-flash（gpt-4o/gpt-5.4 已被禁用）
-STORYBOARD_MODEL    = os.getenv("AI302_STORYBOARD_MODEL", "gemini-2.5-flash")
+
+def _migrate_flash_model(value: str) -> str:
+    return GEMINI_FLASH_MODEL if value.strip() == "gemini-2.5-flash" else value.strip()
+
+
+TEXT_MODEL          = _migrate_flash_model(os.getenv("AI302_TEXT_MODEL", GEMINI_FLASH_MODEL))
+TEXT_FALLBACK_MODEL = _migrate_flash_model(os.getenv("AI302_TEXT_FALLBACK", "claude-sonnet-4-6"))
+
+# 分镜制作（MV04）专属模型。
+STORYBOARD_MODEL    = _migrate_flash_model(os.getenv("AI302_STORYBOARD_MODEL", GEMINI_FLASH_MODEL))
 
 # 数字人对话 & 人设融合（速度优先）
 DIALOGUE_MODEL      = os.getenv("AI302_DIALOGUE_MODEL",  "doubao-Seed-2-0-lite")
 
 # 图像 / 视频 / 音频（固定模型，不回退）
-VISION_MODEL        = os.getenv("AI302_VISION_MODEL",       "gemini-2.5-flash")
+VISION_MODEL        = _migrate_flash_model(os.getenv("AI302_VISION_MODEL", GEMINI_FLASH_MODEL))
 IMAGE_GEN_MODEL     = os.getenv("AI302_IMAGE_GEN_MODEL",    "google/nano-banana/text-to-image")
 IMAGE_GEN_FALLBACK  = os.getenv("AI302_IMAGE_GEN_FALLBACK", "gpt-4o-image-generation")
 IMAGE_REF_MODEL     = os.getenv("AI302_IMAGE_REF_MODEL",    "gemini-3-pro-image-preview")
@@ -99,8 +106,19 @@ def _build_client(base_url: Optional[str], api_key: Optional[str]) -> OpenAI:
     return OpenAI(api_key=api_key or "none")
 
 
-# 主客户端 — 302.ai（文本 + 图像 + 视频 + 音频 全走这里）
+# 未迁移模型的 302.ai 客户端。
 PRIMARY_CLIENT: OpenAI = _build_client(_302_BASE_URL, _302_API_KEY)
+
+
+def model_client(model_name: str) -> OpenAI:
+    if model_name == GEMINI_FLASH_MODEL:
+        key = os.getenv("APIMART_API_KEY", "").strip()
+        if not key:
+            raise ValueError("请先配置 APIMART_API_KEY，再使用 Gemini Flash")
+        base_url = os.getenv("APIMART_BASE_URL", "").strip() or "https://api.apimart.ai/v1"
+        return _build_client(base_url.rstrip("/"), key)
+    return PRIMARY_CLIENT
+
 
 # 本地备用客户端（仅当环境变量配置时启用）
 _LOCAL_CLIENT: Optional[OpenAI] = (
@@ -115,15 +133,10 @@ FALLBACK_MODELS: list = []
 
 
 def _text_model_queue() -> List[Tuple[str, OpenAI]]:
-    """
-    文本推理优先级队列：
-      1. gemini-2.5-flash  （主力）
-      2. gemini-2.5-flash  （自动回退，保持同一模型重试）
-      3. 本地 LLM               （可选）
-    """
+    """文本主模型、备用模型、可选本地模型，各自使用匹配的平台。"""
     q: List[Tuple[str, OpenAI]] = [
-        (TEXT_MODEL, PRIMARY_CLIENT),
-        (TEXT_FALLBACK_MODEL, PRIMARY_CLIENT),
+        (TEXT_MODEL, model_client(TEXT_MODEL)),
+        (TEXT_FALLBACK_MODEL, model_client(TEXT_FALLBACK_MODEL)),
     ]
     if _LOCAL_CLIENT and _LOCAL_MODEL:
         q.append((_LOCAL_MODEL, _LOCAL_CLIENT))
@@ -131,14 +144,10 @@ def _text_model_queue() -> List[Tuple[str, OpenAI]]:
 
 
 def _storyboard_model_queue() -> List[Tuple[str, OpenAI]]:
-    """
-    分镜制作（MV04）专属优先级队列：
-      1. gemini-2.5-flash  （主力）
-      2. gemini-2.5-flash  （备用重试）
-    """
+    """分镜制作（MV04）的主模型和备用模型队列。"""
     return [
-        (STORYBOARD_MODEL,    PRIMARY_CLIENT),
-        (TEXT_FALLBACK_MODEL, PRIMARY_CLIENT),
+        (STORYBOARD_MODEL, model_client(STORYBOARD_MODEL)),
+        (TEXT_FALLBACK_MODEL, model_client(TEXT_FALLBACK_MODEL)),
     ]
 
 
@@ -240,7 +249,7 @@ def call_memorial_chat(
     if model:
         for attempt in range(1, 4):
             try:
-                response = PRIMARY_CLIENT.chat.completions.create(
+                response = model_client(model).chat.completions.create(
                     model=model,
                     messages=all_msgs,
                     temperature=0.65,
@@ -323,7 +332,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
 
 
 def describe_image(image_bytes: bytes, filename: str) -> str:
-    """图像内容理解 — 使用 gemini-2.0-pro-image-preview（通过 302.ai）。"""
+    """图像内容理解，Gemini Flash 使用 APIMart。"""
     last_error: Optional[str] = None
     encoded   = base64.b64encode(image_bytes).decode("utf-8")
     ext       = filename.rsplit(".", 1)[-1].lower()
@@ -334,7 +343,7 @@ def describe_image(image_bytes: bytes, filename: str) -> str:
     )
     for attempt in range(1, 3):
         try:
-            response = PRIMARY_CLIENT.chat.completions.create(
+            response = model_client(VISION_MODEL).chat.completions.create(
                 model=VISION_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
