@@ -44,14 +44,20 @@ _302_API_KEY  = os.getenv("AI302_API_KEY", "sk-填写您的302.ai密钥")
 # ── 各任务专属模型 ─────────────────────────────────────────────────────────────
 # 文本分析主力走 APIMart，其他备用模型保留原平台。
 GEMINI_FLASH_MODEL = "gemini-3.5-flash-lite"
+GEMINI_FLASH_FALLBACK_MODEL = "gemini-3.7-flash"
 
 
 def _migrate_flash_model(value: str) -> str:
     return GEMINI_FLASH_MODEL if value.strip() == "gemini-2.5-flash" else value.strip()
 
 
+def _fallback_model(value: str) -> str:
+    value = value.strip()
+    return GEMINI_FLASH_FALLBACK_MODEL if value in ("", "gpt-5.4") else _migrate_flash_model(value)
+
+
 TEXT_MODEL          = _migrate_flash_model(os.getenv("AI302_TEXT_MODEL", GEMINI_FLASH_MODEL))
-TEXT_FALLBACK_MODEL = _migrate_flash_model(os.getenv("AI302_TEXT_FALLBACK", "claude-sonnet-4-6"))
+TEXT_FALLBACK_MODEL = _fallback_model(os.getenv("AI302_TEXT_FALLBACK", GEMINI_FLASH_FALLBACK_MODEL))
 
 # 分镜制作（MV04）专属模型。
 STORYBOARD_MODEL    = _migrate_flash_model(os.getenv("AI302_STORYBOARD_MODEL", GEMINI_FLASH_MODEL))
@@ -111,7 +117,7 @@ PRIMARY_CLIENT: OpenAI = _build_client(_302_BASE_URL, _302_API_KEY)
 
 
 def model_client(model_name: str) -> OpenAI:
-    if model_name == GEMINI_FLASH_MODEL:
+    if model_name in (GEMINI_FLASH_MODEL, GEMINI_FLASH_FALLBACK_MODEL):
         key = os.getenv("APIMART_API_KEY", "").strip()
         if not key:
             raise ValueError("请先配置 APIMART_API_KEY，再使用 Gemini Flash")

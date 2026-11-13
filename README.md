@@ -114,7 +114,10 @@ Gemini Flash 链路也已切换为 APIMart `gemini-3.5-flash-lite`，共用
 搜索知识库降级及日记音频 LLM 模式。为兼容旧部署，`AI302_TEXT_MODEL`、
 `AI302_TEXT_FALLBACK`、`AI302_STORYBOARD_MODEL`、`AI302_VISION_MODEL` 与日记音频
 LLM 选中的 `gemini-2.5-flash` 会自动映射为新模型，无需修改旧的本地配置。
-其他模型仍使用原平台，包括 302.ai 的文本备用、豆包、Whisper 和搜索模型；
+文本和分镜备用模型改为 APIMart `gemini-3.7-flash`，共用上述密钥和接口。
+旧配置 `AI302_TEXT_FALLBACK=gpt-5.4` 自动映射到该备用模型；
+新配置建议直接填写 `AI302_TEXT_FALLBACK=gemini-3.7-flash`。
+其他模型仍使用原平台，包括 302.ai 的豆包、Whisper 和搜索模型；
 这次不改变 ASR 模式选择。图片/音频多模态能力需以 APIMart 对该模型的支持为准。
 
 在项目根目录创建 `.env` 文件：

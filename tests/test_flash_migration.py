@@ -16,6 +16,30 @@ import llm_client
 
 
 class FlashMigrationTests(unittest.TestCase):
+    def test_legacy_fallback_maps_to_apimart_model(self):
+        for value in ("gpt-5.4", "", "gemini-3.7-flash"):
+            self.assertEqual(llm_client._fallback_model(value), "gemini-3.7-flash")
+
+    def test_mv01_falls_back_to_gemini_on_apimart(self):
+        primary = Mock()
+        primary.chat.completions.create.side_effect = RuntimeError("primary unavailable")
+        fallback = Mock()
+        fallback.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok":true}'))])
+        with patch.dict(os.environ, {"APIMART_API_KEY": "test-key", "APIMART_BASE_URL": "https://api.apimart.ai/v1"}), \
+                patch.object(llm_client, "TEXT_MODEL", llm_client.GEMINI_FLASH_MODEL), \
+                patch.object(llm_client, "TEXT_FALLBACK_MODEL", llm_client.GEMINI_FLASH_FALLBACK_MODEL), \
+                patch.object(llm_client, "_build_client", side_effect=[primary, fallback]) as build, \
+                patch.object(llm_client.time, "sleep"):
+            self.assertEqual(llm_client.call_skill("MV01", "system", {}), {"ok": True})
+        self.assertEqual(primary.chat.completions.create.call_count, 3)
+        fallback.chat.completions.create.assert_called_once()
+        request = fallback.chat.completions.create.call_args.kwargs
+        self.assertEqual(request["model"], "gemini-3.7-flash")
+        self.assertNotIn("response_format", request)
+        for call in build.call_args_list:
+            self.assertEqual(call.args, ("https://api.apimart.ai/v1", "test-key"))
+
     def test_legacy_config_maps_to_new_model(self):
         self.assertEqual(llm_client._migrate_flash_model("gemini-2.5-flash"), "gemini-3.5-flash-lite")
         self.assertEqual(llm_client._migrate_flash_model("gpt-5.4"), "gpt-5.4")
