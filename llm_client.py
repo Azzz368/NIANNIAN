@@ -200,6 +200,32 @@ def _json_system_hint(system_prompt: str) -> str:
     )
 
 
+def _chat_response_text(response: Any) -> str:
+    if isinstance(response, str):
+        try:
+            response = json.loads(response)
+        except ValueError:
+            raise ValueError("上游返回非 JSON 文本，未收到标准聊天响应；请检查接口地址及网关状态") from None
+    if isinstance(response, dict):
+        if response.get("error"):
+            raise ValueError("上游返回错误对象，未收到标准聊天响应")
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise ValueError("上游 JSON 缺少有效 choices")
+        message = choices[0].get("message")
+        if not isinstance(message, dict):
+            raise ValueError("上游响应缺少有效 message")
+        content = message.get("content")
+    else:
+        choices = getattr(response, "choices", None)
+        if not choices:
+            raise ValueError("上游响应缺少有效 choices")
+        content = getattr(getattr(choices[0], "message", None), "content", None)
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("上游响应没有有效的文本内容")
+    return content
+
+
 def call_skill(
     skill_name: str,
     system_prompt: str,
@@ -226,7 +252,7 @@ def call_skill(
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
                 response = client.chat.completions.create(**kwargs)
-                raw = response.choices[0].message.content or "{}"
+                raw = _chat_response_text(response)
                 if not use_json_mode:
                     raw = _extract_json(raw)
                 return json.loads(raw)
@@ -250,6 +276,7 @@ def call_memorial_chat(
     """
     last_error: Optional[str] = None
     all_msgs = [{"role": "system", "content": system_prompt}] + messages
+    model_errors: List[str] = []
 
     # 指定模型时直接调用，不走队列
     if model:
@@ -261,7 +288,7 @@ def call_memorial_chat(
                     temperature=0.65,
                     max_tokens=6000,
                 )
-                return response.choices[0].message.content or ""
+                return _chat_response_text(response)
             except Exception as exc:
                 last_error = f"{model}: {exc}"
                 if attempt < 3:
@@ -277,12 +304,13 @@ def call_memorial_chat(
                     temperature=0.65,
                     max_tokens=6000,
                 )
-                return response.choices[0].message.content or ""
+                return _chat_response_text(response)
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt < 3:
                     time.sleep(2)
-    return f"（念念暂时无法回应，请稍后再试。错误：{last_error or '未知'}）"
+        model_errors.append(last_error or f"{model_name}: 未知错误")
+    return f"（念念暂时无法回应，请稍后再试。错误：{'；'.join(model_errors) or '未知'}）"
 
 
 def call_freeform(system_prompt: str, user_content: str) -> str:
@@ -299,7 +327,7 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
                     ],
                     temperature=0.4,
                 )
-                return response.choices[0].message.content or ""
+                return _chat_response_text(response)
             except Exception as exc:
                 last_error = f"{model_name}: {exc}"
                 if attempt < 3:
@@ -326,7 +354,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
                 response = client.chat.completions.create(**kwargs)
-                raw = response.choices[0].message.content or "{}"
+                raw = _chat_response_text(response)
                 if not use_json_mode:
                     raw = _extract_json(raw)
                 return json.loads(raw)
