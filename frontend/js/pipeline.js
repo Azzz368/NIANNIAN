@@ -5,6 +5,7 @@ const state = {
   sid: getSessionId(),
   mid: new URLSearchParams(location.search).get('mid') || (window.NianAuth && NianAuth.getActiveMemorialId()) || '',
   scenes: [],
+  running: false,
 };
 
 // ───── 工具 ─────
@@ -59,6 +60,11 @@ async function loadPreview() {
 
 // ───── 阶段 2：运行 MV01→MV02→MV03 ─────
 async function runPipeline() {
+  if (state.running) return;
+  state.running = true;
+  document.getElementById('pipelineChat').replaceChildren();
+  hide('phaseDone');
+  hide('phaseError');
   hide('phasePreview');
   show('phasePipeline');
 
@@ -82,7 +88,7 @@ async function runPipeline() {
     setPipePill('MV02', 'done');
     setPipePill('MV03', 'done');
 
-    // 渲染两条气泡
+    // 渲染最终方案总结
     (res.bubbles || []).forEach(b => appendAiBubble('pipelineChat', b.content));
 
     // 显示完成区
@@ -91,6 +97,8 @@ async function runPipeline() {
     setThink('pipelineThink', false);
     document.getElementById('errorOutput').textContent = e.message || String(e);
     show('phaseError');
+  } finally {
+    state.running = false;
   }
 }
 

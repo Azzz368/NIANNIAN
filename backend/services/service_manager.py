@@ -693,7 +693,7 @@ def _safe_mv_summary(sys_prompt: str, payload: Dict[str, Any], fallback: str) ->
 
 
 def run_pipeline_chain(sid: str) -> Dict[str, Any]:
-    """串行执行 MV01 → MV02 → MV03，并附带两段大白话总结气泡。
+    """串行执行 MV01 → MV02 → MV03，并返回一次最终方案总结。
     复刻 archive/streamlit/pages/pipeline.py 的 run_pipeline() 逻辑。"""
     s = session_store.require(sid)
     bubbles: List[Dict[str, str]] = []   # [{role:'ai', content}]
@@ -708,13 +708,6 @@ def run_pipeline_chain(sid: str) -> Dict[str, Any]:
             return {"ok": False, "bubbles": bubbles, "errors": errors,
                     "scenes": [], "mv03": {}}
         mv01_out = r["result"]
-
-    # 气泡①：MV01 摘要
-    bubbles.append({
-        "role": "ai",
-        "content": _safe_mv_summary(_MV01_SUMMARY_SYS, mv01_out,
-                                    "我们已经把您讲述的内容整理好了，影像将围绕这些珍贵的记忆展开。"),
-    })
 
     # ── MV02 静默运行 ────────────────────────────────────────
     if not s["mv_outputs"].get("MV02"):
@@ -732,6 +725,7 @@ def run_pipeline_chain(sid: str) -> Dict[str, Any]:
 
     # 气泡②：MV03 三要素总结（注入真实姓名防止 LLM 误用）
     summary_payload = dict(mv03_out) if isinstance(mv03_out, dict) else {"raw": mv03_out}
+    summary_payload["story_context"] = mv01_out
     summary_payload["_current_deceased_name"] = s["form_data"].get("deceased_name", "")
     bubbles.append({
         "role": "ai",
