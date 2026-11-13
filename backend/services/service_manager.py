@@ -405,6 +405,7 @@ def deep_search(query: str, extra: str = "") -> Dict[str, Any]:
     for m in [TEXT_MODEL, TEXT_FALLBACK_MODEL]:
         try:
             resp = model_client(m).chat.completions.create(
+                stream=False,
                 model=m,
                 messages=[
                     {"role": "system", "content": kb_system},

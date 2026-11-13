@@ -68,6 +68,7 @@ class FlashMigrationTests(unittest.TestCase):
         self.assertEqual(client.chat.completions.create.call_count, 3)
         for call in client.chat.completions.create.call_args_list:
             self.assertEqual(call.kwargs["model"], "gemini-3.5-flash-lite")
+            self.assertIs(call.kwargs["stream"], False)
             self.assertNotIn("response_format", call.kwargs)
 
     def test_diary_legacy_audio_config_migrates(self):
@@ -88,6 +89,7 @@ class FlashMigrationTests(unittest.TestCase):
         select.assert_called_once_with("gemini-3.5-flash-lite")
         request = client.chat.completions.create.call_args.kwargs
         self.assertEqual(request["model"], "gemini-3.5-flash-lite")
+        self.assertIs(request["stream"], False)
         self.assertEqual(request["messages"][1]["content"][1]["type"], "input_audio")
 
     def test_missing_apimart_key_is_explicit(self):

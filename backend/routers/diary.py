@@ -213,6 +213,7 @@ def _transcribe_with_audio_llm(raw: bytes, filename: str, content_type: str, err
     client = model_client(model) if migrated else OpenAI(api_key=api_key, base_url=base_url)
     try:
         response = client.chat.completions.create(
+            stream=False,
             model=model,
             messages=[
                 {"role": "system", "content": "你是一个严谨的音频转写助手，只返回音频中的文字内容。"},

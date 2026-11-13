@@ -157,6 +157,7 @@ def generate_director_script(
     }
     bundle = _source_bundle(user_id, memorial_id, settings)
     response = _client().chat.completions.create(
+        stream=False,
         model=studio_ai.model(),
         messages=[{"role": "user", "content": _prompt(bundle, project_id)}],
         temperature=0.35,

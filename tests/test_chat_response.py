@@ -12,6 +12,19 @@ import llm_client
 
 
 class ChatResponseTests(unittest.TestCase):
+    def test_chat_explicitly_disables_stream_for_both_models(self):
+        primary = Mock()
+        primary.chat.completions.create.side_effect = RuntimeError("primary failed")
+        fallback = Mock()
+        fallback.chat.completions.create.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        with patch.object(llm_client, "_iter_model_clients", return_value=[
+                ("gemini-3.5-flash-lite", primary), ("gemini-3.7-flash", fallback)]), \
+                patch.object(llm_client.time, "sleep"):
+            self.assertEqual(llm_client.call_memorial_chat("system", []), "ok")
+        for client in (primary, fallback):
+            for call in client.chat.completions.create.call_args_list:
+                self.assertIs(call.kwargs["stream"], False)
+
     def test_text_content_type_with_json_envelope(self):
         body = {"choices": [{"message": {"content": "hello"}}]}
         transport = httpx.MockTransport(lambda request: httpx.Response(

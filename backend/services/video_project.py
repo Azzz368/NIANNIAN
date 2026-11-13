@@ -490,6 +490,7 @@ def compile_project(user_id: str, memorial_id: str, project_id: str, *, force: b
         bundle = director_script._source_bundle(user_id, memorial_id, {"workflow": "video_project_compiler"})
         bundle["studio_storyboard"] = state.get("studio_scene_context", [])
         response = _client().chat.completions.create(
+            stream=False,
             model=studio_ai.model(),
             messages=[
                 {"role": "system", "content": _motion_prompt_skill()},

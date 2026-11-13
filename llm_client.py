@@ -251,7 +251,7 @@ def call_skill(
                 )
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
-                response = client.chat.completions.create(**kwargs)
+                response = client.chat.completions.create(stream=False, **kwargs)
                 raw = _chat_response_text(response)
                 if not use_json_mode:
                     raw = _extract_json(raw)
@@ -283,6 +283,7 @@ def call_memorial_chat(
         for attempt in range(1, 4):
             try:
                 response = model_client(model).chat.completions.create(
+                    stream=False,
                     model=model,
                     messages=all_msgs,
                     temperature=0.65,
@@ -299,6 +300,7 @@ def call_memorial_chat(
         for attempt in range(1, 4):
             try:
                 response = client.chat.completions.create(
+                    stream=False,
                     model=model_name,
                     messages=all_msgs,
                     temperature=0.65,
@@ -320,6 +322,7 @@ def call_freeform(system_prompt: str, user_content: str) -> str:
         for attempt in range(1, 4):
             try:
                 response = client.chat.completions.create(
+                    stream=False,
                     model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -353,7 +356,7 @@ def call_structured(system_prompt: str, user_content: str) -> Dict[str, Any]:
                 )
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
-                response = client.chat.completions.create(**kwargs)
+                response = client.chat.completions.create(stream=False, **kwargs)
                 raw = _chat_response_text(response)
                 if not use_json_mode:
                     raw = _extract_json(raw)
@@ -378,6 +381,7 @@ def describe_image(image_bytes: bytes, filename: str) -> str:
     for attempt in range(1, 3):
         try:
             response = model_client(VISION_MODEL).chat.completions.create(
+                stream=False,
                 model=VISION_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -2750,7 +2754,7 @@ def call_storyboard(system_prompt: str, user_content: str) -> Dict[str, Any]:
                 )
                 if use_json_mode:
                     kwargs["response_format"] = {"type": "json_object"}
-                response = client.chat.completions.create(**kwargs)
+                response = client.chat.completions.create(stream=False, **kwargs)
                 raw = response.choices[0].message.content or "{}"
                 if not use_json_mode:
                     raw = _extract_json(raw)
