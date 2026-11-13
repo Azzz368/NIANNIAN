@@ -300,7 +300,7 @@ function renderScenes() {
     const debugHtml = videoDebug
       ? `<details class="scene-video-debug">
            <summary>查看视频生成提示词与诊断${videoDebug.error ? '（本次失败）' : ''}</summary>
-           <div><strong>模型：</strong>${esc(videoDebug.provider || 'TokenStar Kling v3 Omni')}</div>
+           <div><strong>模型：</strong>${esc(videoDebug.provider || 'APIMart MiniMax-H3-Max')}</div>
            <div><strong>提示词：</strong><pre>${esc(videoDebug.prompt || '')}</pre></div>
            <div><strong>参考图：</strong>${esc(videoDebug.reference_image || '')}</div>
            ${videoDebug.task_id ? `<div><strong>任务 ID：</strong>${esc(videoDebug.task_id)}</div>` : ''}

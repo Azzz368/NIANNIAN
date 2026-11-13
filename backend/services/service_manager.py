@@ -24,8 +24,8 @@ from llm_client import (  # type: ignore
     transcribe_audio,
     build_scene_prompts,
     generate_image_tokenstar,
-    generate_video_tokenstar_kling_omni_image,
 )
+from services.apimart_media import generate_video_apimart, upload_image
 from skill_loader import load_skill  # type: ignore
 from core import storage as core_storage  # type: ignore
 
@@ -1084,7 +1084,7 @@ def gen_scene_video(
         video_prompt = "电影感长镜头，温暖怀旧的追思氛围，缓慢推进，自然光。"
 
     debug: Dict[str, Any] = {
-        "provider": "TokenStar Kling v3 Omni · 图片参考模式",
+        "provider": "APIMart MiniMax-H3-Max · 首帧模式 · 1080P",
         "prompt": video_prompt,
         "reference_image": (
             image_url if str(image_url).startswith("https://")
@@ -1095,16 +1095,20 @@ def gen_scene_video(
         "public_base_url_configured": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
     }
 
-    # 统一调用 TokenStar Kling v3 Omni「图片参考模式」（旧版 Action API），
-    # 不回退到 302.ai 或旧可灵官方接口。分镜首帧图作为唯一参考图传入。
-    res = generate_video_tokenstar_kling_omni_image(
+    if str(image_url).startswith("data:"):
+        try:
+            import base64 as _base64
+
+            image_url = upload_image(_base64.b64decode(image_url.split(",", 1)[1]))
+        except Exception as exc:
+            return {"error": True, "message": f"APIMart 首帧上传失败：{exc}"}
+    res = generate_video_apimart(
         prompt=video_prompt,
-        image_urls=[image_url],
+        image_url=image_url,
         duration=5,
+        resolution="1080P",
         poll=True,
-        # 最多等待 6.5 分钟；超过该窗口明确返回失败状态，避免
-        # 前端永久停留在“生成中”。供应商任务仍可用 task_id 后续查询。
-        max_wait=390,
+        max_wait=900,
     )
     debug["task_id"] = res.get("task_id", "")
     debug["source"] = res.get("source", "")

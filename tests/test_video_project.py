@@ -223,7 +223,8 @@ class VideoProjectTests(unittest.TestCase):
             "source": "tokenstar",
         }
         with patch.object(video_project, "_script", return_value=SCRIPT), \
-             patch.object(video_project, "generate_video_tokenstar_seedance_asset", return_value=failed_result):
+             patch.object(video_project, "generate_video_apimart", return_value=failed_result), \
+             patch.object(video_project, "upload_image", return_value="https://cdn.example/frame.jpg"):
             first_job, created = video_project.queue_clip_generation(
                 "u_one", "m_one", PROJECT_ID, "clip_001"
             )
@@ -245,29 +246,25 @@ class VideoProjectTests(unittest.TestCase):
         self.assertEqual(fallback["clips"][0]["render_mode"], "static")
         self.assertTrue(fallback["can_render"])
 
-    def test_seedance_generation_uses_local_asset_and_persists_provider_ids(self):
+    def test_apimart_generation_uses_first_frame_and_persists_task_id(self):
         self.ready_manifest()
 
         def fake_generate(**kwargs):
-            self.assertEqual(kwargs["image_bytes"], b"image-bytes")
-            self.assertEqual(kwargs["model"], "seedance-2.0-asset-fast")
+            self.assertEqual(kwargs["resolution"], "1080P")
+            self.assertNotIn("asset_id", kwargs)
             self.assertEqual(
                 kwargs["image_url"],
                 "https://nian.example/api/video-projects/public-frame/frame.jpg",
             )
             kwargs["progress"]({
-                "asset_group_id": "group-1",
-                "asset_id": "remote-asset-1",
                 "task_id": "task-1",
-                "model": "seedance-2.0-asset-fast",
+                "model": "MiniMax-H3-Max",
                 "provider_status": "generating",
             })
             return {
                 "url": "https://cdn.example/generated.mp4",
                 "task_id": "task-1",
-                "asset_group_id": "group-1",
-                "asset_id": "remote-asset-1",
-                "model": "seedance-2.0-asset-fast",
+                "model": "MiniMax-H3-Max",
             }
 
         response = SimpleNamespace(
@@ -276,7 +273,7 @@ class VideoProjectTests(unittest.TestCase):
             iter_content=lambda _size: [b"video-mp4"],
         )
         with patch.object(video_project, "_script", return_value=SCRIPT), \
-             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=fake_generate), \
+             patch.object(video_project, "generate_video_apimart", side_effect=fake_generate), \
              patch.object(video_project, "_public_frame_url", return_value="https://nian.example/api/video-projects/public-frame/frame.jpg"), \
              patch.object(video_project.requests, "get", return_value=response):
             job_id, _ = video_project.queue_clip_generation(
@@ -290,7 +287,7 @@ class VideoProjectTests(unittest.TestCase):
         clip = refreshed["clips"][0]
         self.assertEqual(clip["status"], "needs_review")
         self.assertEqual(clip["task_id"], "task-1")
-        self.assertEqual(clip["provider_asset_id"], "remote-asset-1")
+        self.assertEqual(clip["generation_provider"], "apimart")
         self.assertEqual(clip["provider_status"], "succeeded")
         self.assertTrue(clip["preview_url"].endswith("/clips/clip_001/file"))
 
@@ -310,7 +307,8 @@ class VideoProjectTests(unittest.TestCase):
             iter_content=lambda _size: [b"video-mp4"],
         )
         with patch.object(video_project, "_script", return_value=SCRIPT), \
-             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=fake_generate), \
+             patch.object(video_project, "generate_video_apimart", side_effect=fake_generate), \
+             patch.object(video_project, "upload_image", return_value="https://cdn.example/frame.jpg"), \
              patch.object(video_project, "_public_frame_url", return_value=""), \
              patch.object(video_project.bunny_storage, "is_configured", return_value=False), \
              patch.object(video_project.requests, "get", return_value=response):
@@ -326,7 +324,7 @@ class VideoProjectTests(unittest.TestCase):
         self.assertEqual(clip["status"], "failed")
         self.assertIn("下载不完整", clip["error"])
 
-    def test_seedance_uses_bunny_cdn_and_deletes_temporary_object(self):
+    def test_apimart_uses_bunny_cdn_and_deletes_temporary_object(self):
         self.ready_manifest()
         captured = {}
 
@@ -342,7 +340,7 @@ class VideoProjectTests(unittest.TestCase):
              }) as upload, \
              patch.object(video_project.bunny_storage, "delete_file") as delete, \
              patch.object(video_project, "_public_frame_url") as public_frame, \
-             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=fake_generate):
+             patch.object(video_project, "generate_video_apimart", side_effect=fake_generate):
             job_id, _ = video_project.queue_clip_generation(
                 "u_one", "m_one", PROJECT_ID, "clip_001"
             )
@@ -355,11 +353,31 @@ class VideoProjectTests(unittest.TestCase):
         delete.assert_called_once_with("niannian/tokenstar/scope/job/frame.jpg")
         public_frame.assert_not_called()
 
-    def test_project_level_asset_group_is_persisted_and_reused(self):
+    def test_apimart_poll_timeout_keeps_first_frame_and_task_id(self):
+        self.ready_manifest()
+        with patch.object(video_project, "_script", return_value=SCRIPT), \
+             patch.object(video_project.bunny_storage, "is_configured", return_value=True), \
+             patch.object(video_project.bunny_storage, "upload_bytes", return_value={
+                 "cdn_url": "https://cdn.example/frame.jpg", "storage_key": "temp/frame.jpg"}), \
+             patch.object(video_project.bunny_storage, "delete_file") as delete, \
+             patch.object(video_project, "generate_video_apimart") as generate:
+            def waiting(**kwargs):
+                kwargs["progress"]({"task_id": "task-wait", "provider_status": "processing"})
+                return {"error": "等待超时", "status": "processing", "task_id": "task-wait"}
+
+            generate.side_effect = waiting
+            job_id, _ = video_project.queue_clip_generation("u_one", "m_one", PROJECT_ID, "clip_001")
+            video_project.run_clip_generation("u_one", "m_one", PROJECT_ID, "clip_001", job_id)
+            manifest = video_project.get_project("u_one", "m_one", PROJECT_ID)
+        delete.assert_not_called()
+        self.assertEqual(manifest["clips"][0]["task_id"], "task-wait")
+
+    def test_legacy_asset_group_is_not_sent_to_apimart(self):
         self.ready_manifest()
         captured = {}
         with patch.object(video_project, "_script", return_value=SCRIPT), \
-             patch.object(video_project, "generate_video_tokenstar_seedance_asset", side_effect=lambda **kwargs: captured.update(kwargs) or {"error": "stop"}):
+             patch.object(video_project, "generate_video_apimart", side_effect=lambda **kwargs: captured.update(kwargs) or {"error": "stop"}), \
+             patch.object(video_project, "upload_image", return_value="https://cdn.example/frame.jpg"):
             job_id, _ = video_project.queue_clip_generation(
                 "u_one", "m_one", PROJECT_ID, "clip_001"
             )
@@ -379,7 +397,8 @@ class VideoProjectTests(unittest.TestCase):
                 "u_one", "m_one", PROJECT_ID, "clip_001", job_id
             )
 
-        self.assertEqual(captured["group_id"], "ag-project-shared")
+        self.assertNotIn("group_id", captured)
+        self.assertNotIn("asset_id", captured)
 
     def test_render_is_blocked_until_every_clip_is_approved(self):
         self.ready_manifest()

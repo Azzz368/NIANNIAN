@@ -647,12 +647,8 @@ def _tokenstar_image_b64(response: Any) -> tuple:
 
 
 def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -> tuple:
-    """影视制作台图片生成：使用 TokenStar `gpt-image-2`，不调用 302.ai。"""
-    import logging as _log_img
-
-    logger = _log_img.getLogger("llm_client.tokenstar_image")
-    if not TOKENSTAR_API_KEY:
-        return None, "未配置 TOKENSTAR_API_KEY，无法调用 TokenStar 图片生成"
+    """兼容旧调用名；制作台图片由 APIMart 生成。"""
+    from backend.services.apimart_media import generate_image_apimart
 
     composition_rules = (
         "构图为硬性要求：横向 16:9 电影中景或全景，主角完整头部、脸部、肩膀和关键动作"
@@ -667,63 +663,14 @@ def generate_image_tokenstar(prompt: str, reference_b64: Optional[str] = None) -
         "电影质感、暖色调、photorealistic, cinematic still, 8K。"
         f"{composition_rules}"
     )
-    headers = {"Authorization": f"Bearer {TOKENSTAR_API_KEY}"}
-    request_timeout = max(60, int(os.getenv("TOKENSTAR_IMAGE_TIMEOUT_SECONDS", "300") or 300))
-
-    try:
-        if reference_b64:
-            try:
-                reference_bytes = base64.b64decode(reference_b64, validate=True)
-            except Exception as exc:
-                return None, f"参考图 base64 解码失败：{exc}"
-
-            full_prompt = (
-                "严格保留上传参考照片中人物的面部特征、年龄、肤色和外貌，"
-                "将其作为画面主角。" + full_prompt
-            )
-            logger.info("[tokenstar_image] 调用 gpt-image-2 图像编辑接口")
-            response = _requests.post(
-                f"{TOKENSTAR_BASE_URL}/v1/images/edits",
-                headers=headers,
-                data={
-                    "model": TOKENSTAR_IMAGE_MODEL,
-                    "prompt": full_prompt,
-                    "n": "1",
-                    "size": TOKENSTAR_IMAGE_SOURCE_SIZE,
-                    "output_format": "png",
-                },
-                files={"image": ("reference.png", reference_bytes, "image/png")},
-                timeout=request_timeout,
-            )
-        else:
-            logger.info("[tokenstar_image] 调用 gpt-image-2 文生图接口")
-            response = _requests.post(
-                f"{TOKENSTAR_BASE_URL}/v1/images/generations",
-                headers={**headers, "Content-Type": "application/json"},
-                json={
-                    "model": TOKENSTAR_IMAGE_MODEL,
-                    "prompt": full_prompt,
-                    "n": 1,
-                    "size": TOKENSTAR_IMAGE_SOURCE_SIZE,
-                    "output_format": "png",
-                },
-                timeout=request_timeout,
-            )
-        response.raise_for_status()
-    except (_requests.Timeout, _requests.ConnectionError) as exc:
-        # The provider request timed out on our side, but the image may still be
-        # generating on TokenStar. Never report this as a hard failure; let the caller
-        # surface a "已超时，但仍在生成" state so users can retry instead of losing work.
-        return None, "__TOKENSTAR_IMAGE_TIMEOUT__"
-    except _requests.RequestException as exc:
-        response_text = getattr(getattr(exc, "response", None), "text", "")
-        return None, f"TokenStar 图片生成请求失败：{str(exc)} {response_text[:500]}"
-
-    return _tokenstar_image_b64(response)
+    if reference_b64:
+        full_prompt = "严格保留参考照片中人物的面部特征、年龄、肤色和外貌，将其作为画面主角。" + full_prompt
+    image_b64, error = generate_image_apimart(full_prompt, reference_b64=reference_b64)
+    return _crop_image_b64_to_16_9(image_b64) if image_b64 else (None, error)
 
 
 def generate_image_302_ref(prompt: str, reference_b64: str) -> tuple:
-    """兼容旧调用名；实际委托 TokenStar gpt-image-2 图像编辑接口。"""
+    """兼容旧调用名；实际委托 APIMart 图片参考生成。"""
     return generate_image_tokenstar(prompt, reference_b64=reference_b64)
 
 

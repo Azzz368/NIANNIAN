@@ -9,6 +9,7 @@ FFmpeg compiler in :mod:`services.video_renderer`.
 from __future__ import annotations
 
 import hashlib
+import math
 import ipaddress
 import json
 import os
@@ -26,7 +27,7 @@ from openai import OpenAI
 
 from core import oss_sync, storage
 from core import studio_ai
-from llm_client import generate_video_tokenstar_seedance_asset
+from services.apimart_media import generate_video_apimart, upload_image
 from skill_loader import load_skill
 from services import bunny_storage, director_script, video_renderer
 
@@ -437,7 +438,7 @@ def normalize_manifest(
             "attempts": 0,
             "job_id": "",
             "task_id": "",
-            "generation_provider": "tokenstar" if kind == "image" else "source",
+            "generation_provider": "apimart" if kind == "image" else "source",
             "provider_model": "",
             "provider_status": "pending" if kind == "image" else "ready",
             "provider_asset_group_id": "",
@@ -747,7 +748,7 @@ def public_frame_path(name: str) -> Path:
 
 
 def _cleanup_public_frame_url(public_url: str) -> None:
-    """Remove a one-time provider frame after TokenStar has ingested it."""
+    """Remove a one-time provider frame after generation has finished."""
     name = Path(urlparse(public_url or "").path).name
     if not PUBLIC_FILE_RE.fullmatch(name):
         return
@@ -796,31 +797,8 @@ def run_clip_generation(
         )
         image_bytes = source.read_bytes()
         source_hash = hashlib.sha256(image_bytes).hexdigest()
-        configured_model = os.getenv(
-            "TOKENSTAR_SEEDANCE_MODEL", "seedance-2.0-asset-fast"
-        ).strip() or "seedance-2.0-asset-fast"
-        configured_model = {
-            "seedance-asset": "seedance-2.0-asset",
-            "seedance-asset-fast": "seedance-2.0-asset-fast",
-        }.get(configured_model, configured_model)
-        shared_group_id = str(manifest.get("provider_asset_group_id") or "")
-        if not shared_group_id:
-            shared_group_id = next(
-                (
-                    str(item.get("provider_asset_group_id") or "")
-                    for item in manifest.get("clips", [])
-                    if item.get("provider_asset_group_id")
-                ),
-                "",
-            )
-        cached_asset = ""
-        if (
-            clip.get("provider_source_sha256") == source_hash
-            and clip.get("provider_model") == configured_model
-        ):
-            cached_asset = str(clip.get("provider_asset_id") or "")
-
-        reference_transport = "cached_asset" if cached_asset else "inline_fallback"
+        configured_model = "MiniMax-H3-Max"
+        reference_transport = "apimart_upload"
         temporary_reference = {"bunny_key": "", "public_url": "", "cleaned": False}
 
         def cleanup_temporary_reference() -> None:
@@ -837,7 +815,7 @@ def run_clip_generation(
 
         def progress(provider: Dict[str, Any]) -> None:
             patch: Dict[str, Any] = {
-                "generation_provider": "tokenstar",
+                "generation_provider": "apimart",
                 "provider_model": str(provider.get("model") or configured_model),
                 "provider_status": str(provider.get("provider_status") or "generating"),
                 "provider_source_sha256": source_hash,
@@ -852,12 +830,11 @@ def run_clip_generation(
             _persist_clip_result(
                 user_id, memorial_id, project_id, clip_id, job_id, patch
             )
-            if str(provider.get("provider_status") or "").lower() == "ready":
-                cleanup_temporary_reference()
-
-        model_duration = 5 if float(clip.get("duration_sec") or 5) <= 5 else 8
+        model_duration = max(5, math.ceil(float(clip.get("duration_sec") or 5)))
+        if model_duration > 15:
+            raise VideoProjectError("MiniMax-H3-Max 单镜头最长 15 秒，请拆分镜头")
         public_image_url = ""
-        if not cached_asset and bunny_storage.is_configured():
+        if bunny_storage.is_configured():
             extension = source.suffix.lower().lstrip(".")
             if extension not in {"jpg", "jpeg", "png", "webp"}:
                 extension = "jpg"
@@ -866,13 +843,13 @@ def run_clip_generation(
             ).hexdigest()[:20]
             bunny_result = bunny_storage.upload_bytes(
                 image_bytes,
-                f"niannian/tokenstar/{scope}/{job_id}/{source_hash[:24]}.{extension}",
+                f"niannian/apimart/{scope}/{job_id}/{source_hash[:24]}.{extension}",
                 str(asset.get("mime") or "image/jpeg"),
             )
             public_image_url = str(bunny_result["cdn_url"])
             temporary_reference["bunny_key"] = str(bunny_result["storage_key"])
             reference_transport = "bunny_cdn"
-        elif not cached_asset:
+        else:
             public_image_url = _public_frame_url(
                 user_id,
                 memorial_id,
@@ -882,26 +859,26 @@ def run_clip_generation(
             if public_image_url:
                 temporary_reference["public_url"] = public_image_url
                 reference_transport = "public_frame"
+        result: Dict[str, Any] = {}
         try:
-            result = generate_video_tokenstar_seedance_asset(
+            if not public_image_url:
+                public_image_url = upload_image(
+                    image_bytes, str(asset.get("filename") or source.name),
+                    str(asset.get("mime") or "image/jpeg"),
+                )
+            result = generate_video_apimart(
                 prompt=clip["motion_prompt"],
-                image_bytes=image_bytes,
-                filename=str(asset.get("filename") or source.name),
-                mime_type=str(asset.get("mime") or "image/jpeg"),
                 image_url=public_image_url,
                 duration=model_duration,
                 ratio=str(manifest.get("aspect_ratio") or "16:9"),
-                generate_audio=False,
-                model=configured_model,
-                group_name=f"nian-{memorial_id[-12:]}-{project_id[-12:]}",
-                group_id=shared_group_id,
-                asset_id=cached_asset,
+                resolution="1080P",
                 poll=True,
-                max_wait=600,
+                max_wait=900,
                 progress=progress,
             )
         finally:
-            cleanup_temporary_reference()
+            if result.get("status") not in ("processing", "submitted"):
+                cleanup_temporary_reference()
         if result.get("error"):
             raise VideoProjectError(str(result.get("error")))
         remote_url = str(result.get("url") or "")
@@ -948,7 +925,7 @@ def run_clip_generation(
         _persist_clip_result(user_id, memorial_id, project_id, clip_id, job_id, {
             "status": "needs_review",
             "task_id": str(result.get("task_id") or ""),
-            "generation_provider": "tokenstar",
+            "generation_provider": "apimart",
             "provider_model": str(result.get("model") or configured_model),
             "provider_status": "succeeded",
             "provider_asset_group_id": str(result.get("asset_group_id") or ""),

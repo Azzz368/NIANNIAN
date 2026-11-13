@@ -124,7 +124,7 @@
       ' · ' + esc((clip.transition && clip.transition.duration_sec) || 0) + ' 秒</strong></div>' +
       '<div class="fact"><span>生成服务</span><strong>' +
       esc(clip.asset_kind === 'image'
-        ? ((clip.generation_provider || 'TokenStar') + ' · ' + (clip.provider_model || 'Seedance 素材快速模型'))
+        ? ((clip.generation_provider || 'APIMart') + ' · ' + (clip.provider_model || 'MiniMax-H3-Max'))
         : '真实视频直接使用') + '</strong></div>' +
       '<div class="fact"><span>任务状态</span><strong>' +
       esc(clip.asset_kind === 'image'

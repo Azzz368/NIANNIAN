@@ -106,7 +106,20 @@ APIMART_STUDIO_MODEL=gpt-6-luna
 实际请求为 `POST https://api.apimart.ai/v1/chat/completions`，使用 Bearer 认证。
 未配置 `APIMART_API_KEY` 会明确报错，不会自动回退到其他平台。
 模型 ID 按配置原样发送，需由 APIMart 账户提供对应模型的访问权限。
-本配置不改变普通聊天、图片生成、视频动态化或语音接口。
+`APIMART_STUDIO_MODEL` 只控制制作台文本规划，不控制聊天、图片、视频或语音模型。
+
+制作台媒体生成已单独迁移到 APIMart，共用上述密钥和基础地址：
+
+- 图片：`gpt-image-2.5-flare`，固定 `quality=medium`、`size=16:9`、`resolution=1k`、`n=1`。
+- 视频：`MiniMax-H3-Max`，默认 `1080P`，通过 `first_frame_image` 进入首帧图生视频模式；适配层支持可选 `last_frame_image`，现有界面仍只选择首帧。
+- 两者均提交异步任务后查询 `/v1/tasks/{task_id}`，最长等待 15 分钟；不会自动重新提交收费任务。
+- 本地图片参考先通过 `/v1/uploads/images?retention_days=3` 上传，再填入 `image_urls`。供应商上传保存 3 天，可能受上传额度或超额计费限制。
+- 视频首帧优先 Bunny，其次本服务 `PUBLIC_BASE_URL`，均不可用时使用 APIMart 上传；不再注册 TokenStar 素材或复用其 `asset://` ID。
+- 视频时长为 5 至 15 秒整数，短镜头至少生成 5 秒，最终剪辑仍遵循时间轴；超过 15 秒需拆分镜头。1080P 请求不传任何水印字段。
+- 视频任务带模型音轨，最终成片仍按项目既有音轨规则处理；成功结果会下载转存，不依赖供应商临时视频地址长期保存。
+- 项目任务 ID 会持久化；轮询超时不代表供应商失败，请先按任务 ID 查询，避免重复生成扣费。
+
+旧 `TOKENSTAR_*` 配置只供保留的兼容函数使用，不再控制当前制作台图片与视频。
 
 Gemini Flash 链路也已切换为 APIMart `gemini-3.5-flash-lite`，共用
 `APIMART_API_KEY` 和 `APIMART_BASE_URL`，不使用 `APIMART_STUDIO_MODEL`。
